@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "D:\Campus study\实习\腾讯优图\入职面试\PPT自动评测基线\third_party\slidesbench\upstream\autopresent\generate.py", line 4, in <module>
+    from datasets import Dataset
+ModuleNotFoundError: No module named 'datasets'

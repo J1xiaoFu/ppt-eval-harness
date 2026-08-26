@@ -1,0 +1,23 @@
+{
+  "repository": "https://github.com/icip-cas/PPTAgent",
+  "commit": "88c29f045ab5b7db331bd8b76cf6efc5f9ea7eee",
+  "verified_with": "git hash-object against git rev-parse experiment:<path>",
+  "verified_files": {
+    "LICENSE": "ad632c605001f5307ed826b6f7e85758db3c75c4",
+    "README.md": "4ba4441260493577f9b34f2284feb992494f01ec",
+    "requirements.txt": "de60464c5f83fce09253c6033d5937244e841fd2",
+    "prompts/ppteval_coherence.txt": "ba972f5f79adb060c0a05980f03edab002283109",
+    "prompts/ppteval_content.txt": "6018f9e97e5a41c900108ad24eb3c85564e96037",
+    "prompts/ppteval_describe_content.txt": "3bc4a18a4f6dca5c56c705bc305477ce5f17fc58",
+    "prompts/ppteval_describe_style.txt": "b416199c9fcee9adcef2a5fc4a649704c3c6b963",
+    "prompts/ppteval_extract.txt": "5cfb1755d7ee7fb014892ba3f0cc388eba95949f",
+    "prompts/ppteval_style.txt": "0b54f3319764f9f032825cf896393345c4081153",
+    "resource/dataset.jsonl": "1045c2f438bbc14d503044ab7aaee2b737f800b9",
+    "src/experiment/evals.py": "998b3aadc4581b5714677c99a963a9a32eed1785",
+    "src/experiment/requirements.txt": "5012e16007d4c7905b89dcd47d4cd83ace7a45be",
+    "src/llms.py": "5e04dcb6d1abc224aa777621797638fe155c302f",
+    "src/model_utils.py": "0e9577cd27736f2a0453fdd02deb12558935ec80",
+    "src/presentation.py": "cb70f27683872acf1503bff73e7e100eb1849bab",
+    "src/utils.py": "5a871f05395da166b58c67b137417bcb5121dcdd"
+  }
+}

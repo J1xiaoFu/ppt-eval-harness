@@ -1,0 +1,39 @@
+{
+  "retrieved_at": "2026-08-26T14:30:00+08:00",
+  "paper": {
+    "title": "PPTAgent: Generating and Evaluating Presentations Beyond Text-to-Slides",
+    "venue": "EMNLP 2025",
+    "doi": "10.18653/v1/2025.emnlp-main.728",
+    "url": "https://aclanthology.org/2025.emnlp-main.728/",
+    "pdf_url": "https://aclanthology.org/2025.emnlp-main.728.pdf",
+    "local_pdf_sha256": "5fb9c54cd763a9748a8aff5161833fc1b815a3099d2c083b2ce96db3514bd31a",
+    "arxiv_url": "https://arxiv.org/abs/2501.03936v3",
+    "arxiv_pdf_sha256": "c9566cb145ca20598921831bae17e62b8f0477b8027b274198e615e5e57c6e25"
+  },
+  "code": {
+    "repository": "https://github.com/icip-cas/PPTAgent",
+    "license": "MIT",
+    "paper_experiment_commit": "88c29f045ab5b7db331bd8b76cf6efc5f9ea7eee",
+    "paper_experiment_commit_url": "https://github.com/icip-cas/PPTAgent/commit/88c29f045ab5b7db331bd8b76cf6efc5f9ea7eee",
+    "paper_experiment_date": "2025-03-13T20:01:08Z",
+    "fid_submodule_commit": "6e6bd16d77d8dbe9034a6fb2153cc1162f8a0cc4",
+    "current_snapshot_commit": "2419d30b134a71486523e95ded60b32489fd3c61",
+    "current_snapshot_date": "2026-06-28T21:30:56Z"
+  },
+  "dataset": {
+    "name": "Forceless/Zenodo10K",
+    "url": "https://huggingface.co/datasets/Forceless/Zenodo10K",
+    "api_url": "https://huggingface.co/api/datasets/Forceless/Zenodo10K",
+    "revision": "e59bf3ec11f7518a6c84dc145d83c0675d412522",
+    "records": 10448,
+    "license_policy": "Per-record Zenodo license; no blanket dataset license in the dataset card",
+    "paper_manifest_records": 100,
+    "paper_manifest_unique_zenodo_records": 90,
+    "paper_manifest_license_audit": {
+      "cc-by-4.0": 87,
+      "cc-by-sa-4.0": 2,
+      "cc-by": 1
+    },
+    "paper_manifest_sha256": "da8568988585301a43b6ab596b3ef34367405c1790c7812354a01b9bbe7b4d41"
+  }
+}

@@ -1,0 +1,508 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/ppt-eval/project-audit.schema.json",
+  "title": "PPT evaluation project audit snapshot",
+  "description": "Versioned, machine-readable snapshot used to generate the three-phase project audit and nine-slide interview deck.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "project",
+    "phases",
+    "scenarios",
+    "formula",
+    "acceptance_targets",
+    "traceability",
+    "run_manifest_example",
+    "deck"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "project": {
+      "type": "object",
+      "required": ["id", "name", "status", "as_of", "owner", "purpose", "success_definition"],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/projectId"
+        },
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "status": {
+          "enum": [
+            "planned",
+            "in_progress",
+            "validated",
+            "released",
+            "blocked",
+            "mvp_implemented",
+            "mvp_implemented_production_validation_pending"
+          ]
+        },
+        "as_of": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+        },
+        "owner": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "purpose": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "success_definition": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "phases": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "prefixItems": [
+        {
+          "allOf": [
+            {"$ref": "#/$defs/phase"},
+            {
+              "properties": {
+                "id": {"const": "PHASE-RESEARCH"},
+                "name": {"const": "调研"}
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/phase"},
+            {
+              "properties": {
+                "id": {"const": "PHASE-DEVELOPMENT"},
+                "name": {"const": "开发"}
+              }
+            }
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/phase"},
+            {
+              "properties": {
+                "id": {"const": "PHASE-EVALUATION"},
+                "name": {"const": "评测"}
+              }
+            }
+          ]
+        }
+      ],
+      "items": false
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 4,
+      "maxItems": 4,
+      "prefixItems": [
+        {
+          "allOf": [
+            {"$ref": "#/$defs/scenario"},
+            {"properties": {"id": {"const": "SCN-TEXT"}, "name": {"const": "文字生成 PPT"}}}
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/scenario"},
+            {"properties": {"id": {"const": "SCN-SUMMARY"}, "name": {"const": "项目总结生成"}}}
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/scenario"},
+            {"properties": {"id": {"const": "SCN-MULTIMODAL"}, "name": {"const": "多模态生成"}}}
+          ]
+        },
+        {
+          "allOf": [
+            {"$ref": "#/$defs/scenario"},
+            {"properties": {"id": {"const": "SCN-READY"}, "name": {"const": "成品 PPT"}}}
+          ]
+        }
+      ],
+      "items": false
+    },
+    "formula": {
+      "type": "object",
+      "required": ["base", "full", "multipliers", "rule"],
+      "properties": {
+        "base": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "full": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "multipliers": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "prefixItems": [
+            {"const": 0},
+            {"const": 0.5},
+            {"const": 1}
+          ],
+          "items": false
+        },
+        "rule": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "acceptance_targets": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/acceptanceTarget"
+      }
+    },
+    "traceability": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/traceabilityRow"
+      }
+    },
+    "run_manifest_example": {
+      "$ref": "#/$defs/runManifest"
+    },
+    "deck": {
+      "type": "object",
+      "required": ["title", "audience", "takeaway", "slides"],
+      "properties": {
+        "title": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "audience": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "takeaway": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "slides": {
+          "type": "array",
+          "minItems": 9,
+          "maxItems": 9,
+          "prefixItems": [
+            {"allOf": [{"$ref": "#/$defs/slide"}, {"properties": {"chapter": {"const": "调研"}}}]},
+            {"allOf": [{"$ref": "#/$defs/slide"}, {"properties": {"chapter": {"const": "调研"}}}]},
+            {"allOf": [{"$ref": "#/$defs/slide"}, {"properties": {"chapter": {"const": "调研"}}}]},
+            {"allOf": [{"$ref": "#/$defs/slide"}, {"properties": {"chapter": {"const": "开发"}}}]},
+            {"allOf": [{"$ref": "#/$defs/slide"}, {"properties": {"chapter": {"const": "开发"}}}]},
+            {"allOf": [{"$ref": "#/$defs/slide"}, {"properties": {"chapter": {"const": "开发"}}}]},
+            {"allOf": [{"$ref": "#/$defs/slide"}, {"properties": {"chapter": {"const": "评测"}}}]},
+            {"allOf": [{"$ref": "#/$defs/slide"}, {"properties": {"chapter": {"const": "评测"}}}]},
+            {"allOf": [{"$ref": "#/$defs/slide"}, {"properties": {"chapter": {"const": "评测"}}}]}
+          ],
+          "items": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "\\S"
+    },
+    "projectId": {
+      "type": "string",
+      "pattern": "^PRJ-[A-Z0-9][A-Z0-9._-]*$"
+    },
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?![\\\\/])(?![A-Za-z]:)(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$))(?:audit|docs|reports)/[A-Za-z0-9_.\\-/]+$"
+    },
+    "stringList": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/nonEmptyString"
+      }
+    },
+    "gate": {
+      "type": "object",
+      "required": ["status", "criteria_total", "criteria_met", "note"],
+      "properties": {
+        "status": {
+          "enum": [
+            "planned",
+            "pending",
+            "in_progress",
+            "ready_for_review",
+            "partial_reproduction",
+            "mvp_passed_review_pending",
+            "mvp_verified_production_pending",
+            "passed",
+            "validated",
+            "released",
+            "blocked"
+          ]
+        },
+        "criteria_total": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "criteria_met": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "note": {
+          "$ref": "#/$defs/nonEmptyString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "phase": {
+      "type": "object",
+      "required": ["id", "name", "objective", "process", "evidence", "decisions", "gate", "risks"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^PHASE-[A-Z][A-Z0-9_-]*$"
+        },
+        "name": {
+          "enum": ["调研", "开发", "评测"]
+        },
+        "objective": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "process": {
+          "$ref": "#/$defs/stringList"
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/repositoryPath"
+          }
+        },
+        "decisions": {
+          "$ref": "#/$defs/stringList"
+        },
+        "gate": {
+          "$ref": "#/$defs/gate"
+        },
+        "risks": {
+          "$ref": "#/$defs/stringList"
+        }
+      },
+      "additionalProperties": false
+    },
+    "scenario": {
+      "type": "object",
+      "required": ["id", "name", "fallback", "lambda"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^SCN-[A-Z][A-Z0-9_-]*$"
+        },
+        "name": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "fallback": {
+          "const": "BASE_ONLY"
+        },
+        "lambda": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "acceptanceTarget": {
+      "type": "object",
+      "required": ["metric", "operator", "target", "status"],
+      "properties": {
+        "metric": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$"
+        },
+        "operator": {
+          "enum": [">", ">=", "<", "<=", "=="]
+        },
+        "target": {
+          "type": "number"
+        },
+        "status": {
+          "enum": ["planned", "observed"]
+        },
+        "observed": {
+          "type": "number"
+        },
+        "evidence": {
+          "$ref": "#/$defs/repositoryPath"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"status": {"const": "planned"}},
+            "required": ["status"]
+          },
+          "then": {
+            "not": {"required": ["observed"]}
+          },
+          "else": {
+            "required": ["observed", "evidence"]
+          }
+        }
+      ],
+      "additionalProperties": false
+    },
+    "traceabilityRow": {
+      "type": "object",
+      "required": ["requirement", "decision", "oracle", "test", "experiment", "release"],
+      "properties": {
+        "requirement": {
+          "type": "string",
+          "pattern": "^REQ-[A-Z0-9][A-Z0-9._-]*$"
+        },
+        "decision": {
+          "type": "string",
+          "pattern": "^ADR-[A-Z0-9][A-Z0-9._-]*$"
+        },
+        "oracle": {
+          "type": "string",
+          "pattern": "^ORC-(?:N/A|[A-Z0-9][A-Z0-9._-]*)$"
+        },
+        "test": {
+          "type": "string",
+          "pattern": "^TST-[A-Z0-9][A-Z0-9._-]*$"
+        },
+        "experiment": {
+          "type": "string",
+          "pattern": "^EXP-[A-Z0-9][A-Z0-9._-]*$"
+        },
+        "release": {
+          "type": "string",
+          "pattern": "^REL-[A-Z0-9][A-Z0-9._-]*$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "runManifest": {
+      "type": "object",
+      "required": [
+        "run_id",
+        "case_id",
+        "input_sha256",
+        "git_sha",
+        "container_digest",
+        "font_bundle",
+        "models",
+        "prompt_profile",
+        "eval_profile",
+        "random_seed",
+        "cost_cny",
+        "output_sha256",
+        "synthetic"
+      ],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "pattern": "^RUN-[A-Z0-9][A-Z0-9._-]*$"
+        },
+        "case_id": {
+          "type": "string",
+          "pattern": "^CASE-[A-Z0-9][A-Z0-9._-]*$"
+        },
+        "input_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "git_sha": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64}|UNCOMMITTED-[A-Z0-9][A-Z0-9._-]*)$"
+        },
+        "container_digest": {
+          "type": "string",
+          "pattern": "^sha256:(?:[0-9a-f]{64}|demo)$"
+        },
+        "font_bundle": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "models": {
+          "type": "object",
+          "required": ["llm", "vlm", "ocr"],
+          "properties": {
+            "llm": {"$ref": "#/$defs/nonEmptyString"},
+            "vlm": {"$ref": "#/$defs/nonEmptyString"},
+            "ocr": {"$ref": "#/$defs/nonEmptyString"}
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "prompt_profile": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "eval_profile": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "random_seed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cost_cny": {
+          "type": "number",
+          "minimum": 0
+        },
+        "output_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "synthetic": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "slide": {
+      "type": "object",
+      "required": ["chapter", "title", "claim", "points", "source"],
+      "properties": {
+        "chapter": {
+          "enum": ["调研", "开发", "评测"]
+        },
+        "title": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "claim": {
+          "$ref": "#/$defs/nonEmptyString"
+        },
+        "points": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/nonEmptyString"
+          }
+        },
+        "source": {
+          "$ref": "#/$defs/repositoryPath"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

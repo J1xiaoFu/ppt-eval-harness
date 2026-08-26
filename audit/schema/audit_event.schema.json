@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.local/ppt-eval/audit-event.schema.json",
+  "title": "Append-only PPT evaluation audit event",
+  "description": "One immutable JSONL audit record. Cross-record uniqueness, monotonic time, and supersedes ordering are verified by the audit verifier.",
+  "type": "object",
+  "required": ["event_id", "event_type", "occurred_at", "actor", "subject_id", "supersedes", "payload"],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "pattern": "^EVT-[0-9]{6,}$"
+    },
+    "event_type": {
+      "enum": [
+        "requirement.registered",
+        "decision.accepted",
+        "experiment.registered",
+        "run.completed",
+        "review.recorded",
+        "test.completed",
+        "experiment.completed",
+        "build.blocked",
+        "milestone.completed",
+        "build.completed",
+        "baseline.reproduction.partial",
+        "dataset.catalog.completed",
+        "release.proposed"
+      ]
+    },
+    "occurred_at": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "actor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9._-]*$"
+    },
+    "subject_id": {
+      "type": "string",
+      "pattern": "^(?:REQ|ADR|ORC|TST|EXP|RUN|REL|ARTIFACT|MILESTONE|DATASET)-[A-Z0-9][A-Z0-9._-]*$"
+    },
+    "supersedes": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "pattern": "^EVT-[0-9]{6,}$"}
+      ]
+    },
+    "payload": {
+      "type": "object",
+      "minProperties": 1
+    }
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"event_type": {"const": "requirement.registered"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/requirementPayload"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "decision.accepted"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/decisionPayload"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "experiment.registered"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/experimentRegisteredPayload"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "run.completed"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/runCompletedPayload"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "review.recorded"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/reviewPayload"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "test.completed"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/testCompletedPayload"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "experiment.completed"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/experimentCompletedPayload"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "build.blocked"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/buildBlockedPayload"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "milestone.completed"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/milestoneCompletedPayload"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "build.completed"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/buildCompletedPayload"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "baseline.reproduction.partial"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/baselineReproductionPayload"}}}
+    },
+    {
+      "if": {"properties": {"event_type": {"const": "dataset.catalog.completed"}}, "required": ["event_type"]},
+      "then": {"properties": {"payload": {"$ref": "#/$defs/datasetCatalogPayload"}}}
+    }
+  ],
+  "$defs": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "\\S"
+    },
+    "repositoryPath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(?![\\\\/])(?![A-Za-z]:)(?!.*(?:^|[\\\\/])\\.\\.(?:[\\\\/]|$))(?:audit|docs|reports|scripts|third_party)/[A-Za-z0-9_.\\-/]+$"
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "nullableScore": {
+      "oneOf": [
+        {"$ref": "#/$defs/score"},
+        {"type": "null"}
+      ]
+    },
+    "requirementPayload": {
+      "type": "object",
+      "required": ["statement", "status"],
+      "properties": {
+        "statement": {"$ref": "#/$defs/nonEmptyString"},
+        "status": {"enum": ["proposed", "accepted", "rejected", "superseded"]}
+      },
+      "additionalProperties": true
+    },
+    "decisionPayload": {
+      "type": "object",
+      "required": ["decision", "reason"],
+      "properties": {
+        "decision": {"$ref": "#/$defs/nonEmptyString"},
+        "reason": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": true
+    },
+    "experimentRegisteredPayload": {
+      "type": "object",
+      "required": ["protocol", "status"],
+      "properties": {
+        "protocol": {"$ref": "#/$defs/nonEmptyString"},
+        "status": {"enum": ["planned", "ready", "in_progress", "blocked"]}
+      },
+      "additionalProperties": true
+    },
+    "runCompletedPayload": {
+      "type": "object",
+      "required": ["execution_status", "quality_decision", "mode", "base_score", "full_score"],
+      "properties": {
+        "synthetic": {"type": "boolean"},
+        "execution_status": {"enum": ["completed", "failed"]},
+        "quality_decision": {"enum": ["PASS", "FAIL", "REVIEW", "ERROR"]},
+        "mode": {"enum": ["FULL", "DEGRADED", "BASE_ONLY", "UNASSESSABLE"]},
+        "base_score": {"$ref": "#/$defs/nullableScore"},
+        "full_score": {"$ref": "#/$defs/nullableScore"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"mode": {"enum": ["DEGRADED", "BASE_ONLY", "UNASSESSABLE"]}}, "required": ["mode"]},
+          "then": {"properties": {"full_score": {"type": "null"}}}
+        }
+      ],
+      "additionalProperties": true
+    },
+    "reviewPayload": {
+      "type": "object",
+      "required": ["decision", "note"],
+      "properties": {
+        "synthetic": {"type": "boolean"},
+        "decision": {"enum": ["PASS", "FAIL", "REVIEW", "ERROR", "APPROVE", "REJECT"]},
+        "note": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": true
+    },
+    "testCompletedPayload": {
+      "type": "object",
+      "required": ["test_files", "passed", "failed", "runner"],
+      "properties": {
+        "test_files": {"type": "integer", "minimum": 1},
+        "passed": {"type": "integer", "minimum": 0},
+        "failed": {"type": "integer", "minimum": 0},
+        "runner": {"$ref": "#/$defs/repositoryPath"}
+      },
+      "additionalProperties": true
+    },
+    "experimentCompletedPayload": {
+      "type": "object",
+      "required": ["evidence"],
+      "properties": {
+        "evidence": {"$ref": "#/$defs/repositoryPath"},
+        "scenes": {"type": "integer", "minimum": 1},
+        "baseline_preserved": {"type": "boolean"},
+        "full_and_degraded_observed": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    },
+    "buildBlockedPayload": {
+      "type": "object",
+      "required": ["component", "reason", "recovery"],
+      "properties": {
+        "component": {"$ref": "#/$defs/nonEmptyString"},
+        "reason": {"$ref": "#/$defs/nonEmptyString"},
+        "recovery": {"$ref": "#/$defs/repositoryPath"}
+      },
+      "additionalProperties": true
+    },
+    "milestoneCompletedPayload": {
+      "type": "object",
+      "required": ["status", "production_release", "pending"],
+      "properties": {
+        "status": {"$ref": "#/$defs/nonEmptyString"},
+        "production_release": {"type": "boolean"},
+        "pending": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonEmptyString"}
+        }
+      },
+      "additionalProperties": true
+    },
+    "selfEvaluation": {
+      "type": "object",
+      "required": ["coverage", "decision", "score"],
+      "properties": {
+        "coverage": {"enum": ["FULL", "DEGRADED", "BASE_ONLY", "UNASSESSABLE"]},
+        "decision": {"enum": ["PASS", "FAIL", "REVIEW", "ERROR"]},
+        "score": {"$ref": "#/$defs/score"}
+      },
+      "additionalProperties": false
+    },
+    "buildCompletedPayload": {
+      "type": "object",
+      "required": ["pptx", "manifest", "slide_count", "overflow_test", "powerpoint_render", "self_evaluation"],
+      "properties": {
+        "pptx": {"$ref": "#/$defs/repositoryPath"},
+        "manifest": {"$ref": "#/$defs/repositoryPath"},
+        "incorporated_events": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "pattern": "^EVT-[0-9]{6,}$"}
+        },
+        "slide_count": {"type": "integer", "minimum": 1},
+        "overflow_test": {"enum": ["passed", "failed", "not_run"]},
+        "powerpoint_render": {"$ref": "#/$defs/nonEmptyString"},
+        "self_evaluation": {"$ref": "#/$defs/selfEvaluation"},
+        "note": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": true
+    },
+    "baselineCase": {
+      "type": "object",
+      "required": ["slides", "expected_calls", "status"],
+      "properties": {
+        "slides": {"type": "integer", "minimum": 1},
+        "expected_calls": {"type": "integer", "minimum": 0},
+        "status": {"enum": ["READY", "BLOCKED_CREDENTIAL", "COMPLETED", "FAILED"]}
+      },
+      "additionalProperties": true
+    },
+    "identityMetrics": {
+      "type": "object",
+      "required": ["match", "text", "color", "position"],
+      "properties": {
+        "match": {"$ref": "#/$defs/score"},
+        "text": {"$ref": "#/$defs/score"},
+        "color": {"$ref": "#/$defs/score"},
+        "position": {"$ref": "#/$defs/score"}
+      },
+      "additionalProperties": true
+    },
+    "baselineReproductionPayload": {
+      "type": "object",
+      "required": ["commit"],
+      "properties": {
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "official_example": {"$ref": "#/$defs/baselineCase"},
+        "aurora": {"$ref": "#/$defs/baselineCase"},
+        "score_status": {"enum": ["READY", "BLOCKED_CREDENTIAL", "PARTIAL", "COMPLETED"]},
+        "reason": {"$ref": "#/$defs/nonEmptyString"},
+        "food_identity": {"$ref": "#/$defs/identityMetrics"},
+        "aurora_identity": {"$ref": "#/$defs/identityMetrics"},
+        "findings": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonEmptyString"}
+        }
+      },
+      "anyOf": [
+        {"required": ["score_status"]},
+        {"required": ["findings"]}
+      ],
+      "additionalProperties": true
+    },
+    "datasetCatalogPayload": {
+      "type": "object",
+      "required": ["catalog", "priority_candidates", "production_approval", "reason"],
+      "properties": {
+        "catalog": {"$ref": "#/$defs/repositoryPath"},
+        "priority_candidates": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/nonEmptyString"}
+        },
+        "production_approval": {"type": "boolean"},
+        "reason": {"$ref": "#/$defs/nonEmptyString"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,6 @@
+Traceback (most recent call last):
+  File "D:\Campus study\实习\腾讯优图\入职面试\PPT自动评测基线\third_party\slidesbench\upstream\evaluate\reference_free_eval.py", line 9, in <module>
+    openai.api_key = os.environ["OPENAI_API_KEY"]
+  File "C:\ProgramData\anaconda3\lib\os.py", line 680, in __getitem__
+    raise KeyError(key) from None
+KeyError: 'OPENAI_API_KEY'

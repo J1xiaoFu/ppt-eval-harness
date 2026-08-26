@@ -1,0 +1,165 @@
+{
+  "as_of": "2026-08-26",
+  "policy": "publicly_accessible_is_not_equivalent_to_production_licensed",
+  "datasets": [
+    {
+      "id": "unipptbench",
+      "url": "https://modelscope.cn/datasets/kunshanyusui/UniPPTBench",
+      "data_revision": "0cc571f2943a5fc06983ba29aea0cdca7fc4a811",
+      "code_url": "https://github.com/zhao2000hhh/UniPPTBench",
+      "code_revision": "05567903b3209519a75ecf645b5060414ef5020e",
+      "scale": {"tasks": 126, "long_doc": 32, "multi_modal": 48, "multi_source": 18, "vague_prompt": 28, "bytes": 1612155581},
+      "language": {"en": 124, "mixed": 2},
+      "quality_status": {"ready": 39, "draft": 87},
+      "license_claim": "Apache-2.0 data; MIT code",
+      "recommended_use": "scenario-conditioned evaluation after source-rights review",
+      "priority": "A"
+    },
+    {
+      "id": "slidetailor_psp",
+      "url": "https://huggingface.co/datasets/yyyang/SlideTailor-PSP-dataset",
+      "revision": "aba1cfc94dfc72d2e8331d51c06f8f86f6e7d3d6",
+      "scale": {"target_papers": 150, "paper_slide_pairs": 50, "editable_templates": 10, "storage_bytes": 1510143803},
+      "format": ["paper_pdf", "slide_pdf", "template_pptx", "eval_config"],
+      "license_claim": "CC-BY-4.0; auto-gated",
+      "recommended_use": "source-grounded scientific document-to-slide evaluation",
+      "priority": "A"
+    },
+    {
+      "id": "pptagent_parsed_data",
+      "url": "https://huggingface.co/datasets/Forceless/PPTAgent-parsed_data",
+      "revision": "14dcdc1c153cfb5c0457c932f78dd6a2eb59c87e",
+      "scale": {"pptx_index_rows": 761, "unique_pptx": 639, "pdf_index_rows": 603, "unique_pdf": 492, "pptx_indexed_bytes": 13601325846},
+      "license_distribution_unique": {"cc-by-4.0": 612, "cc-by-sa-4.0": 14, "cc-by-nc-sa-4.0": 3, "cc-zero": 4, "other_or_unspecified": 6},
+      "recommended_use": "editable intrinsic-quality and controlled-defect fixtures after per-record filtering",
+      "priority": "A"
+    },
+    {
+      "id": "slideaudit",
+      "url": "https://github.com/zhuohaouw/SlideAudit",
+      "revision": "642d490b7c1d2e78a50a631bfd359433397f3ecf",
+      "scale": {"parent_slides": 600, "controlled_defect_slides": 1800, "total_images": 2400},
+      "format": ["slide_png", "defect_annotation", "bbox", "object_description"],
+      "license_claim": "CC-BY-4.0",
+      "recommended_use": "visual defect localization and metamorphic evaluator validation",
+      "priority": "A"
+    },
+    {
+      "id": "realslide_synslides",
+      "urls": ["https://huggingface.co/datasets/NerdyVisky/RealSlide", "https://huggingface.co/datasets/NerdyVisky/SynSlides"],
+      "revisions": ["4d52687cb086bce6d0636a767881090e2d046f33", "a9613c8aea38fb4ae0c58175e712b311ac4a4cac"],
+      "scale": {"real_slide_images": 1050, "synthetic_slide_images": 2200, "element_classes": 16},
+      "format": ["slide_image", "coco_bbox", "text_summary"],
+      "license_claim": "MIT cards; retain RealSlide upstream source inventory",
+      "recommended_use": "element-detection Oracle fixtures",
+      "priority": "A_B"
+    },
+    {
+      "id": "zenodo10k",
+      "url": "https://huggingface.co/datasets/Forceless/Zenodo10K",
+      "revision": "e59bf3ec11f7518a6c84dc145d83c0675d412522",
+      "scale": {"metadata_rows": 10448},
+      "license_claim": "per-record only; no blanket license",
+      "recommended_use": "metadata-driven CC allowlist and OOD decks",
+      "priority": "A_B"
+    },
+    {
+      "id": "deckedit_bench",
+      "url": "https://huggingface.co/datasets/EditPPT/DECKEDIT-BENCH",
+      "revision": "0c58abf3cec8ceef6e90065337d16aa81e83f34e",
+      "scale": {"decks": 28, "instructions": 183},
+      "format": ["pptx", "jsonl"],
+      "language": ["en", "ko"],
+      "license_claim": "CC-BY-NC-4.0",
+      "recommended_use": "noncommercial edit/diff and target-preservation evaluation",
+      "priority": "A_RESEARCH"
+    },
+    {
+      "id": "pptbench_suite",
+      "urls": [
+        "https://huggingface.co/datasets/tyrionhuu/PPTBench-Generation",
+        "https://huggingface.co/datasets/tyrionhuu/PPTBench-Modification",
+        "https://huggingface.co/datasets/tyrionhuu/PPTBench-Understanding"
+      ],
+      "revisions": ["6cd849e2df37d7da36933e241f9f23bcbd9f8df3", "3fc3c6ec8fda5f4677d23df3647192eac871e148", "e174181328947ee78cc59a3b76e92ec9ec17fbed"],
+      "scale": {"generation": 800, "modification": 1201, "understanding": 1039},
+      "license_claim": {"generation": "unspecified", "modification": "unspecified", "understanding": "Apache-2.0"},
+      "recommended_use": "slide-object unit tests; license-gated",
+      "priority": "B"
+    },
+    {
+      "id": "slides_align",
+      "url": "https://huggingface.co/datasets/Yqy6/Slides-Align",
+      "revision": "2f50ac6674a506acb245275e58c8a452c00e6a14",
+      "scale": {"claimed_rankings": 1326, "pptx_files_observed": 1215, "png_files_observed": 47742, "storage_bytes": 57073806859},
+      "license_claim": "MIT card plus commercial-product ToS caveat",
+      "availability_finding": "advertised Slides-Align.json not observed at repository root",
+      "recommended_use": "pairwise preference only after annotation and rights verification",
+      "priority": "B_C"
+    },
+    {
+      "id": "slidevqa",
+      "url": "https://huggingface.co/datasets/NTT-hil-insight/SlideVQA",
+      "revision": "e780ea258d734958befbfaed19fa059584642ca8",
+      "scale": {"decks": 2619, "slides_per_deck": 20, "qa_pairs": 14484, "bounding_boxes": 890945},
+      "format": ["slide_images", "qa", "bbox"],
+      "license_claim": "NTT evaluation-only agreement; gated",
+      "recommended_use": "internal nonredistributed multi-slide comprehension evaluation",
+      "priority": "B_RESEARCH"
+    },
+    {
+      "id": "doc2ppt",
+      "url": "https://doc2ppt.github.io",
+      "revision": "89603e060b659701200ac9c73eefa426116b11d2",
+      "scale": {"paired_document_decks": 5873, "document_pages_approx": 70000, "slide_pages": 98856},
+      "format": ["document_pdf", "slide_jpeg", "alignment"],
+      "license_claim": "not stated on project page",
+      "recommended_use": "quarantined long-document research",
+      "priority": "B_C"
+    },
+    {
+      "id": "ppt4web",
+      "url": "https://huggingface.co/datasets/nyuuzyou/ppt4web",
+      "revision": "1d7211df6090ee8a78417966b2ec4d783c687711",
+      "scale": {"presentations": 182405, "archives": 50, "archive_bytes": 265957687630},
+      "format": ["pptx", "jsonl"],
+      "language": ["ru", "en", "kk", "uk", "be"],
+      "license_claim": "CC0 dataset card; upstream uploader rights not independently verified",
+      "recommended_use": "quarantined large-scale intrinsic/OOD statistics",
+      "priority": "C"
+    },
+    {
+      "id": "zenodo_presentations_open",
+      "url": "https://huggingface.co/datasets/davanstrien/zenodo-presentations-open",
+      "revision": "f7563689661a20cb1c77c728ea6ba8a3ba1e3446",
+      "scale": {"page_examples": 663949, "dataset_bytes": 88350328346, "download_bytes": 119948607390},
+      "format": ["pdf_url", "page_image", "per_record_license"],
+      "license_claim": "generic CC card; retain per-record license",
+      "recommended_use": "visual-only page/deck distribution evaluation",
+      "priority": "B"
+    },
+    {
+      "id": "loc_government_powerpoint",
+      "url": "https://lclabspublicdata.s3.us-east-2.amazonaws.com/lcwa_gov_powerpoint_README.txt",
+      "scale": {"powerpoint_objects": 1000, "archive_bytes": 3458000000, "metadata_fields": 15},
+      "format": ["legacy_powerpoint", "pptx", "bagit", "csv"],
+      "license_claim": "LOC web-archive rights statement; rights vary by source government site",
+      "recommended_use": "sandboxed compatibility, security, and legacy-format challenge set",
+      "priority": "A_SAFETY"
+    },
+    {
+      "id": "x_slidesbench_examples",
+      "url": "https://github.com/OpenDataBox/X-SlidesBench",
+      "revision": "c048abadb225631570ea7dd3a73ceb1f4e483f5f",
+      "scale": {"paper_topics": 45, "paper_probes": 6849, "example_sources": 113, "example_probes": 8127, "audience_weight_rows": 27059},
+      "format": ["source_pdf_html", "probe_jsonl", "audience_weights"],
+      "license_claim": "MIT code; source documents retain upstream policies",
+      "recommended_use": "audience-coverage and correctness metric baseline",
+      "priority": "A_METRIC"
+    }
+  ],
+  "excluded_false_positive": {
+    "id": "billxbf/ppt127k",
+    "reason": "sampled CSV is prompt/response preference data, not PowerPoint content"
+  }
+}

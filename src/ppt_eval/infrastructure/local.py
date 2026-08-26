@@ -1,0 +1,220 @@
+from __future__ import annotations
+
+import dataclasses
+import enum
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import threading
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterable
+
+from ppt_eval.domain import AuditEvent
+
+
+def to_primitive(value: Any) -> Any:
+    """Convert domain objects into stable JSON-compatible values."""
+
+    if dataclasses.is_dataclass(value):
+        return {field.name: to_primitive(getattr(value, field.name)) for field in dataclasses.fields(value)}
+    if isinstance(value, enum.Enum):
+        return value.value
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat()
+    if isinstance(value, dict):
+        return {str(key): to_primitive(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [to_primitive(item) for item in value]
+    if hasattr(value, "model_dump"):
+        return to_primitive(value.model_dump(mode="json"))
+    return value
+
+
+def stable_json(value: Any) -> str:
+    return json.dumps(to_primitive(value), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def sha256_file(path: str | Path) -> str:
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+class LocalArtifactStore:
+    """Content-addressed local replacement for an S3/MinIO artifact port."""
+
+    def __init__(self, root: str | Path = "var/artifacts") -> None:
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+
+    def put(self, source: str | Path, *, media_type: str = "application/octet-stream") -> dict[str, Any]:
+        source_path = Path(source)
+        digest = sha256_file(source_path)
+        destination = self.root / digest[:2] / digest
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if not destination.exists():
+            shutil.copy2(source_path, destination)
+        return {
+            "sha256": digest,
+            "uri": str(destination.resolve()),
+            "size_bytes": source_path.stat().st_size,
+            "media_type": media_type,
+            "original_name": source_path.name,
+        }
+
+    def resolve(self, sha256: str) -> Path:
+        candidate = self.root / sha256[:2] / sha256
+        if not candidate.is_file():
+            raise FileNotFoundError(sha256)
+        return candidate
+
+
+class JsonRunRepository:
+    """Atomic JSON report store used by the CLI and local API."""
+
+    def __init__(self, root: str | Path = "var/runs") -> None:
+        self.root = Path(root)
+        self.root.mkdir(parents=True, exist_ok=True)
+        self.review_path = self.root / "reviews.jsonl"
+        self._lock = threading.RLock()
+
+    def save(self, report: Any) -> Path:
+        payload = to_primitive(report)
+        run_id = str(payload.get("run_id") or payload.get("id") or uuid.uuid4())
+        target = self.root / f"{run_id}.json"
+        temporary = target.with_suffix(f".json.{uuid.uuid4().hex}.tmp")
+        with self._lock:
+            temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(temporary, target)
+        return target
+
+    def get(self, run_id: str) -> dict[str, Any]:
+        path = self.root / f"{run_id}.json"
+        if not path.is_file():
+            raise KeyError(run_id)
+        return json.loads(path.read_text(encoding="utf-8"))
+
+    def list(self) -> list[dict[str, Any]]:
+        reports = []
+        for path in sorted(self.root.glob("*.json"), key=lambda item: item.stat().st_mtime, reverse=True):
+            reports.append(json.loads(path.read_text(encoding="utf-8")))
+        return reports
+
+    def add_review(self, review: dict[str, Any]) -> dict[str, Any]:
+        record = {
+            "review_id": review.get("review_id") or f"review-{uuid.uuid4().hex}",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            **review,
+        }
+        line = json.dumps(record, ensure_ascii=False, sort_keys=True)
+        with self._lock, self.review_path.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(line + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        return record
+
+
+class JsonlAuditLog:
+    """Append-only, hash-chained audit events."""
+
+    def __init__(self, path: str | Path = "var/audit/events.jsonl") -> None:
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
+
+    def _last_hash(self) -> str | None:
+        if not self.path.exists():
+            return None
+        last = ""
+        with self.path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.strip():
+                    last = line
+        if not last:
+            return None
+        return json.loads(last)["event_hash"]
+
+    def append(
+        self,
+        *,
+        run_id: str,
+        event_type: str,
+        actor: str,
+        payload: dict[str, Any] | Any,
+        supersedes: str | None = None,
+        occurred_at: str | None = None,
+    ) -> AuditEvent:
+        with self._lock:
+            core = {
+                "event_id": f"evt-{uuid.uuid4().hex}",
+                "run_id": run_id,
+                "event_type": event_type,
+                "actor": actor,
+                "occurred_at": occurred_at or datetime.now(timezone.utc).isoformat(),
+                "payload": to_primitive(payload),
+                "supersedes": supersedes,
+                "previous_hash": self._last_hash(),
+            }
+            event_hash = hashlib.sha256(stable_json(core).encode("utf-8")).hexdigest()
+            event = AuditEvent(**core, event_hash=event_hash)
+            with self.path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps(to_primitive(event), ensure_ascii=False, sort_keys=True) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            return event
+
+    def read(self) -> Iterable[dict[str, Any]]:
+        if not self.path.exists():
+            return []
+        with self.path.open("r", encoding="utf-8") as handle:
+            return [json.loads(line) for line in handle if line.strip()]
+
+    def verify(self) -> tuple[bool, str | None]:
+        previous: str | None = None
+        for event in self.read():
+            claimed = event.get("event_hash")
+            candidate = dict(event)
+            candidate.pop("event_hash", None)
+            candidate.pop("schema_version", None)
+            if candidate.get("previous_hash") != previous:
+                return False, event.get("event_id")
+            actual = hashlib.sha256(stable_json(candidate).encode("utf-8")).hexdigest()
+            if actual != claimed:
+                return False, event.get("event_id")
+            previous = claimed
+        return True, None
+
+
+def git_sha(cwd: str | Path | None = None) -> str:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=cwd, stderr=subprocess.DEVNULL, text=True
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return "uncommitted"
+
+
+def font_fingerprint() -> str:
+    """Hash the installed font inventory without reading font contents."""
+
+    font_root = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
+    if not font_root.is_dir():
+        return "unavailable"
+    inventory = []
+    try:
+        for path in sorted(font_root.iterdir(), key=lambda item: item.name.lower()):
+            if path.suffix.lower() not in {".ttf", ".otf", ".ttc"}:
+                continue
+            stat = path.stat()
+            inventory.append(f"{path.name}|{stat.st_size}|{stat.st_mtime_ns}")
+    except OSError:
+        return "unavailable"
+    return hashlib.sha256("\n".join(inventory).encode("utf-8")).hexdigest()

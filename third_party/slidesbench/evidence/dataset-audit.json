@@ -1,0 +1,128 @@
+{
+  "source": "https://github.com/para-lost/AutoPresent",
+  "commit": "98e0c012e89469863d9c3c8bc87eac967d82b2e6",
+  "examples": {
+    "domain_count": 10,
+    "unique_test_slides": 195,
+    "test_instruction_tasks": 585,
+    "reference_decks_in_repo": 1,
+    "domains": {
+      "art_photos": {
+        "slide_count": 25,
+        "instruction_task_count": 75,
+        "missing_instruction_files": {},
+        "reference_decks_in_repo": [],
+        "slides_with_media_directory": 0
+      },
+      "business": {
+        "slide_count": 16,
+        "instruction_task_count": 48,
+        "missing_instruction_files": {},
+        "reference_decks_in_repo": [],
+        "slides_with_media_directory": 0
+      },
+      "career": {
+        "slide_count": 19,
+        "instruction_task_count": 57,
+        "missing_instruction_files": {},
+        "reference_decks_in_repo": [],
+        "slides_with_media_directory": 0
+      },
+      "design": {
+        "slide_count": 6,
+        "instruction_task_count": 18,
+        "missing_instruction_files": {},
+        "reference_decks_in_repo": [],
+        "slides_with_media_directory": 0
+      },
+      "entrepreneur": {
+        "slide_count": 11,
+        "instruction_task_count": 33,
+        "missing_instruction_files": {},
+        "reference_decks_in_repo": [],
+        "slides_with_media_directory": 0
+      },
+      "environment": {
+        "slide_count": 10,
+        "instruction_task_count": 30,
+        "missing_instruction_files": {},
+        "reference_decks_in_repo": [],
+        "slides_with_media_directory": 0
+      },
+      "food": {
+        "slide_count": 32,
+        "instruction_task_count": 96,
+        "missing_instruction_files": {},
+        "reference_decks_in_repo": [
+          "food.pptx"
+        ],
+        "slides_with_media_directory": 0
+      },
+      "marketing": {
+        "slide_count": 43,
+        "instruction_task_count": 129,
+        "missing_instruction_files": {},
+        "reference_decks_in_repo": [],
+        "slides_with_media_directory": 0
+      },
+      "social_media": {
+        "slide_count": 21,
+        "instruction_task_count": 63,
+        "missing_instruction_files": {},
+        "reference_decks_in_repo": [],
+        "slides_with_media_directory": 0
+      },
+      "technology": {
+        "slide_count": 12,
+        "instruction_task_count": 36,
+        "missing_instruction_files": {},
+        "reference_decks_in_repo": [],
+        "slides_with_media_directory": 0
+      }
+    }
+  },
+  "training_csvs": {
+    "dataset_train.csv": {
+      "bytes": 10510062,
+      "sha256": "c0c01b1147da7ca59ae15fcc88868dcde5101eb931feba64a48f50a86602b9f0",
+      "columns": [
+        "instruction",
+        "slide_folder"
+      ],
+      "row_count": 7622,
+      "nonempty_by_column": {
+        "instruction": 7622,
+        "slide_folder": 7622
+      },
+      "has_training_code_column": false
+    },
+    "dataset_train_high_level.csv": {
+      "bytes": 1677078,
+      "sha256": "c190560dae8ef27e6a4f2b2bcbe25b66da15c6b1387efa21ecfc9522e3907dfe",
+      "columns": [
+        "instruction",
+        "slide_folder"
+      ],
+      "row_count": 7045,
+      "nonempty_by_column": {
+        "instruction": 7045,
+        "slide_folder": 7045
+      },
+      "has_training_code_column": false
+    },
+    "dataset_train_no_img.csv": {
+      "bytes": 9316824,
+      "sha256": "5eee43562467394bf1c212a2af9b8f15e151f297a17e3eee77ab4001981f5ef2",
+      "columns": [
+        "instruction",
+        "slide_folder"
+      ],
+      "row_count": 7045,
+      "nonempty_by_column": {
+        "instruction": 7045,
+        "slide_folder": 7045
+      },
+      "has_training_code_column": false
+    }
+  }
+}

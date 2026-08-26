@@ -1,0 +1,1045 @@
+{
+  "schema": "openai.presentation.layout/v4",
+  "unit": "px",
+  "slide": {
+    "aid": "sl/idr45r",
+    "id": "idr45r",
+    "slide": 4,
+    "layoutId": "15c8edfe-a62f-4dc1-8c5f-c2bc87c392a0",
+    "layoutName": "Title Slide",
+    "layoutType": "title",
+    "masterLayoutId": "317fc2d4-baeb-4f3f-988f-b9773386becc",
+    "masterLayoutName": "Master",
+    "backgroundColor": "#FFFFFF",
+    "frame": {
+      "left": 0,
+      "top": 0,
+      "width": 1280,
+      "height": 720
+    }
+  },
+  "theme": {
+    "colorSchemeName": "ChatGPT",
+    "colors": {
+      "accent1": "#156082",
+      "accent2": "#E97132",
+      "accent3": "#196B24",
+      "accent4": "#0F9ED5",
+      "accent5": "#A02B93",
+      "accent6": "#4EA72E",
+      "bg1": "#FFFFFF",
+      "bg2": "#000000",
+      "tx1": "#1F1F1F",
+      "tx2": "#FFFFFF",
+      "dk1": "#000000",
+      "lt1": "#FFFFFF",
+      "dk2": "#0E2841",
+      "lt2": "#E8E8E8",
+      "hlink": "#467886",
+      "folHlink": "#96607D"
+    },
+    "typefaces": [
+      "Microsoft YaHei"
+    ]
+  },
+  "inheritedLayers": [
+    {
+      "scope": "layout",
+      "id": "15c8edfe-a62f-4dc1-8c5f-c2bc87c392a0",
+      "name": "Title Slide",
+      "type": "title",
+      "parentLayoutId": "317fc2d4-baeb-4f3f-988f-b9773386becc",
+      "elements": []
+    },
+    {
+      "scope": "master",
+      "id": "317fc2d4-baeb-4f3f-988f-b9773386becc",
+      "name": "Master",
+      "type": "master",
+      "elements": []
+    }
+  ],
+  "elements": [
+    {
+      "order": 1,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/6h8rm5wv",
+      "id": "1",
+      "name": "chapter-3",
+      "bbox": [
+        54,
+        34,
+        190,
+        24
+      ],
+      "geometry": "rect",
+      "text": "开发 / 01",
+      "textPreview": "开发 / 01",
+      "resolvedFontSize": 19,
+      "resolvedTextStyle": {
+        "fontSize": 19,
+        "typeface": "Microsoft YaHei",
+        "color": "#1677D2",
+        "bold": true,
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "开发 / 01"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "开发 / 01",
+          "resolvedTextStyle": {
+            "fontSize": 19,
+            "typeface": "Microsoft YaHei",
+            "color": "#1677D2",
+            "bold": true,
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "开发 / 01",
+              "fontSize": 19,
+              "typeface": "Microsoft YaHei",
+              "color": "#1677D2",
+              "bold": true,
+              "alignment": "left"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 2,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/t4zqhkf6",
+      "id": "2",
+      "name": "title-3",
+      "bbox": [
+        54,
+        70,
+        1110,
+        58
+      ],
+      "geometry": "rect",
+      "text": "确定性总控不需要知道指标怎么打分",
+      "textPreview": "确定性总控不需要知道指标怎么打分",
+      "resolvedFontSize": 47,
+      "resolvedTextStyle": {
+        "fontSize": 47,
+        "typeface": "Microsoft YaHei",
+        "color": "#111418",
+        "bold": true,
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "确定性总控不需要知道指标怎么打分"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "确定性总控不需要知道指标怎么打分",
+          "resolvedTextStyle": {
+            "fontSize": 47,
+            "typeface": "Microsoft YaHei",
+            "color": "#111418",
+            "bold": true,
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "确定性总控不需要知道指标怎么打分",
+              "fontSize": 47,
+              "typeface": "Microsoft YaHei",
+              "color": "#111418",
+              "bold": true,
+              "alignment": "left"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 3,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/s3q9ofe1",
+      "id": "3",
+      "name": "number-3",
+      "bbox": [
+        1182,
+        36,
+        46,
+        24
+      ],
+      "geometry": "rect",
+      "text": "04",
+      "textPreview": "04",
+      "resolvedFontSize": 19,
+      "resolvedTextStyle": {
+        "fontSize": 19,
+        "typeface": "Microsoft YaHei",
+        "color": "#5E6570",
+        "bold": true,
+        "alignment": "right",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "04"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "04",
+          "resolvedTextStyle": {
+            "fontSize": 19,
+            "typeface": "Microsoft YaHei",
+            "color": "#5E6570",
+            "bold": true,
+            "alignment": "right"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "04",
+              "fontSize": 19,
+              "typeface": "Microsoft YaHei",
+              "color": "#5E6570",
+              "bold": true,
+              "alignment": "right"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 4,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/f6h8juxc",
+      "id": "4",
+      "name": "header-rule-3",
+      "bbox": [
+        54,
+        139,
+        1172,
+        2
+      ],
+      "geometry": "rect",
+      "fillColor": "#111418",
+      "lineWidth": 0
+    },
+    {
+      "order": 5,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/e58rqpwr",
+      "id": "5",
+      "name": "footer-3",
+      "bbox": [
+        54,
+        684,
+        1120,
+        18
+      ],
+      "geometry": "rect",
+      "text": "PRJ-PPT-EVAL-001 · mvp_implemented_production_validation_pending · snapshot 2026-08-26T18:00:00+08:00",
+      "textPreview": "PRJ-PPT-EVAL-001 · mvp_implemented_production_validation_pending · snapshot 2026-08-26T18:00:00+08:00",
+      "resolvedFontSize": 11,
+      "resolvedTextStyle": {
+        "fontSize": 11,
+        "typeface": "Microsoft YaHei",
+        "color": "#5E6570",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "PRJ-PPT-EVAL-001 · mvp_implemented_production_validation_pending · snapshot 2026-08-26T18:00:00+08:00"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "PRJ-PPT-EVAL-001 · mvp_implemented_production_validation_pending · snapshot 2026-08-26T18:00:00+08:00",
+          "resolvedTextStyle": {
+            "fontSize": 11,
+            "typeface": "Microsoft YaHei",
+            "color": "#5E6570",
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "PRJ-PPT-EVAL-001 · mvp_implemented_production_validation_pending · snapshot 2026-08-26T18:00:00+08:00",
+              "fontSize": 11,
+              "typeface": "Microsoft YaHei",
+              "color": "#5E6570",
+              "alignment": "left"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 6,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/18zql4vi",
+      "id": "6",
+      "name": "claim-3",
+      "bbox": [
+        54,
+        158,
+        1110,
+        50
+      ],
+      "geometry": "rect",
+      "text": "Supervisor 只调度节点、预算和状态，判断封装在 Oracle。",
+      "textPreview": "Supervisor 只调度节点、预算和状态，判断封装在 Oracle。",
+      "resolvedFontSize": 26,
+      "resolvedTextStyle": {
+        "fontSize": 26,
+        "typeface": "Microsoft YaHei",
+        "color": "#5E6570",
+        "alignment": "left",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "Supervisor 只调度节点、预算和状态，判断封装在 Oracle。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "Supervisor 只调度节点、预算和状态，判断封装在 Oracle。",
+          "resolvedTextStyle": {
+            "fontSize": 26,
+            "typeface": "Microsoft YaHei",
+            "color": "#5E6570",
+            "alignment": "left"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "Supervisor 只调度节点、预算和状态，判断封装在 Oracle。",
+              "fontSize": 26,
+              "typeface": "Microsoft YaHei",
+              "color": "#5E6570",
+              "alignment": "left"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 7,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/g7q9szex",
+      "id": "7",
+      "name": "layer-3-0",
+      "bbox": [
+        130,
+        230,
+        930,
+        42
+      ],
+      "geometry": "rect",
+      "fillColor": "#EEF0F2",
+      "lineColor": "#C8CDD3",
+      "lineWidth": 1
+    },
+    {
+      "order": 8,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/vax87qx8",
+      "id": "8",
+      "name": "layer-text-3-0",
+      "bbox": [
+        148,
+        239,
+        894,
+        24
+      ],
+      "geometry": "rect",
+      "text": "01  EvaluationService",
+      "textPreview": "01  EvaluationService",
+      "resolvedFontSize": 22,
+      "resolvedTextStyle": {
+        "fontSize": 22,
+        "typeface": "Microsoft YaHei",
+        "color": "#111418",
+        "alignment": "center",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "01  EvaluationService"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "01  EvaluationService",
+          "resolvedTextStyle": {
+            "fontSize": 22,
+            "typeface": "Microsoft YaHei",
+            "color": "#111418",
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "01  EvaluationService",
+              "fontSize": 22,
+              "typeface": "Microsoft YaHei",
+              "color": "#111418",
+              "alignment": "center"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 9,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/a947elwn",
+      "id": "9",
+      "name": "layer-3-1",
+      "bbox": [
+        175,
+        286,
+        840,
+        42
+      ],
+      "geometry": "rect",
+      "fillColor": "#DCEEFF",
+      "lineColor": "#1677D2",
+      "lineWidth": 2
+    },
+    {
+      "order": 10,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/ovupozid",
+      "id": "10",
+      "name": "layer-text-3-1",
+      "bbox": [
+        193,
+        295,
+        804,
+        24
+      ],
+      "geometry": "rect",
+      "text": "02  RunSupervisor",
+      "textPreview": "02  RunSupervisor",
+      "resolvedFontSize": 22,
+      "resolvedTextStyle": {
+        "fontSize": 22,
+        "typeface": "Microsoft YaHei",
+        "color": "#111418",
+        "bold": true,
+        "alignment": "center",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "02  RunSupervisor"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "02  RunSupervisor",
+          "resolvedTextStyle": {
+            "fontSize": 22,
+            "typeface": "Microsoft YaHei",
+            "color": "#111418",
+            "bold": true,
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "02  RunSupervisor",
+              "fontSize": 22,
+              "typeface": "Microsoft YaHei",
+              "color": "#111418",
+              "bold": true,
+              "alignment": "center"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 11,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/pw3qx4ji",
+      "id": "11",
+      "name": "layer-3-2",
+      "bbox": [
+        220,
+        342,
+        750,
+        42
+      ],
+      "geometry": "rect",
+      "fillColor": "#EEF0F2",
+      "lineColor": "#C8CDD3",
+      "lineWidth": 1
+    },
+    {
+      "order": 12,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/2tc7mp07",
+      "id": "12",
+      "name": "layer-text-3-2",
+      "bbox": [
+        238,
+        351,
+        714,
+        24
+      ],
+      "geometry": "rect",
+      "text": "03  ProfileCompiler + DagScheduler",
+      "textPreview": "03  ProfileCompiler + DagScheduler",
+      "resolvedFontSize": 22,
+      "resolvedTextStyle": {
+        "fontSize": 22,
+        "typeface": "Microsoft YaHei",
+        "color": "#111418",
+        "alignment": "center",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "03  ProfileCompiler + DagScheduler"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "03  ProfileCompiler + DagScheduler",
+          "resolvedTextStyle": {
+            "fontSize": 22,
+            "typeface": "Microsoft YaHei",
+            "color": "#111418",
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "03  ProfileCompiler + DagScheduler",
+              "fontSize": 22,
+              "typeface": "Microsoft YaHei",
+              "color": "#111418",
+              "alignment": "center"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 13,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/nulovu1s",
+      "id": "13",
+      "name": "layer-3-3",
+      "bbox": [
+        265,
+        398,
+        660,
+        42
+      ],
+      "geometry": "rect",
+      "fillColor": "#DDF3EF",
+      "lineColor": "#C8CDD3",
+      "lineWidth": 1
+    },
+    {
+      "order": 14,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/cjepszi9",
+      "id": "14",
+      "name": "layer-text-3-3",
+      "bbox": [
+        283,
+        407,
+        624,
+        24
+      ],
+      "geometry": "rect",
+      "text": "04  Composite / Leaf Oracle",
+      "textPreview": "04  Composite / Leaf Oracle",
+      "resolvedFontSize": 22,
+      "resolvedTextStyle": {
+        "fontSize": 22,
+        "typeface": "Microsoft YaHei",
+        "color": "#111418",
+        "bold": true,
+        "alignment": "center",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "04  Composite / Leaf Oracle"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "04  Composite / Leaf Oracle",
+          "resolvedTextStyle": {
+            "fontSize": 22,
+            "typeface": "Microsoft YaHei",
+            "color": "#111418",
+            "bold": true,
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "04  Composite / Leaf Oracle",
+              "fontSize": 22,
+              "typeface": "Microsoft YaHei",
+              "color": "#111418",
+              "bold": true,
+              "alignment": "center"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 15,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/xknq14ju",
+      "id": "15",
+      "name": "layer-3-4",
+      "bbox": [
+        310,
+        454,
+        570,
+        42
+      ],
+      "geometry": "rect",
+      "fillColor": "#EEF0F2",
+      "lineColor": "#C8CDD3",
+      "lineWidth": 1
+    },
+    {
+      "order": 16,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/axc7q903",
+      "id": "16",
+      "name": "layer-text-3-4",
+      "bbox": [
+        328,
+        463,
+        534,
+        24
+      ],
+      "geometry": "rect",
+      "text": "05  Calibrator + PPT-PDMS",
+      "textPreview": "05  Calibrator + PPT-PDMS",
+      "resolvedFontSize": 22,
+      "resolvedTextStyle": {
+        "fontSize": 22,
+        "typeface": "Microsoft YaHei",
+        "color": "#111418",
+        "alignment": "center",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "05  Calibrator + PPT-PDMS"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "05  Calibrator + PPT-PDMS",
+          "resolvedTextStyle": {
+            "fontSize": 22,
+            "typeface": "Microsoft YaHei",
+            "color": "#111418",
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "05  Calibrator + PPT-PDMS",
+              "fontSize": 22,
+              "typeface": "Microsoft YaHei",
+              "color": "#111418",
+              "alignment": "center"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 17,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/byl8ze1o",
+      "id": "17",
+      "name": "layer-3-5",
+      "bbox": [
+        355,
+        510,
+        480,
+        42
+      ],
+      "geometry": "rect",
+      "fillColor": "#EEF0F2",
+      "lineColor": "#C8CDD3",
+      "lineWidth": 1
+    },
+    {
+      "order": 18,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/snapgfi5",
+      "id": "18",
+      "name": "layer-text-3-5",
+      "bbox": [
+        373,
+        519,
+        444,
+        24
+      ],
+      "geometry": "rect",
+      "text": "06  DecisionPolicy",
+      "textPreview": "06  DecisionPolicy",
+      "resolvedFontSize": 22,
+      "resolvedTextStyle": {
+        "fontSize": 22,
+        "typeface": "Microsoft YaHei",
+        "color": "#111418",
+        "alignment": "center",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "06  DecisionPolicy"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "06  DecisionPolicy",
+          "resolvedTextStyle": {
+            "fontSize": 22,
+            "typeface": "Microsoft YaHei",
+            "color": "#111418",
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "06  DecisionPolicy",
+              "fontSize": 22,
+              "typeface": "Microsoft YaHei",
+              "color": "#111418",
+              "alignment": "center"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 19,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/toj6pkja",
+      "id": "19",
+      "name": "layer-3-6",
+      "bbox": [
+        400,
+        566,
+        390,
+        42
+      ],
+      "geometry": "rect",
+      "fillColor": "#EEF0F2",
+      "lineColor": "#C8CDD3",
+      "lineWidth": 1
+    },
+    {
+      "order": 20,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/tkbmdgbe",
+      "id": "20",
+      "name": "layer-text-3-6",
+      "bbox": [
+        418,
+        575,
+        354,
+        24
+      ],
+      "geometry": "rect",
+      "text": "07  Evidence · Audit · Feedback",
+      "textPreview": "07  Evidence · Audit · Feedback",
+      "resolvedFontSize": 22,
+      "resolvedTextStyle": {
+        "fontSize": 22,
+        "typeface": "Microsoft YaHei",
+        "color": "#111418",
+        "alignment": "center",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "07  Evidence · Audit · Feedback"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "07  Evidence · Audit · Feedback",
+          "resolvedTextStyle": {
+            "fontSize": 22,
+            "typeface": "Microsoft YaHei",
+            "color": "#111418",
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "07  Evidence · Audit · Feedback",
+              "fontSize": 22,
+              "typeface": "Microsoft YaHei",
+              "color": "#111418",
+              "alignment": "center"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    },
+    {
+      "order": 21,
+      "kind": "shape",
+      "scope": "slide",
+      "aid": "sh/8j25kbat",
+      "id": "21",
+      "name": "arch-note-3",
+      "bbox": [
+        160,
+        635,
+        960,
+        30
+      ],
+      "geometry": "rect",
+      "text": "每层只完成既定工作；模型不能生成 DAG、修改规则或决定发布。",
+      "textPreview": "每层只完成既定工作；模型不能生成 DAG、修改规则或决定发布。",
+      "resolvedFontSize": 22,
+      "resolvedTextStyle": {
+        "fontSize": 22,
+        "typeface": "Microsoft YaHei",
+        "color": "#B44536",
+        "bold": true,
+        "alignment": "center",
+        "insets": {
+          "top": 4.8,
+          "right": 9.6,
+          "bottom": 4.8,
+          "left": 9.6
+        }
+      },
+      "textLayout": {
+        "lineCount": 1,
+        "lines": [
+          {
+            "index": 1,
+            "text": "每层只完成既定工作；模型不能生成 DAG、修改规则或决定发布。"
+          }
+        ]
+      },
+      "paragraphs": [
+        {
+          "index": 1,
+          "text": "每层只完成既定工作；模型不能生成 DAG、修改规则或决定发布。",
+          "resolvedTextStyle": {
+            "fontSize": 22,
+            "typeface": "Microsoft YaHei",
+            "color": "#B44536",
+            "bold": true,
+            "alignment": "center"
+          },
+          "runs": [
+            {
+              "index": 1,
+              "text": "每层只完成既定工作；模型不能生成 DAG、修改规则或决定发布。",
+              "fontSize": 22,
+              "typeface": "Microsoft YaHei",
+              "color": "#B44536",
+              "bold": true,
+              "alignment": "center"
+            }
+          ],
+          "marginLeft": 0
+        }
+      ],
+      "lineWidth": 0
+    }
+  ],
+  "composeRuns": []
+}

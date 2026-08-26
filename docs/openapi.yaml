@@ -1,0 +1,148 @@
+openapi: 3.1.0
+info:
+  title: PPT Eval Harness
+  version: 0.1.0
+  description: Deterministic PPT evaluation, review, and audit API.
+paths:
+  /healthz:
+    get:
+      operationId: healthz
+      responses:
+        "200":
+          description: Service and audit-chain status.
+  /v1/evaluations:
+    post:
+      operationId: createEvaluation
+      parameters:
+        - in: query
+          name: async
+          schema: { type: boolean, default: true }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/EvaluationSubmission" }
+      responses:
+        "200":
+          description: Job state or completed report.
+    get:
+      operationId: listEvaluations
+      responses:
+        "200":
+          description: Newest evaluation reports first.
+  /v1/jobs/{job_id}:
+    get:
+      operationId: getEvaluationJob
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Job state. }
+        "404": { description: Job not found. }
+  /v1/evaluations/{run_id}:
+    get:
+      operationId: getEvaluation
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Complete report, manifest, and atomic evidence. }
+        "404": { description: Run not found. }
+  /v1/reviews:
+    post:
+      operationId: createReview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReviewInput" }
+      responses:
+        "200": { description: Immutable review record. }
+  /v1/feedback:
+    post:
+      operationId: createFeedback
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200": { description: Immutable feedback and edit-diff record. }
+  /v1/parameter-proposals:
+    post:
+      operationId: createParameterProposal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200": { description: Draft parameter proposal; this endpoint cannot publish it. }
+  /v1/parameter-proposals/{proposal_id}/validate:
+    post:
+      operationId: validateParameterProposal
+      parameters:
+        - in: path
+          name: proposal_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        "200": { description: Validated or rejected proposal. }
+  /v1/parameter-proposals/{proposal_id}/approve:
+    post:
+      operationId: approveParameterProposal
+      parameters:
+        - in: path
+          name: proposal_id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approver]
+              properties:
+                approver: { type: string }
+      responses:
+        "200": { description: Approval event; two distinct approvals produce a release candidate only. }
+components:
+  schemas:
+    EvaluationSubmission:
+      type: object
+      required: [case]
+      properties:
+        case: { $ref: "#/components/schemas/EvalCase" }
+        profile: { type: object, additionalProperties: true }
+    EvalCase:
+      type: object
+      required: [case_id, scene, pptx_path]
+      properties:
+        case_id: { type: string, minLength: 1 }
+        scene:
+          type: string
+          enum: [text_to_ppt, project_summary, multimodal, ready_made]
+        pptx_path: { type: string, minLength: 1 }
+        request: { type: [string, "null"] }
+        audience: { type: [string, "null"] }
+        source_materials: { type: array, items: { type: string } }
+        assets: { type: array, items: { type: string } }
+        metadata: { type: object, additionalProperties: true }
+    ReviewInput:
+      type: object
+      required: [run_id, verdict, reviewer_id]
+      properties:
+        run_id: { type: string }
+        verdict: { type: string, enum: [APPROVE, REJECT] }
+        reviewer_id: { type: string }
+        note: { type: string, default: "" }

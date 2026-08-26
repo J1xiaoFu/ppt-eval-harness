@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "D:\Campus study\实习\腾讯优图\入职面试\PPT自动评测基线\third_party\slidesbench\repro-code\slide_1\code_library.py", line 7, in <module>
+    from library import *
+  File "D:\Campus study\实习\腾讯优图\入职面试\PPT自动评测基线\third_party\slidesbench\upstream\slidesbench\library.py", line 4, in <module>
+    from SlidesLib import GoogleSearch, Dalle3, LLM
+  File "D:\Campus study\实习\腾讯优图\入职面试\PPT自动评测基线\third_party\slidesbench\.venv\lib\site-packages\SlidesLib\__init__.py", line 1, in <module>
+    from .search import GoogleSearch
+  File "D:\Campus study\实习\腾讯优图\入职面试\PPT自动评测基线\third_party\slidesbench\.venv\lib\site-packages\SlidesLib\search.py", line 4, in <module>
+    from chromedriver_py import binary_path
+ModuleNotFoundError: No module named 'chromedriver_py'

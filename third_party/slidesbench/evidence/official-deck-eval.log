@@ -1,0 +1,11 @@
+D:\Campus study\实习\腾讯优图\入职面试\PPT自动评测基线\third_party\slidesbench\.venv\lib\site-packages\huggingface_hub\file_download.py:949: FutureWarning: `resume_download` is deprecated and will be removed in version 1.0.0. Downloads always resume when possible. If you want to force a new download, use `force_download=True`.
+  warnings.warn(
+Execution success rate: 50.0%
+Traceback (most recent call last):
+  File "D:\Campus study\实习\腾讯优图\入职面试\PPT自动评测基线\third_party\slidesbench\upstream\evaluate\slides_eval.py", line 40, in <module>
+    main()
+  File "D:\Campus study\实习\腾讯优图\入职面试\PPT自动评测基线\third_party\slidesbench\upstream\evaluate\slides_eval.py", line 20, in main
+    page_list = sorted(page_list, key=lambda x: int(x.split('/')[-2].split('_')[1]))
+  File "D:\Campus study\实习\腾讯优图\入职面试\PPT自动评测基线\third_party\slidesbench\upstream\evaluate\slides_eval.py", line 20, in <lambda>
+    page_list = sorted(page_list, key=lambda x: int(x.split('/')[-2].split('_')[1]))
+IndexError: list index out of range

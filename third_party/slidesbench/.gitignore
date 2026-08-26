@@ -1,0 +1,12 @@
+.venv/
+paper-source/
+paper-source.tar
+paper.pdf
+repro-code/
+repro-fixture/
+repro-parse-media/
+upstream/
+*.log
+!evidence/*.log
+official-self-eval.json
+!evidence/official-self-eval.json

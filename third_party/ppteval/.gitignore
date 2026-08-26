@@ -1,0 +1,6 @@
+upstream/
+__pycache__/
+*.pyc
+*.pdf
+paper.txt
+emnlp-paper.txt

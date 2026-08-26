@@ -1,0 +1,40 @@
+{
+  "generator": "build_report.py/1.0.0",
+  "generated_at": "2026-08-26T18:00:00+08:00",
+  "inputs": {
+    "audit": "bc9e03d4cfe2b06dd1f9070a2a1ebbf660c548c8e133ed40656b50293075642a",
+    "events": "9467e7430558983d2f43b545444b6a57c88762d2f9b866416fbd7a082c9ce37d"
+  },
+  "sources": {
+    "reports/01_research/01_related_work_matrix.md": "0030aabb5537cb33578e976842fd317b5ff56e23be4a72be43a6825a95be1654",
+    "reports/01_research/02_ppt_pdms_migration.md": "409ce2855b5ce716cf945ab34b607621908fb7c38ad12ff5381d39aa29a7c2f9",
+    "reports/01_research/03_failure_taxonomy_and_rubric.md": "37490ed895201331feaf97e750f71afeec8bff6d0db825c05272c1c9da9728ec",
+    "reports/01_research/06_baseline_reproduction.md": "401ff9199e2f4b70e958928299feeefce4b815fa579cd7b216f422567946bf45",
+    "reports/01_research/07_public_dataset_catalog.md": "0e9001063ccdcce391f89c21182a80357bd883bdcfa62379c638b456bc8146a0",
+    "reports/02_development/00_srs.md": "c8b7e7be35891ff35d71d7eebe7257b26c8974a788aaea64a10e603367f609c8",
+    "reports/02_development/01_system_design.md": "b60cea69b747874d6e2ada325ee31f6ad288413842883f8a604af949118fafca",
+    "reports/02_development/04_traceability_matrix.md": "5b7ededec4ffb4fbac540fd6e0771fdc2a49bacda95770fa3ef1385930fe5e23",
+    "reports/02_development/06_version_matrix_changelog.md": "6d89a25c14c662d681c188995b53a1ebaf4590fe4b321f4259b8793b9e9372b2",
+    "reports/02_development/99_stage_gate.md": "47287dd9d66ffb47d286f5e9398fc55089106b0d1ae3648e4634e2ddbf867c8d",
+    "reports/03_evaluation/00_preregistration.md": "1fa9f7452053addad8744760cd5f2deee4c8619b84239b8fc0563eaf8eb09f7d",
+    "reports/03_evaluation/01_test_plan.md": "4d9f54c9958082a1bdc07e197ba836c682d4dd37fb82822b96a266b7efaf7615",
+    "reports/03_evaluation/02_acceptance_and_shadow.md": "abc6d7fd3c3ab37e3cb6a335dd0ffa638af2a84c97b7633500dad510e8d9e95e",
+    "reports/03_evaluation/04_mvp_verification.md": "1c25da937d3aa2bf3f1464307b9394d77e8b2ad53b79c0d26590f167ba37daf4",
+    "reports/03_evaluation/99_stage_gate.md": "6a69f3fc8663f2c3118e3650f11668fed3ee7e859c72130ce9cbf38e14f8ea34"
+  },
+  "outputs": {
+    "project-audit.html": "57b66a304b04551d31776c4920c666dbd0f8965355a68eb9061a69dd09a39fe8",
+    "deck-data.json": "a7dbb37deaf7ecd23c77c87588f552e9a7acfbb909591624cfa7cfbcf2db0eda",
+    "ppt-eval-interview-v3.pptx": "d4afb4aca8497428c3aefbb30048ac0b5c46091099f14496b25ee65e0cc23add"
+  },
+  "presentation": {
+    "slide_count": 9,
+    "chapters": [
+      "调研",
+      "开发",
+      "评测"
+    ],
+    "renderer": "@oai/artifact-tool",
+    "preview_dir": "deck-preview"
+  }
+}

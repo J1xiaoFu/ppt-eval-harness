@@ -1,0 +1,7 @@
+D:\Campus study\实习\腾讯优图\入职面试\PPT自动评测基线\third_party\slidesbench\.venv\lib\site-packages\huggingface_hub\file_download.py:949: FutureWarning: `resume_download` is deprecated and will be removed in version 1.0.0. Downloads always resume when possible. If you want to force a new download, use `force_download=True`.
+  warnings.warn(
+# of blocks 4 generated 4 reference
+match     : 100.0
+text      : 100.0
+color     : 50.0
+position  : 100.0

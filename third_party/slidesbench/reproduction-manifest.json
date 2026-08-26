@@ -1,0 +1,133 @@
+{
+  "as_of": "2026-08-26",
+  "overall_status": "PARTIAL_REPRODUCTION",
+  "source": {
+    "paper": "https://arxiv.org/abs/2501.00912",
+    "repository": "https://github.com/para-lost/AutoPresent",
+    "commit": "98e0c012e89469863d9c3c8bc87eac967d82b2e6",
+    "commit_date": "2025-05-26T19:05:56Z",
+    "repository_license": "MIT"
+  },
+  "environment": {
+    "os": "Windows 11 10.0.26200 x64",
+    "python": "3.10.11",
+    "torch": "2.0.1+cu118",
+    "transformers": "4.41.2",
+    "sentence_transformers": "2.7.0",
+    "python_pptx": "1.0.2",
+    "usable_gpu_confirmed": false,
+    "openai_api_key_present": false,
+    "huggingface_token_present": false
+  },
+  "runs": [
+    {
+      "id": "slidesbench.reference_based.food_self_page_1",
+      "status": "PASS_WITH_VALIDITY_FINDING",
+      "exit_code": 0,
+      "elapsed_seconds_cached": 12.208,
+      "result": {
+        "match": 100.0,
+        "text": 100.0,
+        "color": 25.0,
+        "position": 100.0
+      },
+      "finding": "An identical PPTX compared with itself does not obtain 100 for color."
+    },
+    {
+      "id": "slidesbench.reference_based.aurora_self_page_1",
+      "status": "PASS_WITH_VALIDITY_FINDINGS",
+      "exit_code": 0,
+      "elapsed_seconds_cached": 11.952,
+      "result": {
+        "match": 100.0,
+        "text": 100.0,
+        "color": 50.0,
+        "position": 100.0,
+        "requested_output_created": false
+      },
+      "finding": "The custom output_path branch does not write a result file."
+    },
+    {
+      "id": "slidesbench.reference_based.food_self_empty_page_2",
+      "status": "FAILED_IN_UPSTREAM",
+      "exit_code": 1,
+      "elapsed_seconds_cached": 11.706,
+      "error": "ZeroDivisionError in block_match_score for two empty block lists"
+    },
+    {
+      "id": "slidesbench.deck_reference_based.windows",
+      "status": "FAILED_IN_UPSTREAM",
+      "exit_code": 1,
+      "elapsed_seconds_cached": 12.519,
+      "error": "slides_eval.py splits paths using literal '/' and fails on Windows"
+    },
+    {
+      "id": "slidesbench.parse_media.food",
+      "status": "PASS_WITH_MIME_FINDING",
+      "exit_code": 0,
+      "elapsed_seconds": 0.687,
+      "result": {
+        "slide_directories": 32,
+        "images": 36,
+        "bytes": 17979686,
+        "actual_formats": {
+          "JPEG": 7,
+          "PNG": 27,
+          "GIF": 2
+        }
+      },
+      "finding": "All extracted image blobs are named .jpg even when their actual format is PNG or GIF."
+    },
+    {
+      "id": "slidesbench.canonical_code_generation.food",
+      "status": "PARTIAL",
+      "exit_code": 0,
+      "elapsed_seconds": 0.85,
+      "result": {
+        "generated_programs": 32,
+        "generated_images": 53
+      },
+      "execution_status": "BLOCKED_BY_UNDECLARED_DEPENDENCY",
+      "execution_error": "ModuleNotFoundError: chromedriver_py; a later unconditional mysearchlib import is also unresolved"
+    },
+    {
+      "id": "slidesbench.reference_free",
+      "status": "BLOCKED_BY_CREDENTIAL",
+      "exit_code": 1,
+      "error": "OPENAI_API_KEY is required at module import time"
+    },
+    {
+      "id": "autopresent.training",
+      "status": "NOT_REPRODUCIBLE_FROM_RELEASE",
+      "error": "Released CSV files have instruction and slide_folder columns, while train.py requires instruction and code"
+    },
+    {
+      "id": "autopresent.inference",
+      "status": "BLOCKED_BEFORE_MODEL_LOAD",
+      "error": "Official dependencies omit datasets, transformers, peft and unsloth; test CSV files referenced by README are absent; adapters also require the gated Llama base model and suitable accelerator memory"
+    }
+  ],
+  "dataset": {
+    "paper_claim": {
+      "source_decks": 310,
+      "train_decks": 300,
+      "test_decks": 10,
+      "domains": 10,
+      "test_instruction_tasks": 585
+    },
+    "repository_snapshot": {
+      "test_domains": 10,
+      "unique_test_slides_with_instruction_triplets": 195,
+      "test_instruction_tasks": 585,
+      "reference_pptx_files": 1,
+      "training_rows": {
+        "detailed_with_images": 7622,
+        "detailed_only": 7045,
+        "high_level": 7045
+      },
+      "training_code_released": false
+    },
+    "slide_content_license": "NOT_GRANTED_BY_AUTOPRESENT_AUTHORS",
+    "distribution_note": "The paper says slides are not redistributed and points users to original SlideShare URLs; creator rights must be checked separately."
+  }
+}

@@ -1,0 +1,10 @@
+# Extra dependencies needed by evaluate/page_eval.py but absent from the
+# upstream requirements files. Torch must be installed separately for the
+# target CPU/CUDA platform.
+python-pptx==1.0.2
+numpy==1.24.3
+scipy==1.10.1
+colormath==3.0.0
+scikit-learn==1.2.2
+sentence-transformers==2.7.0
+transformers==4.41.2

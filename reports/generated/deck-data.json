@@ -1,0 +1,237 @@
+{
+  "schema_version": "1.0",
+  "generated_from": {
+    "audit": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\audit\\example\\project_audit.json",
+    "events": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\audit\\example\\events.jsonl",
+    "hashes": {
+      "audit": "bc9e03d4cfe2b06dd1f9070a2a1ebbf660c548c8e133ed40656b50293075642a",
+      "events": "9467e7430558983d2f43b545444b6a57c88762d2f9b866416fbd7a082c9ce37d"
+    }
+  },
+  "project": {
+    "id": "PRJ-PPT-EVAL-001",
+    "name": "工业级 PPT 评测与数据飞轮",
+    "status": "mvp_implemented_production_validation_pending",
+    "as_of": "2026-08-26T18:00:00+08:00",
+    "owner": "PPT Evaluation Team",
+    "purpose": "以可解释、可降级、可审计的 Agentic Harness 统一评估四类 PPT 任务，并产生受控的数据飞轮信号。",
+    "success_definition": "基础质量永不被专项故障吞没；硬门槛高精度；所有结论可沿不可变 ID 回放。"
+  },
+  "formula": {
+    "base": "100 * product(M_base) * A_base",
+    "full": "100 * product(M_base) * product(M_scene) * [lambda*A_base + (1-lambda)*A_scene]",
+    "multipliers": [
+      0,
+      0.5,
+      1
+    ],
+    "rule": "同一缺陷不得同时进入乘算和加算；ERROR 不计零分。"
+  },
+  "scenarios": [
+    {
+      "id": "SCN-TEXT",
+      "name": "文字生成 PPT",
+      "fallback": "BASE_ONLY",
+      "lambda": 0.55
+    },
+    {
+      "id": "SCN-SUMMARY",
+      "name": "项目总结生成",
+      "fallback": "BASE_ONLY",
+      "lambda": 0.4
+    },
+    {
+      "id": "SCN-MULTIMODAL",
+      "name": "多模态生成",
+      "fallback": "BASE_ONLY",
+      "lambda": 0.45
+    },
+    {
+      "id": "SCN-READY",
+      "name": "成品 PPT",
+      "fallback": "BASE_ONLY",
+      "lambda": 1.0
+    }
+  ],
+  "acceptance_targets": [
+    {
+      "metric": "human_objective_alpha",
+      "operator": ">=",
+      "target": 0.8,
+      "status": "planned"
+    },
+    {
+      "metric": "human_pairwise_agreement",
+      "operator": ">=",
+      "target": 0.8,
+      "status": "planned"
+    },
+    {
+      "metric": "high_confidence_block_precision",
+      "operator": ">=",
+      "target": 0.98,
+      "status": "planned"
+    },
+    {
+      "metric": "severe_escape_rate_upper_95",
+      "operator": "<",
+      "target": 0.01,
+      "status": "planned"
+    },
+    {
+      "metric": "gate_repeatability",
+      "operator": ">=",
+      "target": 0.99,
+      "status": "planned"
+    }
+  ],
+  "traceability": [
+    {
+      "requirement": "REQ-BASE-001",
+      "decision": "ADR-002",
+      "oracle": "ORC-BASE-001",
+      "test": "TST-MVP-001",
+      "experiment": "EXP-MVP-FOUR-SCENES-001",
+      "release": "REL-PENDING"
+    },
+    {
+      "requirement": "REQ-SCORE-001",
+      "decision": "ADR-004",
+      "oracle": "ORC-AGG-001",
+      "test": "TST-MVP-001",
+      "experiment": "EXP-CAL-001",
+      "release": "REL-PENDING"
+    },
+    {
+      "requirement": "REQ-AUDIT-001",
+      "decision": "ADR-006",
+      "oracle": "ORC-N/A",
+      "test": "TST-MVP-001",
+      "experiment": "EXP-AUDIT-MVP-001",
+      "release": "REL-PENDING"
+    }
+  ],
+  "slides": [
+    {
+      "chapter": "调研",
+      "title": "先证明问题，再写评测器",
+      "claim": "四场景共享本体质量，但证据条件和失败方式不同。",
+      "points": [
+        "任务定义先于指标",
+        "本体质量是强制兜底",
+        "研究门禁阻止无依据权重上线"
+      ],
+      "source": "reports/01_research/00_project_charter.md"
+    },
+    {
+      "chapter": "调研",
+      "title": "公开基线覆盖局部，工业闭环要求证据链",
+      "claim": "单一 LLM/VLM 总分不能同时解决忠实性、可交付性与审计。",
+      "points": [
+        "比较指标覆盖与攻击面",
+        "保留 PPTX 结构证据",
+        "把人工上限作为校准参照"
+      ],
+      "source": "reports/01_research/01_related_work_matrix.md"
+    },
+    {
+      "chapter": "调研",
+      "title": "PPT-PDMS 把不可补偿缺陷放在公式外层",
+      "claim": "少量高置信硬错误相乘，其他性能在内层加权。",
+      "points": [
+        "乘子仅取 0/0.5/1",
+        "禁止同缺陷双罚",
+        "ERROR 与质量失败分离"
+      ],
+      "source": "reports/01_research/02_ppt_pdms_migration.md"
+    },
+    {
+      "chapter": "开发",
+      "title": "确定性总控不需要知道指标怎么打分",
+      "claim": "Supervisor 只调度节点、预算和状态，判断封装在 Oracle。",
+      "points": [
+        "OBSERVE→PLAN→ACT→VERIFY",
+        "Composite/Leaf Oracle",
+        "Adapter 隔离供应商"
+      ],
+      "source": "reports/02_development/01_system_design.md"
+    },
+    {
+      "chapter": "开发",
+      "title": "基础质量子图是编译期不变量",
+      "claim": "任何专项缺失或失败，都保留可解释的 S_base。",
+      "points": [
+        "ProfileCompiler 强制注入",
+        "FULL/DEGRADED/BASE_ONLY",
+        "UNASSESSABLE 仅限文件不可解析"
+      ],
+      "source": "reports/02_development/00_srs.md"
+    },
+    {
+      "chapter": "开发",
+      "title": "契约和审计让替换模型不改上层",
+      "claim": "统一 OracleResult、版本指纹和事件流支撑回放。",
+      "points": [
+        "严格状态语义",
+        "不可变证据定位",
+        "REQ→ADR→TEST→RUN"
+      ],
+      "source": "reports/02_development/04_traceability_matrix.md"
+    },
+    {
+      "chapter": "评测",
+      "title": "评测系统也必须被评测",
+      "claim": "组件正确不等于 Judge 可信，必须加入人工元评测。",
+      "points": [
+        "α/ICC 与排序相关",
+        "Brier/ECE 校准",
+        "定位 F1 与重复稳定性"
+      ],
+      "source": "reports/03_evaluation/00_preregistration.md"
+    },
+    {
+      "chapter": "评测",
+      "title": "42项测试验证兜底和评分边界",
+      "claim": "四场景 Smoke 证明专项故障不会吞掉本体报告或伪造完整分。",
+      "points": [
+        "42 passed / 0 failed",
+        "FULL 与 DEGRADED 均有真实 Run",
+        "哈希链与人工复核可回放"
+      ],
+      "source": "reports/03_evaluation/04_mvp_verification.md"
+    },
+    {
+      "chapter": "评测",
+      "title": "飞轮只提候选，生产发布仍由人治理",
+      "claim": "生产反馈进入工作池，经冻结集、Shadow 和审批后演进。",
+      "points": [
+        "主动采样+随机样本",
+        "两周或 1000 份 Shadow",
+        "5%→25%→100% 灰度"
+      ],
+      "source": "reports/03_evaluation/02_acceptance_and_shadow.md"
+    }
+  ],
+  "deck": {
+    "title": "让 PPT 评测成为可控的数据飞轮",
+    "audience": "技术面试官与评审委员会",
+    "takeaway": "确定性 Harness 负责治理，Oracle 负责判断，PPT-PDMS 负责不可补偿性，审计链负责可信复现。"
+  },
+  "source_hashes": {
+    "reports/01_research/01_related_work_matrix.md": "0030aabb5537cb33578e976842fd317b5ff56e23be4a72be43a6825a95be1654",
+    "reports/01_research/02_ppt_pdms_migration.md": "409ce2855b5ce716cf945ab34b607621908fb7c38ad12ff5381d39aa29a7c2f9",
+    "reports/01_research/03_failure_taxonomy_and_rubric.md": "37490ed895201331feaf97e750f71afeec8bff6d0db825c05272c1c9da9728ec",
+    "reports/01_research/06_baseline_reproduction.md": "401ff9199e2f4b70e958928299feeefce4b815fa579cd7b216f422567946bf45",
+    "reports/01_research/07_public_dataset_catalog.md": "0e9001063ccdcce391f89c21182a80357bd883bdcfa62379c638b456bc8146a0",
+    "reports/02_development/00_srs.md": "c8b7e7be35891ff35d71d7eebe7257b26c8974a788aaea64a10e603367f609c8",
+    "reports/02_development/01_system_design.md": "b60cea69b747874d6e2ada325ee31f6ad288413842883f8a604af949118fafca",
+    "reports/02_development/04_traceability_matrix.md": "5b7ededec4ffb4fbac540fd6e0771fdc2a49bacda95770fa3ef1385930fe5e23",
+    "reports/02_development/06_version_matrix_changelog.md": "6d89a25c14c662d681c188995b53a1ebaf4590fe4b321f4259b8793b9e9372b2",
+    "reports/02_development/99_stage_gate.md": "47287dd9d66ffb47d286f5e9398fc55089106b0d1ae3648e4634e2ddbf867c8d",
+    "reports/03_evaluation/00_preregistration.md": "1fa9f7452053addad8744760cd5f2deee4c8619b84239b8fc0563eaf8eb09f7d",
+    "reports/03_evaluation/01_test_plan.md": "4d9f54c9958082a1bdc07e197ba836c682d4dd37fb82822b96a266b7efaf7615",
+    "reports/03_evaluation/02_acceptance_and_shadow.md": "abc6d7fd3c3ab37e3cb6a335dd0ffa638af2a84c97b7633500dad510e8d9e95e",
+    "reports/03_evaluation/04_mvp_verification.md": "1c25da937d3aa2bf3f1464307b9394d77e8b2ad53b79c0d26590f167ba37daf4",
+    "reports/03_evaluation/99_stage_gate.md": "6a69f3fc8663f2c3118e3650f11668fed3ee7e859c72130ce9cbf38e14f8ea34"
+  }
+}

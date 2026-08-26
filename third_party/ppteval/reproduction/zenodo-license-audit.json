@@ -1,0 +1,647 @@
+{
+  "checked_at_utc": "2026-08-26T06:34:27.171860+00:00",
+  "manifest": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\paper_experiment\\resource\\dataset.jsonl",
+  "manifest_sha256": "da8568988585301a43b6ab596b3ef34367405c1790c7812354a01b9bbe7b4d41",
+  "manifest_files": 100,
+  "unique_zenodo_records": 90,
+  "http_status_counts": {
+    "200": 90
+  },
+  "license_counts": {
+    "cc-by": 1,
+    "cc-by-4.0": 87,
+    "cc-by-sa-4.0": 2
+  },
+  "records": [
+    {
+      "record_id": "44771",
+      "url": "https://zenodo.org/api/records/44771",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.44771"
+    },
+    {
+      "record_id": "240896",
+      "url": "https://zenodo.org/api/records/240896",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.240896"
+    },
+    {
+      "record_id": "438694",
+      "url": "https://zenodo.org/api/records/438694",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.438694"
+    },
+    {
+      "record_id": "1158722",
+      "url": "https://zenodo.org/api/records/1158722",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.1158722"
+    },
+    {
+      "record_id": "1158763",
+      "url": "https://zenodo.org/api/records/1158763",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.1158763"
+    },
+    {
+      "record_id": "1173043",
+      "url": "https://zenodo.org/api/records/1173043",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.1173043"
+    },
+    {
+      "record_id": "1285933",
+      "url": "https://zenodo.org/api/records/1285933",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.1285933"
+    },
+    {
+      "record_id": "1306396",
+      "url": "https://zenodo.org/api/records/1306396",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.1306396"
+    },
+    {
+      "record_id": "1402203",
+      "url": "https://zenodo.org/api/records/1402203",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.1402203"
+    },
+    {
+      "record_id": "1409027",
+      "url": "https://zenodo.org/api/records/1409027",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.1409027"
+    },
+    {
+      "record_id": "1409155",
+      "url": "https://zenodo.org/api/records/1409155",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.1409155"
+    },
+    {
+      "record_id": "1452385",
+      "url": "https://zenodo.org/api/records/1452385",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.1452385"
+    },
+    {
+      "record_id": "1472945",
+      "url": "https://zenodo.org/api/records/1472945",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.1472945"
+    },
+    {
+      "record_id": "1492766",
+      "url": "https://zenodo.org/api/records/1492766",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.1492766"
+    },
+    {
+      "record_id": "2222418",
+      "url": "https://zenodo.org/api/records/2222418",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.2222418"
+    },
+    {
+      "record_id": "2444454",
+      "url": "https://zenodo.org/api/records/2444454",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.2444454"
+    },
+    {
+      "record_id": "2564819",
+      "url": "https://zenodo.org/api/records/2564819",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.2564819"
+    },
+    {
+      "record_id": "2564821",
+      "url": "https://zenodo.org/api/records/2564821",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.2564821"
+    },
+    {
+      "record_id": "2578118",
+      "url": "https://zenodo.org/api/records/2578118",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.2578118"
+    },
+    {
+      "record_id": "2592281",
+      "url": "https://zenodo.org/api/records/2592281",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.2592281"
+    },
+    {
+      "record_id": "2624265",
+      "url": "https://zenodo.org/api/records/2624265",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.2624265"
+    },
+    {
+      "record_id": "2653726",
+      "url": "https://zenodo.org/api/records/2653726",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.2653726"
+    },
+    {
+      "record_id": "2792617",
+      "url": "https://zenodo.org/api/records/2792617",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.2792617"
+    },
+    {
+      "record_id": "3194228",
+      "url": "https://zenodo.org/api/records/3194228",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3194228"
+    },
+    {
+      "record_id": "3271350",
+      "url": "https://zenodo.org/api/records/3271350",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3271350"
+    },
+    {
+      "record_id": "3377111",
+      "url": "https://zenodo.org/api/records/3377111",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3377111"
+    },
+    {
+      "record_id": "3420179",
+      "url": "https://zenodo.org/api/records/3420179",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3420179"
+    },
+    {
+      "record_id": "3458290",
+      "url": "https://zenodo.org/api/records/3458290",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3458290"
+    },
+    {
+      "record_id": "3520839",
+      "url": "https://zenodo.org/api/records/3520839",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3520839"
+    },
+    {
+      "record_id": "3530485",
+      "url": "https://zenodo.org/api/records/3530485",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3530485"
+    },
+    {
+      "record_id": "3545212",
+      "url": "https://zenodo.org/api/records/3545212",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3545212"
+    },
+    {
+      "record_id": "3584373",
+      "url": "https://zenodo.org/api/records/3584373",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3584373"
+    },
+    {
+      "record_id": "3669124",
+      "url": "https://zenodo.org/api/records/3669124",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3669124"
+    },
+    {
+      "record_id": "3676514",
+      "url": "https://zenodo.org/api/records/3676514",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3676514"
+    },
+    {
+      "record_id": "3715599",
+      "url": "https://zenodo.org/api/records/3715599",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3715599"
+    },
+    {
+      "record_id": "3743014",
+      "url": "https://zenodo.org/api/records/3743014",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3743014"
+    },
+    {
+      "record_id": "3752923",
+      "url": "https://zenodo.org/api/records/3752923",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3752923"
+    },
+    {
+      "record_id": "3757870",
+      "url": "https://zenodo.org/api/records/3757870",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3757870"
+    },
+    {
+      "record_id": "3758668",
+      "url": "https://zenodo.org/api/records/3758668",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3758668"
+    },
+    {
+      "record_id": "3813763",
+      "url": "https://zenodo.org/api/records/3813763",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3813763"
+    },
+    {
+      "record_id": "3835503",
+      "url": "https://zenodo.org/api/records/3835503",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3835503"
+    },
+    {
+      "record_id": "3901485",
+      "url": "https://zenodo.org/api/records/3901485",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3901485"
+    },
+    {
+      "record_id": "3903115",
+      "url": "https://zenodo.org/api/records/3903115",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3903115"
+    },
+    {
+      "record_id": "3903142",
+      "url": "https://zenodo.org/api/records/3903142",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3903142"
+    },
+    {
+      "record_id": "3946363",
+      "url": "https://zenodo.org/api/records/3946363",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.46609/IJSSER.2020.v05i06.008"
+    },
+    {
+      "record_id": "3966542",
+      "url": "https://zenodo.org/api/records/3966542",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.3966542"
+    },
+    {
+      "record_id": "4282675",
+      "url": "https://zenodo.org/api/records/4282675",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.4282675"
+    },
+    {
+      "record_id": "4284619",
+      "url": "https://zenodo.org/api/records/4284619",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.4284619"
+    },
+    {
+      "record_id": "4423235",
+      "url": "https://zenodo.org/api/records/4423235",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.4423235"
+    },
+    {
+      "record_id": "4599162",
+      "url": "https://zenodo.org/api/records/4599162",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.4599162"
+    },
+    {
+      "record_id": "4911506",
+      "url": "https://zenodo.org/api/records/4911506",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.4911506"
+    },
+    {
+      "record_id": "5127534",
+      "url": "https://zenodo.org/api/records/5127534",
+      "status": 200,
+      "license": "cc-by",
+      "doi": "10.17605/OSF.IO/XPR2N"
+    },
+    {
+      "record_id": "5139956",
+      "url": "https://zenodo.org/api/records/5139956",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.5139956"
+    },
+    {
+      "record_id": "5242629",
+      "url": "https://zenodo.org/api/records/5242629",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.5242629"
+    },
+    {
+      "record_id": "5494741",
+      "url": "https://zenodo.org/api/records/5494741",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.5494741"
+    },
+    {
+      "record_id": "5504437",
+      "url": "https://zenodo.org/api/records/5504437",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.5504437"
+    },
+    {
+      "record_id": "5571885",
+      "url": "https://zenodo.org/api/records/5571885",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.5571885"
+    },
+    {
+      "record_id": "5600535",
+      "url": "https://zenodo.org/api/records/5600535",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.5600535"
+    },
+    {
+      "record_id": "5603243",
+      "url": "https://zenodo.org/api/records/5603243",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.5603243"
+    },
+    {
+      "record_id": "5615099",
+      "url": "https://zenodo.org/api/records/5615099",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.5615099"
+    },
+    {
+      "record_id": "5625600",
+      "url": "https://zenodo.org/api/records/5625600",
+      "status": 200,
+      "license": "cc-by-sa-4.0",
+      "doi": "10.5281/zenodo.5625600"
+    },
+    {
+      "record_id": "5770439",
+      "url": "https://zenodo.org/api/records/5770439",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.5770439"
+    },
+    {
+      "record_id": "5961563",
+      "url": "https://zenodo.org/api/records/5961563",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.5961563"
+    },
+    {
+      "record_id": "6330091",
+      "url": "https://zenodo.org/api/records/6330091",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.6330091"
+    },
+    {
+      "record_id": "6413145",
+      "url": "https://zenodo.org/api/records/6413145",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.6413145"
+    },
+    {
+      "record_id": "6586915",
+      "url": "https://zenodo.org/api/records/6586915",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.6586915"
+    },
+    {
+      "record_id": "6588437",
+      "url": "https://zenodo.org/api/records/6588437",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.6588437"
+    },
+    {
+      "record_id": "6623204",
+      "url": "https://zenodo.org/api/records/6623204",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.6623204"
+    },
+    {
+      "record_id": "7043282",
+      "url": "https://zenodo.org/api/records/7043282",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.7043282"
+    },
+    {
+      "record_id": "7043451",
+      "url": "https://zenodo.org/api/records/7043451",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.7043451"
+    },
+    {
+      "record_id": "7078581",
+      "url": "https://zenodo.org/api/records/7078581",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.7078581"
+    },
+    {
+      "record_id": "7098153",
+      "url": "https://zenodo.org/api/records/7098153",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.7098153"
+    },
+    {
+      "record_id": "7115562",
+      "url": "https://zenodo.org/api/records/7115562",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.7115562"
+    },
+    {
+      "record_id": "7194537",
+      "url": "https://zenodo.org/api/records/7194537",
+      "status": 200,
+      "license": "cc-by-sa-4.0",
+      "doi": "10.5281/zenodo.7194537"
+    },
+    {
+      "record_id": "7440730",
+      "url": "https://zenodo.org/api/records/7440730",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.7440730"
+    },
+    {
+      "record_id": "7701846",
+      "url": "https://zenodo.org/api/records/7701846",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.7701846"
+    },
+    {
+      "record_id": "7983586",
+      "url": "https://zenodo.org/api/records/7983586",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.7983586"
+    },
+    {
+      "record_id": "8025067",
+      "url": "https://zenodo.org/api/records/8025067",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.8025067"
+    },
+    {
+      "record_id": "8082162",
+      "url": "https://zenodo.org/api/records/8082162",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.8082162"
+    },
+    {
+      "record_id": "8287017",
+      "url": "https://zenodo.org/api/records/8287017",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.8287017"
+    },
+    {
+      "record_id": "8323588",
+      "url": "https://zenodo.org/api/records/8323588",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.8323588"
+    },
+    {
+      "record_id": "8390005",
+      "url": "https://zenodo.org/api/records/8390005",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.8390005"
+    },
+    {
+      "record_id": "8398480",
+      "url": "https://zenodo.org/api/records/8398480",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.8398480"
+    },
+    {
+      "record_id": "8418095",
+      "url": "https://zenodo.org/api/records/8418095",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.8418095"
+    },
+    {
+      "record_id": "10201326",
+      "url": "https://zenodo.org/api/records/10201326",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.10201326"
+    },
+    {
+      "record_id": "10656119",
+      "url": "https://zenodo.org/api/records/10656119",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.10656119"
+    },
+    {
+      "record_id": "11234633",
+      "url": "https://zenodo.org/api/records/11234633",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.11234633"
+    },
+    {
+      "record_id": "11445566",
+      "url": "https://zenodo.org/api/records/11445566",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.11445566"
+    },
+    {
+      "record_id": "11564808",
+      "url": "https://zenodo.org/api/records/11564808",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.11564808"
+    },
+    {
+      "record_id": "13832308",
+      "url": "https://zenodo.org/api/records/13832308",
+      "status": 200,
+      "license": "cc-by-4.0",
+      "doi": "10.5281/zenodo.13832308"
+    }
+  ]
+}

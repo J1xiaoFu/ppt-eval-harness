@@ -1,0 +1,74 @@
+{
+  "preflight": {
+    "status": "READY",
+    "upstream_commit": "88c29f045ab5b7db331bd8b76cf6efc5f9ea7eee",
+    "paper_model": "gpt-4o-2024-08-06",
+    "selected_model": "gpt-4o-2024-08-06",
+    "transport_deviation": "public synchronous Chat Completions; paper code uses OpenAI Batch",
+    "pptx": {
+      "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\examples\\demo\\aurora_demo.pptx",
+      "sha256": "d9cc4b42e750532a5c86893b98c8369b1c629887069685f9f07d61cc5e5af1b5",
+      "slides": 4
+    },
+    "slide_images": [
+      {
+        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\reproduction\\aurora_slides\\幻灯片1.PNG",
+        "sha256": "da5d1a46385375365d930308d8072be44e420060399496c876f85524e66aa9c8",
+        "bytes": 21295
+      },
+      {
+        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\reproduction\\aurora_slides\\幻灯片2.PNG",
+        "sha256": "5c2af93b800917619bba357866e6fdb15a066763c80485635d96f8e9683b5789",
+        "bytes": 23289
+      },
+      {
+        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\reproduction\\aurora_slides\\幻灯片3.PNG",
+        "sha256": "ba76cfeccfdbe33b8cd7767970a90da16b9cfc5e42ff062a294f1e46a1b6c7d1",
+        "bytes": 23315
+      },
+      {
+        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\reproduction\\aurora_slides\\幻灯片4.PNG",
+        "sha256": "1bd996dea2cd671de8764e1732cd3dab586758ef60dfe233368c8fb36c6190d9",
+        "bytes": 25190
+      }
+    ],
+    "presentation_text_chars": 482,
+    "prompt_files": [
+      {
+        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\paper_experiment\\prompts\\ppteval_coherence.txt",
+        "sha256": "b651c05fdda9170d8e4ba8966cd13ebec9f5498aeb5f9686db9aab4141097cff"
+      },
+      {
+        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\paper_experiment\\prompts\\ppteval_content.txt",
+        "sha256": "5a4c0f0117b9a0e8ca3ac50d3b488eef02c73ef63832732748ad5cb56d4139ce"
+      },
+      {
+        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\paper_experiment\\prompts\\ppteval_describe_content.txt",
+        "sha256": "99da00aba585b86336fabc0d63066796471f6ff240daceaf7551b74217c65c17"
+      },
+      {
+        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\paper_experiment\\prompts\\ppteval_describe_style.txt",
+        "sha256": "0cdd1bc052fabb8cb27cb1bdaef17c3ff920820a85db5f064b1668d66c794b20"
+      },
+      {
+        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\paper_experiment\\prompts\\ppteval_extract.txt",
+        "sha256": "345374e6be8915ce9b63ba7032e38ac296f2f0b8d29620158301ea0e8133f694"
+      },
+      {
+        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\paper_experiment\\prompts\\ppteval_style.txt",
+        "sha256": "4a7d9f12d79d950a295d74a8b881c9be434c09970109b538f1a56da087dbf67b"
+      }
+    ],
+    "expected_model_calls": 18,
+    "aggregation": "mean slide content; mean slide design; one deck coherence; arithmetic mean of dimensions"
+  },
+  "content": {},
+  "design": {},
+  "status": "PREFLIGHT_ONLY",
+  "runtime": {
+    "started_at_utc": "2026-08-26T07:04:53.266775+00:00",
+    "elapsed_seconds": 0.201097,
+    "python": "3.12.13",
+    "platform": "Windows-11-10.0.26200-SP0"
+  }
+}
