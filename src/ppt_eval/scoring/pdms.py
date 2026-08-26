@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from math import prod
 from typing import Iterable, Mapping
 
 from ppt_eval.domain import (
+    CONSTRUCT_WEIGHTED_MEAN,
     CoverageStatus,
     EvalProfile,
     MetricStatus,
@@ -30,6 +31,7 @@ class _AdditivePart:
     value: float | None
     unresolved: tuple[str, ...]
     applicable: tuple[str, ...]
+    construct_scores: Mapping[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,12 +50,30 @@ class PptPdmsAggregator:
     ) -> ScoreBreakdown:
         indexed = self._index_score_results(results)
         required = frozenset(profile.required_metric_ids or ())
-        base_additive = self._additive(
-            profile.base_weights, indexed, required, ScoreRole.BASE_ADDITIVE
-        )
-        scene_additive = self._additive(
-            profile.scene_weights, indexed, required, ScoreRole.SCENE_ADDITIVE
-        )
+        if profile.aggregation_strategy == CONSTRUCT_WEIGHTED_MEAN:
+            base_additive = self._construct_additive(
+                profile.base_weights,
+                indexed,
+                required,
+                ScoreRole.BASE_ADDITIVE,
+                profile.base_metric_constructs,
+                profile.base_construct_weights,
+            )
+            scene_additive = self._construct_additive(
+                profile.scene_weights,
+                indexed,
+                required,
+                ScoreRole.SCENE_ADDITIVE,
+                profile.scene_metric_constructs,
+                profile.scene_construct_weights,
+            )
+        else:
+            base_additive = self._additive(
+                profile.base_weights, indexed, required, ScoreRole.BASE_ADDITIVE
+            )
+            scene_additive = self._additive(
+                profile.scene_weights, indexed, required, ScoreRole.SCENE_ADDITIVE
+            )
         base_multiplier = self._multipliers(
             profile.base_multiplier_metric_ids,
             indexed,
@@ -111,9 +131,12 @@ class PptPdmsAggregator:
             and base_additive.value is not None
             and scene_additive.value is not None
         ):
+            lambda_base = profile.lambda_base
+            if lambda_base is None:  # guarded by EvalProfile validation
+                raise ScoringError("profile lambda_base is unavailable")
             inner = (
-                float(profile.lambda_base) * base_additive.value
-                + (1.0 - float(profile.lambda_base)) * scene_additive.value
+                float(lambda_base) * base_additive.value
+                + (1.0 - float(lambda_base)) * scene_additive.value
             )
             full_score = (
                 100.0
@@ -147,6 +170,14 @@ class PptPdmsAggregator:
             scene_complete=scene_complete,
             unresolved_metric_ids=unresolved,
             low_confidence_gate_ids=low_confidence,
+            base_construct_scores={
+                key: round(value, 6)
+                for key, value in base_additive.construct_scores.items()
+            },
+            scene_construct_scores={
+                key: round(value, 6)
+                for key, value in scene_additive.construct_scores.items()
+            },
         )
 
     @staticmethod
@@ -207,6 +238,56 @@ class PptPdmsAggregator:
             applicable.append(metric_id)
         value = numerator / denominator if denominator else None
         return _AdditivePart(value, tuple(unresolved), tuple(applicable))
+
+    @classmethod
+    def _construct_additive(
+        cls,
+        weights: Mapping[str, float],
+        indexed: Mapping[str, OracleResult],
+        required: frozenset[str],
+        expected_role: ScoreRole,
+        assignments: Mapping[str, str],
+        construct_weights: Mapping[str, float],
+    ) -> _AdditivePart:
+        if not weights:
+            return _AdditivePart(None, (), (), {})
+        scores: dict[str, float] = {}
+        unresolved: list[str] = []
+        applicable: list[str] = []
+        for construct_id in construct_weights:
+            group_weights = {
+                metric_id: weight
+                for metric_id, weight in weights.items()
+                if weight > 0 and assignments.get(metric_id) == construct_id
+            }
+            part = cls._additive(
+                group_weights,
+                indexed,
+                required,
+                expected_role,
+            )
+            unresolved.extend(part.unresolved)
+            applicable.extend(part.applicable)
+            if part.value is None:
+                unresolved.append(f"construct:{construct_id}")
+            else:
+                scores[construct_id] = part.value
+
+        numerator = 0.0
+        denominator = 0.0
+        for construct_id, weight in construct_weights.items():
+            value = scores.get(construct_id)
+            if value is None or weight <= 0:
+                continue
+            numerator += weight * value
+            denominator += weight
+        value = numerator / denominator if denominator else None
+        return _AdditivePart(
+            value,
+            tuple(dict.fromkeys(unresolved)),
+            tuple(dict.fromkeys(applicable)),
+            scores,
+        )
 
     @staticmethod
     def _multipliers(

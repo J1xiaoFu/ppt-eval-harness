@@ -3,7 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from ppt_eval.application import (
+    CompositeOracle,
     DagScheduler,
+    EvaluationContext,
     InMemoryAuditLog,
     MetricDefinition,
     OracleDescriptor,
@@ -59,6 +61,33 @@ class FlakyOracle(StaticOracle):
         if self.calls == 1:
             raise RuntimeError("transient")
         return self.results
+
+
+class CountingOracle(StaticOracle):
+    def __init__(
+        self,
+        oracle_id: str,
+        results: tuple[OracleResult, ...],
+        *,
+        deterministic: bool,
+    ) -> None:
+        super().__init__(oracle_id, results)
+        self.deterministic = deterministic
+        self.calls = 0
+
+    def describe(self) -> OracleDescriptor:
+        descriptor = super().describe()
+        return OracleDescriptor(
+            oracle_id=descriptor.oracle_id,
+            name=descriptor.name,
+            version=descriptor.version,
+            metrics=descriptor.metrics,
+            deterministic=self.deterministic,
+        )
+
+    def evaluate(self, context):
+        self.calls += 1
+        return super().evaluate(context)
 
 
 def scored(metric: str, value: float, role: ScoreRole) -> OracleResult:
@@ -203,6 +232,45 @@ def test_scheduler_retries_bounded_transient_oracle_failure() -> None:
     assert outcome.report.coverage == CoverageStatus.FULL
 
 
+def test_scheduler_does_not_retry_nondeterministic_composite_after_partial_error() -> None:
+    paid_success = CountingOracle(
+        "paid_success",
+        (scored("paid_success", 0.9, ScoreRole.BASE_ADDITIVE),),
+        deterministic=False,
+    )
+    failed_sibling = CountingOracle(
+        "failed_sibling",
+        (
+            OracleResult.error(
+                oracle_id="failed_sibling",
+                metric_id="failed_sibling",
+                score_role=ScoreRole.DIAGNOSTIC,
+                error_code="MODEL_PROVIDER_ERROR",
+                error_message="transient upstream error",
+            ),
+        ),
+        deterministic=False,
+    )
+    baseline = CompositeOracle(
+        "baseline_ppt_quality",
+        (paid_success, failed_sibling),
+    )
+    profile = ready_profile(max_retries=4)
+    outcome = DagScheduler(OracleRegistry((baseline,))).execute(
+        ProfileCompiler().compile(profile),
+        EvaluationContext(case=case(), profile=profile),
+        profile,
+    )
+
+    assert paid_success.calls == 1
+    assert failed_sibling.calls == 1
+    assert outcome.attempts["baseline_ppt_quality"] == 1
+    assert [result.execution_status for result in outcome.results] == [
+        ExecutionStatus.SUCCESS,
+        ExecutionStatus.ERROR,
+    ]
+
+
 def test_case_profile_scene_mismatch_becomes_auditable_harness_error() -> None:
     supervisor = RunSupervisor(
         DagScheduler(OracleRegistry()),
@@ -229,4 +297,3 @@ def test_case_profile_scene_mismatch_becomes_auditable_harness_error() -> None:
         SupervisorState.REVIEW,
     )
     assert "does not match" in outcome.manifest.error
-

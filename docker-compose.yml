@@ -10,10 +10,15 @@ services:
       PPT_EVAL_S3_BUCKET: ppt-eval
       PPT_EVAL_S3_ACCESS_KEY: ppt-eval
       PPT_EVAL_S3_SECRET_KEY: change-me
+      # Passed at container start, never copied into the image build context.
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS: ${PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS:-120}
+      PPT_EVAL_QWEN_PLUS_HTTP_TIMEOUT_SECONDS: ${PPT_EVAL_QWEN_PLUS_HTTP_TIMEOUT_SECONDS:-240}
+      PPT_EVAL_MODEL_SOURCE_ROOTS: ${PPT_EVAL_MODEL_SOURCE_ROOTS:-}
     volumes:
       - ./var:/var/lib/ppt-eval
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     depends_on: [redis, postgres, minio]
 
   worker:
@@ -45,10 +50,9 @@ services:
       MINIO_ROOT_PASSWORD: change-me
     volumes: ["minio-data:/data"]
     ports:
-      - "9001:9001"
+      - "127.0.0.1:9001:9001"
 
 volumes:
   redis-data:
   postgres-data:
   minio-data:
-

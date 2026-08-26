@@ -465,6 +465,7 @@ class CompressionQualityOracle(AtomicOracle):
     oracle_id = "compression_quality_oracle"
     metric_id = "compression_quality"
     score_role = ScoreRole.SCENE_ADDITIVE
+    version = "1.1.0"
 
     def supports(self, context: object) -> bool:
         return super().supports(context) and _scene(context) == SceneType.PROJECT_SUMMARY
@@ -475,12 +476,7 @@ class CompressionQualityOracle(AtomicOracle):
             return self.not_applicable("No readable project source material was supplied.")
         presentation = self.presentation(context)
         ratio = len(normalize_text(presentation.all_visible_text)) / max(1, len(normalize_text(source_text)))
-        if ratio < 0.03:
-            score = ratio / 0.03 * 0.5
-        elif ratio <= 0.45:
-            score = 1.0 - abs(ratio - 0.20) / 0.45 * 0.18
-        else:
-            score = max(0.0, 1.0 - (ratio - 0.45) / 0.75)
+        score = compression_quality_score(ratio)
         return self.scored(
             score,
             (
@@ -494,7 +490,26 @@ class CompressionQualityOracle(AtomicOracle):
             ),
             confidence=0.70,
             raw_value=ratio,
+            metadata={
+                "minimum_useful_ratio": 0.03,
+                "target_ratio": 0.20,
+                "maximum_concise_ratio": 0.45,
+                "zero_score_ratio": 1.20,
+            },
         )
+
+
+def compression_quality_score(ratio: float) -> float:
+    """Continuously reward useful compression, with an optimum near 20 percent."""
+
+    value = max(0.0, float(ratio))
+    if value <= 0.03:
+        return value / 0.03 * 0.50
+    if value <= 0.20:
+        return 0.50 + (value - 0.03) / 0.17 * 0.50
+    if value <= 0.45:
+        return 1.00 - (value - 0.20) / 0.25 * 0.15
+    return max(0.0, 0.85 * (1.0 - (value - 0.45) / 0.75))
 
 
 class TraceabilityOracle(AtomicOracle):

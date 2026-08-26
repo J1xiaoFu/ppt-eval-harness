@@ -9,6 +9,7 @@ venv/
 .env
 .env.*
 !.env.example
+api/
 dist/
 build/
 .coverage

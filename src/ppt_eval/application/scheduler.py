@@ -57,7 +57,7 @@ class DagScheduler:
                 and profile.cost_budget is not None
                 and total_cost >= profile.cost_budget
             ):
-                node_results = (
+                node_results: tuple[OracleResult, ...] = (
                     OracleResult.error(
                         oracle_id=node.oracle_id,
                         metric_id=node.oracle_id,
@@ -88,8 +88,14 @@ class DagScheduler:
                 node_results = self._unsupported_results(descriptor)
                 attempts[node.node_id] = 0
             else:
+                # A retry re-invokes the whole top-level Oracle.  For a
+                # non-deterministic composite that can repeat successful API
+                # calls merely because a different child returned ERROR.
+                # Keep model/network Oracles at-most-once at this layer;
+                # deterministic Oracles retain the Profile retry policy.
+                max_retries = profile.max_retries if descriptor.deterministic else 0
                 node_results, used_attempts = self._execute_with_retries(
-                    oracle, descriptor, context, profile.max_retries
+                    oracle, descriptor, context, max_retries
                 )
                 attempts[node.node_id] = used_attempts
             results.extend(node_results)

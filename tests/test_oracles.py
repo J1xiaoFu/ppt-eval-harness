@@ -23,6 +23,7 @@ from ppt_eval.oracles import (
     TextGenerationQualityOracle,
     build_default_registry,
 )
+from ppt_eval.oracles.scenarios import compression_quality_score
 from tests.fixtures.pptx_factory import PNG_1X1, build_pptx
 
 BASE_METRICS = {
@@ -30,6 +31,7 @@ BASE_METRICS = {
     "critical_content_visibility",
     "internal_data_consistency",
     "content_clarity",
+    "template_residue",
     "narrative",
     "visual_hierarchy",
     "layout",
@@ -198,12 +200,41 @@ def test_registry_and_scene_catalog_use_harness_ids() -> None:
     assert {metric.metric_id for metric in descriptor.metrics} == BASE_METRICS
 
 
+def test_compression_quality_score_is_continuous_at_registered_boundaries() -> None:
+    epsilon = 1e-8
+    for boundary in (0.03, 0.20, 0.45):
+        below = compression_quality_score(boundary - epsilon)
+        at = compression_quality_score(boundary)
+        above = compression_quality_score(boundary + epsilon)
+
+        assert abs(at - below) < 1e-6
+        assert abs(above - at) < 1e-6
+
+
+def test_compression_quality_score_has_expected_direction_and_anchor_values() -> None:
+    assert compression_quality_score(0.0) == 0.0
+    assert compression_quality_score(0.03) == 0.5
+    assert compression_quality_score(0.20) == 1.0
+    assert compression_quality_score(0.45) == 0.85
+    assert compression_quality_score(1.20) == 0.0
+    assert compression_quality_score(2.0) == 0.0
+
+    under_target = [
+        compression_quality_score(value) for value in (0.0, 0.01, 0.03, 0.10, 0.20)
+    ]
+    over_target = [
+        compression_quality_score(value) for value in (0.20, 0.30, 0.45, 0.80, 1.20)
+    ]
+    assert under_target == sorted(under_target)
+    assert over_target == sorted(over_target, reverse=True)
+
+
 def test_all_four_scenes_preserve_baseline_when_specialty_evidence_is_missing() -> None:
     with tempfile.TemporaryDirectory() as directory:
         path = build_pptx(Path(directory) / "fallback.pptx")
         for scene in SceneType:
             case = EvalCase(case_id=f"case-{scene.value}", scene=scene, pptx_path=str(path))
-            profile = EvalProfile.default(scene)
+            profile = EvalProfile.default(scene, version="1.0")
             outcome = RunSupervisor(
                 DagScheduler(build_default_registry(PptxAdapter(backend="ooxml")))
             ).run(case, profile)

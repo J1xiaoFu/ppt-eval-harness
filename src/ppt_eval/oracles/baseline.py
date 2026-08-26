@@ -273,6 +273,71 @@ class ContentClarityOracle(AtomicOracle):
         )
 
 
+class TemplateResidueOracle(AtomicOracle):
+    """Detect high-confidence, user-visible template residue.
+
+    The rules deliberately avoid broad keyword matching.  For example, a real
+    date, a named presenter, ``XXL`` and prose containing the word "date" are
+    not findings.  This metric is additive because the deterministic patterns
+    are strong delivery defects but are not sufficient to reject a deck as a
+    non-compensable hard gate.
+    """
+
+    oracle_id = "template_residue_oracle"
+    metric_id = "template_residue"
+    score_role = ScoreRole.BASE_ADDITIVE
+    version = "1.0.0"
+
+    def _evaluate(self, context: object) -> OracleResult:
+        presentation = self.presentation(context)
+        findings: list[tuple[int, SlideObject, tuple[str, ...]]] = []
+        reason_counts: dict[str, int] = defaultdict(int)
+        affected_pages: set[int] = set()
+
+        for slide in presentation.slides:
+            for item in slide.visible_objects:
+                if not item.visible_text:
+                    continue
+                reasons = _template_residue_reasons(item.visible_text)
+                if not reasons:
+                    continue
+                findings.append((slide.page_number, item, reasons))
+                affected_pages.add(slide.page_number)
+                for reason in reasons:
+                    reason_counts[reason] += 1
+
+        score = template_residue_score(
+            len(findings), len(affected_pages), presentation.slide_count
+        )
+        details = tuple(
+            evidence(
+                self.metric_id,
+                f"residue-{page}-{item.object_id}",
+                "template_residue",
+                "Visible text contains a high-confidence unresolved template marker.",
+                page_number=page,
+                object_id=item.object_id,
+                bbox=item.bbox.as_tuple(),
+                payload={
+                    "reason_codes": reasons,
+                    "matched_excerpt": _evidence_excerpt(item.visible_text),
+                },
+            )
+            for page, item, reasons in findings[:20]
+        )
+        return self.scored(
+            score,
+            details,
+            raw_value=len(findings),
+            confidence=0.96,
+            metadata={
+                "residue_objects": len(findings),
+                "affected_pages": len(affected_pages),
+                "reason_counts": dict(sorted(reason_counts.items())),
+            },
+        )
+
+
 class NarrativeOracle(AtomicOracle):
     oracle_id = "narrative_oracle"
     metric_id = "narrative"
@@ -357,12 +422,16 @@ class LayoutOracle(AtomicOracle):
     oracle_id = "layout_oracle"
     metric_id = "layout"
     score_role = ScoreRole.BASE_ADDITIVE
+    version = "1.1.0"
 
     def _evaluate(self, context: object) -> OracleResult:
         presentation = self.presentation(context)
         considered = 0
         outside: list[tuple[int, SlideObject]] = []
-        overlaps: list[tuple[int, SlideObject, SlideObject, float]] = []
+        overlaps: list[tuple[int, SlideObject, SlideObject, float, str]] = []
+        ignored_overlaps = 0
+        ignored_outside_tolerance = 0
+        ignored_intentional_outside = 0
         for slide in presentation.slides:
             objects = [
                 item
@@ -370,7 +439,15 @@ class LayoutOracle(AtomicOracle):
                 if item.bbox.area > 1e-5 and item.kind not in {"group", "connector"}
             ]
             considered += len(objects)
-            outside.extend((slide.page_number, item) for item in objects if item.bbox.is_outside_slide)
+            for item in objects:
+                if not item.bbox.is_outside_slide:
+                    continue
+                if _is_intentional_outside(item):
+                    ignored_intentional_outside += 1
+                elif _meaningfully_outside_slide(item):
+                    outside.append((slide.page_number, item))
+                else:
+                    ignored_outside_tolerance += 1
             for index, left in enumerate(objects):
                 if left.bbox.area > 0.80:
                     continue
@@ -378,13 +455,13 @@ class LayoutOracle(AtomicOracle):
                     if right.bbox.area > 0.80:
                         continue
                     ratio = _overlap_ratio(left, right)
-                    # Text over a picture is a legitimate composition; overlapping peer
-                    # text boxes and peer media are the high-precision defects here.
-                    cross_media_text = {left.kind, right.kind} & {"picture", "media"} and (
-                        bool(left.visible_text) or bool(right.visible_text)
-                    )
-                    if ratio > 0.35 and not cross_media_text:
-                        overlaps.append((slide.page_number, left, right, ratio))
+                    classification = _defective_overlap_class(left, right, ratio)
+                    if classification is not None:
+                        overlaps.append(
+                            (slide.page_number, left, right, ratio, classification)
+                        )
+                    elif ratio > 0.35:
+                        ignored_overlaps += 1
         denominator = max(1, considered)
         score = 1.0 - min(0.65, 2.5 * len(outside) / denominator) - min(
             0.45, 1.5 * len(overlaps) / denominator
@@ -410,14 +487,27 @@ class LayoutOracle(AtomicOracle):
                 page_number=page,
                 object_id=left.object_id,
                 bbox=left.bbox.as_tuple(),
-                payload={"other_object_id": right.object_id, "overlap_ratio": round(ratio, 4)},
+                payload={
+                    "other_object_id": right.object_id,
+                    "overlap_ratio": round(ratio, 4),
+                    "classification": classification,
+                    "left_kind": left.kind,
+                    "right_kind": right.kind,
+                },
             )
-            for page, left, right, ratio in overlaps[:10]
+            for page, left, right, ratio, classification in overlaps[:10]
         )
         return self.scored(
             score,
             details,
-            metadata={"objects_considered": considered, "outside": len(outside), "overlaps": len(overlaps)},
+            metadata={
+                "objects_considered": considered,
+                "outside": len(outside),
+                "overlaps": len(overlaps),
+                "ignored_intentional_overlaps": ignored_overlaps,
+                "ignored_outside_tolerance": ignored_outside_tolerance,
+                "ignored_intentional_outside": ignored_intentional_outside,
+            },
         )
 
 
@@ -674,6 +764,7 @@ class BaselinePptQualityOracle(CompositeOracle):
     ORACLE_ID = "baseline_ppt_quality"
     oracle_id = ORACLE_ID
     metric_id = "baseline_ppt_quality"
+    version = "2.0.0"
 
     def __init__(self, adapter=None) -> None:
         children = (
@@ -681,6 +772,7 @@ class BaselinePptQualityOracle(CompositeOracle):
             CriticalContentVisibilityOracle(adapter),
             InternalDataConsistencyOracle(adapter),
             ContentClarityOracle(adapter),
+            TemplateResidueOracle(adapter),
             NarrativeOracle(adapter),
             VisualHierarchyOracle(adapter),
             LayoutOracle(adapter),
@@ -719,6 +811,170 @@ def _overlap_ratio(left: SlideObject, right: SlideObject) -> float:
     y2 = min(left.bbox.y + left.bbox.height, right.bbox.y + right.bbox.height)
     intersection = max(0.0, x2 - x1) * max(0.0, y2 - y1)
     return intersection / max(1e-9, min(left.bbox.area, right.bbox.area))
+
+
+def _meaningfully_outside_slide(item: SlideObject, tolerance: float = 0.005) -> bool:
+    """Ignore sub-percent OOXML/renderer rounding at slide edges."""
+
+    bbox = item.bbox
+    return (
+        bbox.x < -tolerance
+        or bbox.y < -tolerance
+        or bbox.width < 0
+        or bbox.height < 0
+        or bbox.x + bbox.width > 1.0 + tolerance
+        or bbox.y + bbox.height > 1.0 + tolerance
+    )
+
+
+def _is_intentional_outside(item: SlideObject) -> bool:
+    """Treat non-semantic decoration bleed as composition, not clipping."""
+
+    return (
+        not item.visible_text
+        and item.kind not in _SEMANTIC_MEDIA_KINDS
+        and _is_decorative_object(item)
+    )
+
+
+_SEMANTIC_MEDIA_KINDS = {
+    "chart",
+    "linked_picture",
+    "media",
+    "picture",
+    "table",
+}
+
+
+def _defective_overlap_class(
+    left: SlideObject, right: SlideObject, ratio: float
+) -> str | None:
+    """Return a high-precision overlap class, or ``None`` for composition.
+
+    Object-tree bounding boxes do not reveal z-order occlusion or actual glyph
+    bounds.  As a result, cards behind labels, timeline connectors through
+    nodes, decorative circles, and text laid over imagery must not be treated
+    as defects.  Text-on-text overlap remains a useful high-confidence signal.
+    Semantic media overlap is retained only at a stricter threshold.
+    """
+
+    left_has_text = bool(left.visible_text)
+    right_has_text = bool(right.visible_text)
+    if left_has_text and right_has_text:
+        # Text boxes include internal margins and line-height padding.  The
+        # real-deck calibration slice contains legitimate heading/body pairs
+        # around 0.50, so deterministic evidence starts above 0.60.
+        return "text_text" if ratio > 0.60 else None
+
+    # A label inside a card, text over a hero image, and annotations on charts
+    # are common intentional compositions.
+    if left_has_text != right_has_text:
+        return None
+
+    if _is_decorative_object(left) or _is_decorative_object(right):
+        return None
+
+    if left.kind not in _SEMANTIC_MEDIA_KINDS or right.kind not in _SEMANTIC_MEDIA_KINDS:
+        return None
+
+    if {left.kind, right.kind} <= {"picture", "linked_picture", "media"}:
+        return "media_media" if ratio > 0.75 else None
+    return "semantic_media" if ratio > 0.50 else None
+
+
+def _is_decorative_object(item: SlideObject) -> bool:
+    if item.visible_text:
+        return False
+    if item.kind in {"connector", "group", "shape", "placeholder", "unknown"}:
+        return True
+    if item.bbox.area > 0.45 or item.bbox.area < 0.0025:
+        return True
+    if item.bbox.width < 0.012 or item.bbox.height < 0.012:
+        return True
+    name = re.sub(r"[ _-]+", " ", item.name.lower()).strip()
+    return bool(
+        re.search(
+            r"\b(?:background|connector|decoration|decorative|line|node|"
+            r"oval|rectangle|shape|accent|ornament|arrow)\b",
+            name,
+        )
+    )
+
+
+_TEMPLATE_RESIDUE_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("lorem_ipsum", re.compile(r"\blorem\s+ipsum\b", re.IGNORECASE)),
+    (
+        "office_prompt",
+        re.compile(
+            r"(?:\bclick\s+to\s+add\s+(?:title|subtitle|text)\b|"
+            r"(?:\u5355\u51fb|\u70b9\u51fb)(?:\u6b64\u5904)?(?:\u6dfb\u52a0|\u8f93\u5165)(?:\u6807\u9898|\u526f\u6807\u9898|\u6587\u672c|\u5185\u5bb9))",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "date_placeholder",
+        re.compile(
+            r"(?:(?:\u65e5\u671f|date)\s*[:\uff1a-]?\s*(?:"
+            r"(?:20x{2}|y{2,4}|x{2,4})\s*[/.-]\s*(?:m{1,2}|x{1,2})\s*[/.-]\s*(?:d{1,2}|x{1,2})|"
+            r"(?:m{1,2}|x{1,2})\s*[/.-]\s*(?:d{1,2}|x{1,2})\s*[/.-]\s*(?:y{2,4}|x{2,4})|"
+            r"(?:y{2,4}|x{2,4})\s*\u5e74\s*(?:m{1,2}|x{1,2})\s*\u6708\s*(?:d{1,2}|x{1,2})\s*\u65e5|"
+            r"\u5e74\s*\u6708\s*\u65e5|\u5f85\u586b(?:\u5199)?|\u5f85\u5b9a|\u586b\u5199\u65e5\u671f)|"
+            r"^(?:20x{2}|y{2,4}|x{4})\s*[/.-]\s*(?:m{1,2}|x{1,2})\s*[/.-]\s*(?:d{1,2}|x{1,2})$)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "presenter_placeholder",
+        re.compile(
+            r"(?:(?:\u6c47\u62a5\u4eba|\u62a5\u544a\u4eba|\u6f14\u8bb2\u8005|presenter|prepared\s+by)"
+            r"\s*[:\uff1a-]\s*(?:\u59d3\u540d|\u540d\u5b57|name|your\s+name|x{2,}|\u5f85\u586b(?:\u5199)?|\u5f85\u5b9a)\s*[.!\uff01\u3002\u2026_-]*$|"
+            r"^(?:\u6c47\u62a5\u4eba|\u62a5\u544a\u4eba|\u6f14\u8bb2\u8005)\s*(?:\u59d3\u540d|\u540d\u79f0)$|"
+            r"^(?:presenter|speaker)\s+name$)",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "bracketed_template_field",
+        re.compile(
+            r"^(?:\{\{|\[|<)\s*(?:insert\s+)?(?:title|subtitle|company|client|"
+            r"presenter|name|date|logo|\u6807\u9898|\u526f\u6807\u9898|\u516c\u53f8|\u5ba2\u6237|\u59d3\u540d|\u65e5\u671f|\u5f85\u586b\u5185\u5bb9)"
+            r"\s*(?:\}\}|\]|>)$",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "explicit_todo_token",
+        re.compile(
+            r"^\s*(?:tbd|tbc|todo|fixme|x{2,}|\u5f85\u5b9a|\u5f85\u8865\u5145|\u5f85\u586b\u5199|\u5f85\u66f4\u65b0)"
+            r"\s*[.!\uff01\u3002\u2026_-]*\s*$",
+            re.IGNORECASE,
+        ),
+    ),
+)
+
+
+def _template_residue_reasons(text: str) -> tuple[str, ...]:
+    normalized = re.sub(r"\s+", " ", text).strip()
+    return tuple(code for code, pattern in _TEMPLATE_RESIDUE_RULES if pattern.search(normalized))
+
+
+def template_residue_score(
+    finding_count: int, affected_page_count: int, slide_count: int
+) -> float:
+    """Monotonic score used by :class:`TemplateResidueOracle`."""
+
+    if finding_count < 0 or affected_page_count < 0 or slide_count < 0:
+        raise ValueError("template residue counts cannot be negative")
+    if finding_count == 0:
+        return 1.0
+    affected_ratio = min(1.0, affected_page_count / max(1, slide_count))
+    penalty = 0.30 + 0.15 * (finding_count - 1) + 0.20 * affected_ratio
+    return clamp(1.0 - min(0.90, penalty))
+
+
+def _evidence_excerpt(text: str, limit: int = 120) -> str:
+    normalized = re.sub(r"\s+", " ", text).strip()
+    return normalized if len(normalized) <= limit else normalized[: limit - 1] + "\u2026"
 
 
 def _meaningful_alt_text(alt_text: str, name: str) -> bool:

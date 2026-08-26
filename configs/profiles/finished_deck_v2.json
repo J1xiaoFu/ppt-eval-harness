@@ -1,0 +1,35 @@
+{
+  "profile_id": "finished-deck-v2",
+  "version": "2.0",
+  "scenario": "FINISHED_DECK",
+  "lambda_base": 1.0,
+  "required_oracles": ["baseline_ppt_quality"],
+  "optional_oracles": ["high_cost.model_audits"],
+  "base_weights": {
+    "content_clarity": 0.14,
+    "narrative": 0.12,
+    "visual_hierarchy": 0.12,
+    "layout": 0.12,
+    "typography": 0.10,
+    "style_consistency": 0.10,
+    "multimedia_quality": 0.08,
+    "editability": 0.08,
+    "compatibility": 0.08,
+    "accessibility": 0.06
+  },
+  "scene_weights": {},
+  "required_metric_ids": [
+    "content_clarity",
+    "narrative",
+    "visual_hierarchy",
+    "layout",
+    "typography",
+    "style_consistency",
+    "editability",
+    "compatibility",
+    "accessibility",
+    "file_deliverability",
+    "critical_content_visibility",
+    "internal_data_consistency"
+  ]
+}

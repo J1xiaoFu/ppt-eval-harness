@@ -161,6 +161,22 @@ def _slide_xml(objects: Sequence[Mapping[str, object]]) -> tuple[str, bool, bool
 </p:pic>'''
             )
             continue
+        if kind == "connector":
+            fragments.append(
+                f'''<p:cxnSp>
+ <p:nvCxnSpPr><p:cNvPr id="{index}" name="{name}"{hidden_attr}/><p:cNvCxnSpPr/><p:nvPr/></p:nvCxnSpPr>
+ <p:spPr><a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{width}" cy="{height}"/></a:xfrm><a:prstGeom prst="line"><a:avLst/></a:prstGeom></p:spPr>
+</p:cxnSp>'''
+            )
+            continue
+        if kind in {"shape", "decoration"}:
+            fragments.append(
+                f'''<p:sp>
+ <p:nvSpPr><p:cNvPr id="{index}" name="{name}"{hidden_attr}/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>
+ <p:spPr><a:xfrm><a:off x="{x}" y="{y}"/><a:ext cx="{width}" cy="{height}"/></a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr>
+</p:sp>'''
+            )
+            continue
         text = html.escape(str(item.get("text", "")))
         font_size = int(float(item.get("font_pt", 20)) * 100)
         fragments.append(

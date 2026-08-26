@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 
 from ppt_eval.domain import (
+    CONSTRUCT_WEIGHTED_MEAN,
     CoverageStatus,
     EvalProfile,
     EvaluationDecision,
@@ -279,3 +280,144 @@ def test_worsening_additive_or_gate_cannot_improve_score() -> None:
 
     assert worse.base_score < good.base_score
     assert worse.full_score < good.full_score
+
+
+def test_metric_floor_routes_an_otherwise_passing_score_to_review() -> None:
+    configured = EvalProfile(
+        profile_id="metric-floor",
+        version="3.0",
+        scene=SceneType.READY_MADE,
+        base_weights={"base": 0.5, "guarded": 0.5},
+        scene_weights={},
+        base_multiplier_metric_ids=(),
+        metric_review_thresholds={"guarded": 0.70},
+    )
+    below_floor = (
+        scored("base", 0.95, ScoreRole.BASE_ADDITIVE),
+        scored("guarded", 0.69, ScoreRole.BASE_ADDITIVE),
+    )
+    score = PptPdmsAggregator().aggregate(configured, below_floor)
+
+    decision, reasons = DecisionPolicy().decide(
+        configured,
+        score,
+        below_floor,
+    )
+
+    assert score.full_score == 82.0
+    assert decision == EvaluationDecision.REVIEW
+    assert reasons == ("metric_floor_review:guarded",)
+
+
+def test_metric_floor_is_inclusive_at_the_configured_boundary() -> None:
+    configured = EvalProfile(
+        profile_id="metric-floor-boundary",
+        version="3.0",
+        scene=SceneType.READY_MADE,
+        base_weights={"base": 0.5, "guarded": 0.5},
+        scene_weights={},
+        base_multiplier_metric_ids=(),
+        metric_review_thresholds={"guarded": 0.70},
+    )
+    at_floor = (
+        scored("base", 0.95, ScoreRole.BASE_ADDITIVE),
+        scored("guarded", 0.70, ScoreRole.BASE_ADDITIVE),
+    )
+    score = PptPdmsAggregator().aggregate(configured, at_floor)
+
+    decision, reasons = DecisionPolicy().decide(configured, score, at_floor)
+
+    assert score.full_score == 82.5
+    assert decision == EvaluationDecision.PASS
+    assert reasons == ()
+
+
+def test_construct_weighted_mean_reports_fixed_group_scores() -> None:
+    configured = EvalProfile(
+        profile_id="construct-score",
+        version="4.0",
+        scene=SceneType.READY_MADE,
+        base_weights={"content": 1.0, "visual_rule": 0.9, "visual_vlm": 0.1},
+        scene_weights={},
+        base_multiplier_metric_ids=(),
+        aggregation_strategy=CONSTRUCT_WEIGHTED_MEAN,
+        base_metric_constructs={
+            "content": "content",
+            "visual_rule": "visual",
+            "visual_vlm": "visual",
+        },
+        base_construct_weights={"content": 0.5, "visual": 0.5},
+    )
+    results = (
+        scored("content", 0.8, ScoreRole.BASE_ADDITIVE),
+        scored("visual_rule", 0.6, ScoreRole.BASE_ADDITIVE),
+        scored("visual_vlm", 1.0, ScoreRole.BASE_ADDITIVE),
+    )
+
+    breakdown = PptPdmsAggregator().aggregate(configured, results)
+
+    assert breakdown.base_construct_scores == {"content": 0.8, "visual": 0.64}
+    assert breakdown.base_score == 72.0
+    assert breakdown.full_score == 72.0
+
+
+def test_duplicate_visual_proxies_do_not_expand_construct_budget() -> None:
+    common = {
+        "profile_id": "construct-budget",
+        "version": "4.0",
+        "scene": SceneType.READY_MADE,
+        "scene_weights": {},
+        "base_multiplier_metric_ids": (),
+        "aggregation_strategy": CONSTRUCT_WEIGHTED_MEAN,
+        "base_construct_weights": {"content": 0.5, "visual": 0.5},
+    }
+    two_visual = EvalProfile(
+        **common,
+        base_weights={"content": 1.0, "visual_a": 1.0, "visual_b": 1.0},
+        base_metric_constructs={
+            "content": "content",
+            "visual_a": "visual",
+            "visual_b": "visual",
+        },
+    )
+    three_visual = EvalProfile(
+        **common,
+        base_weights={
+            "content": 1.0,
+            "visual_a": 1.0,
+            "visual_b": 1.0,
+            "visual_c": 1.0,
+        },
+        base_metric_constructs={
+            "content": "content",
+            "visual_a": "visual",
+            "visual_b": "visual",
+            "visual_c": "visual",
+        },
+    )
+    two_results = (
+        scored("content", 0.0, ScoreRole.BASE_ADDITIVE),
+        scored("visual_a", 1.0, ScoreRole.BASE_ADDITIVE),
+        scored("visual_b", 1.0, ScoreRole.BASE_ADDITIVE),
+    )
+    three_results = two_results + (
+        scored("visual_c", 1.0, ScoreRole.BASE_ADDITIVE),
+    )
+
+    assert PptPdmsAggregator().aggregate(two_visual, two_results).base_score == 50.0
+    assert PptPdmsAggregator().aggregate(three_visual, three_results).base_score == 50.0
+
+
+def test_construct_profile_rejects_unassigned_positive_metric() -> None:
+    with expect_raises(ValueError, "must assign each positive metric once"):
+        EvalProfile(
+            profile_id="bad-construct",
+            version="4.0",
+            scene=SceneType.READY_MADE,
+            base_weights={"content": 1.0, "visual": 1.0},
+            scene_weights={},
+            base_multiplier_metric_ids=(),
+            aggregation_strategy=CONSTRUCT_WEIGHTED_MEAN,
+            base_metric_constructs={"content": "content"},
+            base_construct_weights={"content": 1.0},
+        )

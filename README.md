@@ -2,16 +2,23 @@
 
 An evidence-first, deterministic evaluation harness for generated and existing PowerPoint decks. It combines an always-on intrinsic PPT quality baseline, scenario-specific Oracles, PDMS-style scoring, explicit degradation, human review, and append-only audit evidence.
 
-New maintainers should start with the Chinese [onboarding and handover guide](docs/onboarding_handover_guide.md). It explains the architecture, every component's responsibility, the 30 atomic metrics, scoring and degradation, local operations, extension patterns, release governance, troubleshooting, and current implementation gaps.
+New maintainers should start with the Chinese [onboarding and handover guide](docs/onboarding_handover_guide.md). It explains the architecture, every component's responsibility, the 31 deterministic atomic metrics, the tiered model audits, scoring and degradation, local operations, extension patterns, release governance, troubleshooting, and current implementation gaps.
 
 ## What works
 
 - Four scenarios: `text_to_ppt`, `project_summary`, `multimodal`, and `ready_made`.
 - The `baseline_ppt_quality` composite is injected into every execution DAG and cannot be removed by configuration.
 - Safe PPTX ZIP preflight, `python-pptx` parsing, and an OOXML fallback parser.
-- Thirteen intrinsic metrics plus scenario metrics with page/object/bbox evidence.
+- Fourteen intrinsic metrics plus scenario metrics with page/object/bbox evidence.
 - Deterministic `OBSERVE -> PLAN -> ACT -> VERIFY -> FINALIZE/REVIEW` supervisor.
 - PPT-PDMS aggregation, high-confidence hard multipliers, required/optional `NA`, and isolated runtime `ERROR`.
+- Strict vendor-neutral LLM/VLM contracts. The pre-research v3 profiles score every case with
+  `qwen3.7-flash`, conditionally audit uncertain cases with `qwen3.7-plus`, then route remaining
+  uncertainty to a human. Historical v1 deterministic and v2 shadow formulas remain loadable;
+  bit-identical replay also requires the corresponding historical Git SHA or container image.
+- Optional construct-aware aggregation fixes content/visual/delivery/handoff budgets and reports
+  construct scores; it is exposed only through an unvalidated v4 candidate. Raster-only decks use
+  rendered semantic content recovery instead of treating an empty object-tree text layer as zero.
 - Local CLI/runtime, optional FastAPI/Celery/PostgreSQL/S3 adapters, review UI source, Docker Compose, run export, and hash-chained audit logs.
 - Feedback/edit-diff ingestion, active-sampling priorities, and parameter proposals that require frozen/challenge/shadow validation plus two human approvals; v1 intentionally exposes no automatic production apply method.
 - Three-part research/development/evaluation audit pack and a generated read-only HTML report.
@@ -24,6 +31,31 @@ python examples/generate_demo.py
 ppt-eval run examples/demo/case_ready_made.json
 ppt-eval run examples/demo/case_text_to_ppt.json
 ppt-eval audit verify
+```
+
+The environment-aware CLI/API runtime reads the DashScope key from
+`DASHSCOPE_API_KEY`, or from the ignored local file
+`api/qwen3.7_flash_api.txt`. The default endpoint is
+`https://dashscope.aliyuncs.com/compatible-mode/v1`; both Qwen tiers run with
+thinking enabled. Do not put a real key in `.env.example` or commit the `api/`
+directory.
+
+HTTP ceilings default to 120 seconds for Flash and 240 seconds for Plus
+(`PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS` and
+`PPT_EVAL_QWEN_PLUS_HTTP_TIMEOUT_SECONDS`). These are transport limits; the
+Profile-level `oracle_timeout_seconds` is not yet enforced by the scheduler.
+
+Local files named in `EvalCase.source_materials` are fail-closed for remote
+model audits. Inline source text remains available, but a local file is read
+only when it is beneath an explicitly approved `PPT_EVAL_MODEL_SOURCE_ROOTS`
+directory (use `;` between roots on Windows and `:` on Linux/macOS). Absolute
+paths are replaced by opaque source IDs before transmission. Credential paths,
+`.env`, `.git`, `api/`, and operating-system secret locations remain blocked
+even when a broader root was configured.
+
+```powershell
+$env:DASHSCOPE_API_KEY = "sk-..."
+ppt-eval run examples/demo/case_ready_made.json
 ```
 
 Governed flywheel signals are available from the same CLI:
@@ -84,7 +116,7 @@ pnpm dev -- --port 5173
 
 Open the reviewer at `http://127.0.0.1:5173/` and the interactive API schema at `http://127.0.0.1:8000/docs`.
 
-PowerPoint and LibreOffice renderer adapters are included behind stable ports. The final interview deck was successfully rendered with PowerPoint 16, while the default MVP scoring chain still uses PPTX object-tree evidence and does not consume renderer pixels. The LibreOffice adapter currently exports PDF only and is not part of scoring.
+PowerPoint and LibreOffice renderer adapters are included behind stable ports. When the Qwen Flash VLM is enabled and callers did not supply `slide_images`, the environment-aware local runtime attempts a hash-keyed render cache automatically. Windows prefers native PowerPoint; LibreOffice exports PDF and, when `pdftoppm` is available, rasterizes it to per-slide PNGs (the Docker image includes this dependency). A render failure is recorded as missing evidence and degrades v3 coverage instead of crashing the run.
 
 ## Audit and interview report
 
@@ -101,3 +133,18 @@ The nine-slide interview deck is generated from the same audited JSON through `s
 ## Verification
 
 `scripts/run_tests.py` executes the plain-assert suite without third-party test dependencies. It covers the Harness, scoring properties, degradation, PPTX security/parser behavior, Oracle evidence, persistence, review, and audit export. Production release thresholds remain pre-registered targets rather than claimed results until the 400-case gold set and shadow traffic exist.
+
+The first real Qwen v3 check is intentionally reported without spin:
+on three same-topic Slides-Align decks, descriptive Spearman versus human
+ranking was `0.50` (two of three pairwise orders correct), below the historical
+v2 slice's `1.00`. See
+[`06_qwen_v3_real_ppt_gt_slice.md`](reports/03_evaluation/06_qwen_v3_real_ppt_gt_slice.md).
+This small slice is diagnostic evidence that the current prompts, weights, and
+review thresholds still need calibration—not a production quality claim.
+
+The expanded same-topic set now contains seven complete PPTX/render pairs
+(130 slides). On this larger diagnostic slice, the current-code deterministic
+baseline has Spearman `0.107`, while Flash v3 has `-0.321`; construct-capped
+aggregation alone does not repair the ordering. The audit and the experimental
+v4 construct Profile are documented in
+[`07_aggregation_metric_iteration.md`](reports/03_evaluation/07_aggregation_metric_iteration.md).

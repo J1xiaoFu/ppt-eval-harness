@@ -11,7 +11,7 @@ from ppt_eval.adapters import LibreOfficeRenderer, PowerPointRenderer
 from ppt_eval.config import default_profile, load_case, load_profile
 from ppt_eval.domain import EvalCase, SceneType
 from ppt_eval.infrastructure import to_primitive
-from ppt_eval.runtime import LocalEvaluationRuntime
+from ppt_eval.runtime import build_runtime_from_environment
 
 
 def _json(value) -> str:
@@ -92,7 +92,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     runtime = None
     if args.command in {"run", "batch", "review", "feedback", "proposal", "audit"}:
-        runtime = LocalEvaluationRuntime(args.data_dir)
+        runtime = build_runtime_from_environment(args.data_dir)
 
     if args.command == "run":
         case = _case_from_argument(args.case)

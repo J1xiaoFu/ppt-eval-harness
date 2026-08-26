@@ -128,6 +128,34 @@ DEFAULT_LAMBDA: Mapping[SceneType, float] = {
     SceneType.READY_MADE: 1.0,
 }
 
+# Model-assisted shadow execution is introduced only by v2 defaults.  Keeping
+# the v1 weights and routing unchanged is important for historical replay.
+V2_OPTIONAL_MODEL_METRIC_IDS = (
+    "llm_content_quality_audit",
+    "vlm_visual_quality_audit",
+    "llm_scenario_compliance_audit",
+)
+V2_MODEL_COMPOSITE_ORACLE_ID = "high_cost.model_audits"
+
+V3_FLASH_BASE_WEIGHTS: Mapping[str, float] = {
+    "template_residue": 0.08,
+    "llm_content_quality_audit": 0.08,
+    "vlm_visual_quality_audit": 0.12,
+}
+V3_FLASH_SCENE_WEIGHTS: Mapping[str, float] = {
+    "llm_scenario_compliance_audit": 0.10,
+}
+V3_METRIC_REVIEW_THRESHOLDS: Mapping[str, float] = {
+    "template_residue": 0.85,
+    "layout": 0.65,
+    "typography": 0.70,
+    "llm_content_quality_audit": 0.70,
+    "vlm_visual_quality_audit": 0.70,
+}
+
+FLAT_WEIGHTED_MEAN = "FLAT_WEIGHTED_MEAN"
+CONSTRUCT_WEIGHTED_MEAN = "CONSTRUCT_WEIGHTED_MEAN"
+
 
 @dataclass(frozen=True, slots=True)
 class EvalProfile:
@@ -146,6 +174,12 @@ class EvalProfile:
     hard_gate_min_confidence: float = 0.90
     pass_threshold: float = 80.0
     review_threshold: float = 60.0
+    metric_review_thresholds: Mapping[str, float] = field(default_factory=dict)
+    aggregation_strategy: str = FLAT_WEIGHTED_MEAN
+    base_metric_constructs: Mapping[str, str] = field(default_factory=dict)
+    base_construct_weights: Mapping[str, float] = field(default_factory=dict)
+    scene_metric_constructs: Mapping[str, str] = field(default_factory=dict)
+    scene_construct_weights: Mapping[str, float] = field(default_factory=dict)
     max_retries: int = 1
     oracle_timeout_seconds: float = 60.0
     cost_budget: float | None = None
@@ -182,7 +216,8 @@ class EvalProfile:
             object.__setattr__(
                 self, "required_metric_ids", tuple(self.required_metric_ids)
             )
-        if not 0.0 <= float(self.lambda_base) <= 1.0:
+        lambda_base = self.lambda_base
+        if lambda_base is None or not 0.0 <= float(lambda_base) <= 1.0:
             raise ValueError("lambda_base must be between zero and one")
         if not 0.0 <= self.hard_gate_min_confidence <= 1.0:
             raise ValueError("hard_gate_min_confidence must be between zero and one")
@@ -194,6 +229,7 @@ class EvalProfile:
             raise ValueError("thresholds must satisfy 0 <= review <= pass <= 100")
         self._validate_weights("base_weights", self.base_weights)
         self._validate_weights("scene_weights", self.scene_weights)
+        self._validate_metric_review_thresholds(configured_metric_ids)
         self._validate_no_double_penalty()
         unknown_required = set(self.required_metric_ids or ()) - set(
             configured_metric_ids
@@ -203,6 +239,7 @@ class EvalProfile:
                 "required_metric_ids contains unconfigured metrics: "
                 + ", ".join(sorted(unknown_required))
             )
+        self._validate_construct_aggregation()
 
     @staticmethod
     def _validate_weights(name: str, weights: Mapping[str, float]) -> None:
@@ -231,24 +268,170 @@ class EvalProfile:
         if duplicate_multipliers:
             raise ValueError("a multiplier cannot be used by both base and scene scores")
 
+    def _validate_metric_review_thresholds(
+        self, configured_metric_ids: tuple[str, ...]
+    ) -> None:
+        unknown = set(self.metric_review_thresholds) - set(configured_metric_ids)
+        if unknown:
+            raise ValueError(
+                "metric_review_thresholds contains unconfigured metrics: "
+                + ", ".join(sorted(unknown))
+            )
+        for metric_id, threshold in self.metric_review_thresholds.items():
+            if not metric_id or not 0.0 <= float(threshold) <= 1.0:
+                raise ValueError(
+                    "metric_review_thresholds must map metric ids to values in [0,1]"
+                )
+
+    def _validate_construct_aggregation(self) -> None:
+        strategy = str(self.aggregation_strategy).strip().upper()
+        object.__setattr__(self, "aggregation_strategy", strategy)
+        configured = {
+            "base": (
+                self.base_weights,
+                self.base_metric_constructs,
+                self.base_construct_weights,
+            ),
+            "scene": (
+                self.scene_weights,
+                self.scene_metric_constructs,
+                self.scene_construct_weights,
+            ),
+        }
+        if strategy == FLAT_WEIGHTED_MEAN:
+            if any(assignments or weights for _, assignments, weights in configured.values()):
+                raise ValueError(
+                    "construct mappings require CONSTRUCT_WEIGHTED_MEAN"
+                )
+            return
+        if strategy != CONSTRUCT_WEIGHTED_MEAN:
+            raise ValueError(f"unknown aggregation_strategy {strategy!r}")
+
+        required = set(self.required_metric_ids or ())
+        for label, (metric_weights, assignments, construct_weights) in configured.items():
+            positive_metrics = {
+                metric_id for metric_id, weight in metric_weights.items() if weight > 0
+            }
+            if not positive_metrics:
+                if assignments or construct_weights:
+                    raise ValueError(f"{label} constructs configured without metrics")
+                continue
+            if set(assignments) != positive_metrics:
+                missing = positive_metrics - set(assignments)
+                unknown = set(assignments) - positive_metrics
+                details = []
+                if missing:
+                    details.append("missing=" + ",".join(sorted(missing)))
+                if unknown:
+                    details.append("unknown=" + ",".join(sorted(unknown)))
+                raise ValueError(
+                    f"{label}_metric_constructs must assign each positive metric once: "
+                    + "; ".join(details)
+                )
+            construct_ids = {str(value).strip() for value in assignments.values()}
+            if "" in construct_ids:
+                raise ValueError(f"{label}_metric_constructs contains a blank construct")
+            if set(construct_weights) != construct_ids:
+                raise ValueError(
+                    f"{label}_construct_weights must match assigned constructs"
+                )
+            self._validate_weights(f"{label}_construct_weights", construct_weights)
+            if any(float(weight) <= 0 for weight in construct_weights.values()):
+                raise ValueError(f"{label}_construct_weights must all be positive")
+            for construct_id in construct_ids:
+                if not any(
+                    metric_id in required and assignments[metric_id] == construct_id
+                    for metric_id in positive_metrics
+                ):
+                    raise ValueError(
+                        f"construct {construct_id!r} must contain a required metric"
+                    )
+
     @classmethod
-    def default(cls, scene: SceneType, version: str = "1.0") -> "EvalProfile":
+    def default(cls, scene: SceneType, version: str = "3.0") -> "EvalProfile":
         scene = SceneType(scene)
+        try:
+            major_version = int(version.split(".", 1)[0])
+        except ValueError:
+            major_version = 1
+        base_weights = dict(DEFAULT_BASE_WEIGHTS)
+        scene_weights = dict(DEFAULT_SCENE_WEIGHTS[scene])
+        enabled_oracle_ids = {
+            SceneType.TEXT_TO_PPT: ("scenario.instruction_alignment",),
+            SceneType.PROJECT_SUMMARY: ("scenario.source_faithfulness",),
+            SceneType.MULTIMODAL: ("scenario.asset_compliance",),
+            SceneType.READY_MADE: (),
+        }[scene]
+        required_metric_ids: tuple[str, ...] | None = None
+        metric_review_thresholds: Mapping[str, float] = {}
+        metadata: Mapping[str, Any] = {}
+        if major_version >= 2:
+            enabled_oracle_ids = (
+                *enabled_oracle_ids,
+                V2_MODEL_COMPOSITE_ORACLE_ID,
+            )
+            configured = tuple(
+                dict.fromkeys(
+                    (*base_weights, *scene_weights)
+                    + DEFAULT_BASE_MULTIPLIERS
+                    + DEFAULT_SCENE_MULTIPLIERS[scene]
+                )
+            )
+            required_metric_ids = tuple(
+                metric_id
+                for metric_id in configured
+                if metric_id not in V2_OPTIONAL_MODEL_METRIC_IDS
+                and not (
+                    scene == SceneType.READY_MADE
+                    and metric_id == "multimedia_quality"
+                )
+            )
+        if major_version >= 3:
+            base_weights.update(V3_FLASH_BASE_WEIGHTS)
+            if scene != SceneType.READY_MADE:
+                scene_weights.update(V3_FLASH_SCENE_WEIGHTS)
+            configured = tuple(
+                dict.fromkeys(
+                    (*base_weights, *scene_weights)
+                    + DEFAULT_BASE_MULTIPLIERS
+                    + DEFAULT_SCENE_MULTIPLIERS[scene]
+                )
+            )
+            required_metric_ids = tuple(
+                metric_id
+                for metric_id in configured
+                if not (
+                    scene == SceneType.READY_MADE
+                    and metric_id == "multimedia_quality"
+                )
+            )
+            metric_review_thresholds = {
+                **V3_METRIC_REVIEW_THRESHOLDS,
+                **(
+                    {"llm_scenario_compliance_audit": 0.70}
+                    if scene != SceneType.READY_MADE
+                    else {}
+                ),
+            }
+            metadata = {
+                "lifecycle": "PRE_RESEARCH",
+                "model_audit_routing": "FLASH_PLUS_HUMAN",
+                "flash_model": "qwen3.7-flash",
+                "plus_model": "qwen3.7-plus",
+            }
         return cls(
             profile_id=f"default-{scene.value}",
             version=version,
             scene=scene,
-            base_weights=dict(DEFAULT_BASE_WEIGHTS),
-            scene_weights=dict(DEFAULT_SCENE_WEIGHTS[scene]),
+            base_weights=base_weights,
+            scene_weights=scene_weights,
             base_multiplier_metric_ids=DEFAULT_BASE_MULTIPLIERS,
             scene_multiplier_metric_ids=DEFAULT_SCENE_MULTIPLIERS[scene],
+            required_metric_ids=required_metric_ids,
             lambda_base=DEFAULT_LAMBDA[scene],
-            enabled_oracle_ids={
-                SceneType.TEXT_TO_PPT: ("scenario.instruction_alignment",),
-                SceneType.PROJECT_SUMMARY: ("scenario.source_faithfulness",),
-                SceneType.MULTIMODAL: ("scenario.asset_compliance",),
-                SceneType.READY_MADE: (),
-            }[scene],
+            enabled_oracle_ids=enabled_oracle_ids,
+            metric_review_thresholds=metric_review_thresholds,
+            metadata=metadata,
         )
 
 
@@ -380,6 +563,8 @@ class ScoreBreakdown:
     scene_complete: bool
     unresolved_metric_ids: tuple[str, ...] = ()
     low_confidence_gate_ids: tuple[str, ...] = ()
+    base_construct_scores: Mapping[str, float] = field(default_factory=dict)
+    scene_construct_scores: Mapping[str, float] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
 from ppt_eval.domain.enums import SceneType
+
+if TYPE_CHECKING:
+    from ppt_eval.adapters import ModelAuditProvider, PptxAdapter
+    from ppt_eval.application.oracle import Oracle, OracleRegistry
+
+    from .model_source_access import ModelSourceAccessPolicy
 
 from .baseline import (
     AccessibilityOracle,
@@ -19,9 +25,21 @@ from .baseline import (
     MultimediaQualityOracle,
     NarrativeOracle,
     StyleConsistencyOracle,
+    TemplateResidueOracle,
     TypographyOracle,
     VisualHierarchyOracle,
 )
+from .model_audits import (
+    AdvancedLlmContentReviewOracle,
+    AdvancedLlmScenarioReviewOracle,
+    AdvancedModelReviewOracle,
+    AdvancedVlmVisualReviewOracle,
+    HighCostModelAuditOracle,
+    LlmContentQualityAuditOracle,
+    LlmScenarioComplianceAuditOracle,
+    VlmVisualQualityAuditOracle,
+)
+from .model_source_access import ModelSourceAccessPolicy
 from .scenarios import (
     AssetComplianceOracle,
     AssetPresentationOracle,
@@ -53,26 +71,55 @@ SCENE_ORACLE_IDS: Mapping[SceneType, tuple[str, ...]] = {
 }
 
 
-def build_default_oracles(adapter=None):
-    """Return one mandatory baseline and all optional scene composites."""
+def build_default_oracles(
+    adapter: PptxAdapter | None = None,
+    *,
+    llm_provider: ModelAuditProvider | None = None,
+    vlm_provider: ModelAuditProvider | None = None,
+    model_source_access_policy: ModelSourceAccessPolicy | None = None,
+) -> tuple[Oracle, ...]:
+    """Return the baseline plus deterministic and optional model composites."""
 
     return (
         BaselinePptQualityOracle(adapter),
         TextGenerationQualityOracle(adapter),
         ProjectSummaryQualityOracle(adapter),
         MultimodalQualityOracle(adapter),
+        HighCostModelAuditOracle(
+            adapter,
+            llm_provider=llm_provider,
+            vlm_provider=vlm_provider,
+            source_access_policy=model_source_access_policy,
+        ),
     )
 
 
-def build_default_registry(adapter=None):
+def build_default_registry(
+    adapter: PptxAdapter | None = None,
+    *,
+    llm_provider: ModelAuditProvider | None = None,
+    vlm_provider: ModelAuditProvider | None = None,
+    model_source_access_policy: ModelSourceAccessPolicy | None = None,
+) -> OracleRegistry:
     """Create the Harness registry without making infrastructure import it."""
 
     from ppt_eval.application.oracle import OracleRegistry
 
-    return OracleRegistry(build_default_oracles(adapter))
+    return OracleRegistry(
+        build_default_oracles(
+            adapter,
+            llm_provider=llm_provider,
+            vlm_provider=vlm_provider,
+            model_source_access_policy=model_source_access_policy,
+        )
+    )
 
 
 __all__ = [
+    "AdvancedLlmContentReviewOracle",
+    "AdvancedLlmScenarioReviewOracle",
+    "AdvancedModelReviewOracle",
+    "AdvancedVlmVisualReviewOracle",
     "AccessibilityOracle",
     "AssetComplianceOracle",
     "AssetPresentationOracle",
@@ -90,13 +137,17 @@ __all__ = [
     "EditabilityOracle",
     "FactQualityOracle",
     "FileDeliverabilityOracle",
+    "HighCostModelAuditOracle",
     "InstructionCoverageOracle",
     "InternalDataConsistencyOracle",
     "KeyPointRecallOracle",
     "LayoutOracle",
+    "LlmContentQualityAuditOracle",
+    "LlmScenarioComplianceAuditOracle",
     "MediaAvailabilityOracle",
     "MultimediaQualityOracle",
     "MultimodalQualityOracle",
+    "ModelSourceAccessPolicy",
     "NarrativeOracle",
     "NumericAccuracyOracle",
     "ProjectSummaryQualityOracle",
@@ -104,10 +155,12 @@ __all__ = [
     "SCENE_ORACLE_IDS",
     "SourceFaithfulnessOracle",
     "StyleConsistencyOracle",
+    "TemplateResidueOracle",
     "TextGenerationQualityOracle",
     "TraceabilityOracle",
     "TypographyOracle",
     "VisualHierarchyOracle",
+    "VlmVisualQualityAuditOracle",
     "build_default_oracles",
     "build_default_registry",
 ]

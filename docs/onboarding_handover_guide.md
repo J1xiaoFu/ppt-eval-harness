@@ -67,21 +67,22 @@ DecisionPolicy   决定业务上怎样处置
 |---|---|---|
 | CLI 与同步评测 | 已实现 | 使用本地 JSON/JSONL 持久化，可完整运行四场景 |
 | 强制 Baseline、DAG、状态机、PDMS | 已实现 | 当前核心控制链已经落地并有测试 |
-| 30 个原子 Oracle | 已实现 | 均为确定性 PPTX 对象树或词法启发式 v1 |
+| 31 个确定性原子 Oracle | 已实现 | 均为 PPTX 对象树或词法启发式 |
+| Flash 基线 + Plus 高级审计 | 已接线 | v3 全量调用 `qwen3.7-flash`，困惑时条件调用 `qwen3.7-plus`，再不确定转人工 |
 | FastAPI 同步接口 | 已实现 | 使用 `LocalEvaluationRuntime` |
 | FastAPI 异步接口 | 部分实现 | 使用进程内线程池，不是 Celery；服务重启后 Job 状态丢失 |
 | React 人工复核台 | 已实现 MVP | 支持列表、原子结果和 APPROVE/REJECT，无鉴权、分配和分页 |
 | Celery Worker | 部分实现 | Task 已定义，但 API 不会向 Celery 投递 |
 | PostgreSQL、S3/MinIO | 部分实现 | Adapter 已写，默认 composition root 仍使用本地文件 |
 | Docker Compose | 部署骨架 | Redis/Postgres/MinIO 会启动，但当前 API 业务路径不会使用它们 |
-| PowerPoint/LibreOffice Renderer | Adapter 已实现 | 默认 Oracle 评分不消费像素结果；LibreOffice 当前只导出 PDF |
-| OCR、VLM、LLM Judge | 未接入 | 默认 Registry 中没有这些模型 Oracle |
+| PowerPoint/LibreOffice Renderer | 已接入本地 VLM | Windows 优先 PowerPoint；LibreOffice 导出 PDF 后可通过 Poppler 转逐页 PNG |
+| OCR、VLM、LLM Judge | 部分实现 | Qwen LLM/VLM 真实 API 已接入严格 Provider 端口；OCR 尚未接入，模型分数尚未完成大样本金标校准 |
 | Calibrator | 未实现 | Leaf 启发式分直接进入 PDMS |
 | 参数候选治理 | 已实现 MVP | 可到 `RELEASE_CANDIDATE`，故意没有自动 production apply |
-| Shadow 与灰度路由 | 协议已设计 | 自动路由、统计和一键回滚尚未实现 |
+| 分层审计路由 | 已实现预研版 | Flash -> Plus -> Human 路由可审计；生产灰度、统计监控和一键回滚尚未实现 |
 | Transactional Outbox | 目标设计 | 当前运行日志是本地追加式 JSONL |
 
-因此当前准确定位是：**可运行、可降级、可审计的 deterministic baseline v1，而不是已经完成工业验收的最终 Judge。**
+因此当前准确定位是：**可运行、可降级、可审计的预研 v3 Harness，而不是已经完成大样本金标校准和工业验收的最终 Judge。**
 
 ## 4. 目录地图和推荐阅读顺序
 
@@ -89,8 +90,8 @@ DecisionPolicy   决定业务上怎样处置
 src/ppt_eval/
   domain/                 稳定枚举和冻结数据契约
   application/            Supervisor、DAG 编译、调度、Oracle 端口
-  adapters/               PPTX、事实快照、PowerPoint/LibreOffice
-  oracles/                30 个原子指标和 4 个 Composite
+  adapters/               PPTX、事实快照、模型审计端口、PowerPoint/LibreOffice
+  oracles/                31 个确定性 Leaf、3 个 Flash 计分审计、3 个 Plus 诊断审计和 Composite
   scoring/                PPT-PDMS 与 DecisionPolicy
   infrastructure/         本地和生产候选存储/队列 Adapter
   runtime.py              本地 composition root，所有部件从这里接起来
@@ -138,8 +139,9 @@ README.md
 | [scheduler.py](../src/ppt_eval/application/scheduler.py) | 拓扑执行、Registry、预算和重试 |
 | [oracle.py](../src/ppt_eval/application/oracle.py) | Oracle 端口、Descriptor、Context 和 Registry |
 | [oracles/base.py](../src/ppt_eval/oracles/base.py) | Atomic/Composite 模板、解析缓存和证据函数 |
-| [baseline.py](../src/ppt_eval/oracles/baseline.py) | 13 个本体 Leaf |
+| [baseline.py](../src/ppt_eval/oracles/baseline.py) | 14 个本体 Leaf |
 | [scenarios.py](../src/ppt_eval/oracles/scenarios.py) | 17 个场景 Leaf 和 3 个场景 Composite |
+| [model_audits.py](../src/ppt_eval/oracles/model_audits.py) | 3 个未校准模型 Shadow 审计和 1 个可选 Composite |
 | [pdms.py](../src/ppt_eval/scoring/pdms.py) | 外乘内加、Coverage 和重复指标保护 |
 | [policy.py](../src/ppt_eval/scoring/policy.py) | PASS/REVIEW/FAIL 决策顺序 |
 | [flywheel.py](../src/ppt_eval/flywheel.py) | 反馈、主动采样和参数候选治理 |
@@ -266,8 +268,10 @@ Profile 控制：
 
 注意以下实现细节：
 
-1. JSON 中的 `required_oracles` 实际会被解析成 `enabled_oracle_ids`。
-2. `optional_oracles` 当前只写入 metadata，不会自动加入 DAG。
+1. v2+ JSON 中的 `required_oracles` 和 `optional_oracles` 会按声明顺序去重后解析成
+   `enabled_oracle_ids`；两者的 required/optional 语义由 `required_metric_ids` 决定。v1 为了
+   历史回放仍保留旧行为：`optional_oracles` 只进入 metadata，不自动执行。
+2. 显式的 `enabled_oracle_ids` 优先于上述两个 JSON 字段。
 3. `required_metric_ids` 未显式提供时，所有配置中的加项和乘子默认都 required；成品场景仅特殊排除
    `multimedia_quality`。
 4. 空的 `enabled_oracle_ids` 会被配置加载器回退成默认值。事故降级时可显式提供非空的
@@ -322,7 +326,7 @@ supports()   当前 Case 是否适用
 evaluate()   返回一个或多个 OracleResult
 ```
 
-默认 DAG 节点粒度是 Composite，不是 30 个 Leaf。Composite 内部按固定顺序执行 Atomic Oracle。
+默认 DAG 节点粒度是 Composite，不是直接展开 Leaf。Flash 审计由 Profile 作为默认 Composite 节点调度；Plus 由 Supervisor 在 VERIFY 的第一次决策后条件调用。Composite 内部按固定顺序执行 Atomic Oracle。
 第一次 Leaf 解析 PPTX 后，结果缓存进 `EvaluationContext.memo`，其他 Leaf 不会重复解压同一文件。
 
 ### 8.4 VERIFY
@@ -334,16 +338,20 @@ Aggregator 只做纯算术，不调用模型。DecisionPolicy 只做业务决策
 PASS 和质量 FAIL 进入 `FINALIZE`；REVIEW 和 Harness ERROR 进入 `REVIEW` 状态。最终报告与 Manifest
 写入本地仓库，状态事件追加到运行级哈希链。
 
-## 9. Oracle 框架和 30 个原子指标
+## 9. Oracle 框架：31 个确定性 Leaf + 分层模型审计
 
-默认 Registry 顶层注册四个 Composite：
+默认 Registry 顶层注册五个 Composite：
 
 | Composite ID | 原子数 | 适用场景 |
 |---|---:|---|
-| `baseline_ppt_quality` | 13 | 所有场景，编译期强制注入 |
+| `baseline_ppt_quality` | 14 | 所有场景，编译期强制注入 |
 | `scenario.instruction_alignment` | 4 | 文字生成 |
 | `scenario.source_faithfulness` | 6 | 项目总结 |
 | `scenario.asset_compliance` | 7 | 多模态 |
+| `high_cost.model_audits` | 3 | v3 四场景默认 Flash；ID 为兼容 v2 保留，无 Provider 时 N/A |
+
+Supervisor 还可条件执行 `advanced.model_review`，其 3 个 Plus 结果都是
+`DIAGNOSTIC`，避免对 Flash 分数二次计权。
 
 三个 ID 不要混淆：
 
@@ -351,7 +359,7 @@ PASS 和质量 FAIL 进入 `FINALIZE`；REVIEW 和 Harness ERROR 进入 `REVIEW`
 - `metric_id`：评分合同中的稳定指标 ID，例如 `layout`。
 - Composite ID：Profile 启用的节点 ID，例如 `scenario.asset_compliance`。
 
-### 9.1 本体 13 项
+### 9.1 本体 14 项
 
 | metric_id | 角色/权重 | v1 实现原理 |
 |---|---:|---|
@@ -359,6 +367,7 @@ PASS 和质量 FAIL 进入 `FINALIZE`；REVIEW 和 Harness ERROR 进入 `REVIEW`
 | `critical_content_visibility` | 基础乘子 | 全空为0，非空页率低于50%为.5，否则1 |
 | `internal_data_consistency` | 基础乘子 | 仅检查声明的关键“标签:数值”；冲突为.5，否则1 |
 | `content_clarity` | 基础加法 .14 | 空白页、超700字符页、超18文本框页按比例扣分 |
+| `template_residue` | v3 基础加法 .08 | 检测占位日期/姓名、Lorem ipsum、TODO/TBD、Office 默认提示和模板字段 |
 | `narrative` | 基础加法 .12 | 标题覆盖、首页标题和重复标题率 |
 | `visual_hierarchy` | 基础加法 .12 | 标题最大字号相对全页文字中位字号 |
 | `layout` | 基础加法 .12 | 越界对象和重叠超过较小对象35%的对象对 |
@@ -401,7 +410,27 @@ PASS 和质量 FAIL 进入 `FINALIZE`；REVIEW 和 Harness ERROR 进入 `REVIEW`
 | `chart_data_accuracy` | 场景加法 .20 | 有可编辑 chart 后，对预期值做平均词法召回 |
 | `media_availability` | 场景加法 .10 | 有可读取内嵌 payload 的媒体对象比例 |
 
-### 9.5 OracleResult 的严格语义
+### 9.5 Flash -> Plus -> Human 模型审计
+
+v3 默认用 `qwen3.7-flash` 产生内容、视觉和场景合规分，并保存置信度、定位证据、
+model/prompt 版本、usage/cost 与 request/response 指纹。当总分处于 REVIEW 灰区、单项跌破
+复核线、Flash 与确定性结果相反，或 Flash 自身低置信/灰区/分歧时，Supervisor 才调用
+`qwen3.7-plus`。Plus 必须高置信且适用审计一致，否则转人工。
+
+模型模态不等于评测构念。内容 Oracle 平时消费可提取文本；当有文本页比例低于
+25% 且有页图时，会用多模态能力从像素恢复语义内容，但该分仍归入 content 构念，
+不是视觉加分。无文本且无页图时返回 `SEMANTIC_INPUT_UNOBSERVABLE` N/A，不再伪造内容 0 分。
+当前路由仍有已知限制：内容低、视觉高是跨构念画像，不应简单当作 judge disagreement；
+后续 Plus 需要按同构维度定向复核。
+
+确定性硬门不允许被任何模型覆盖，缺失确定性证据造成的非 `FULL` Coverage 也直接转人工。
+v1 纯确定性和 v2 Shadow Profile 仍可显式加载回放。详细接入契约见
+[model_audit_provider_contract.md](model_audit_provider_contract.md)。
+注意这只是 Profile/公式级回放；当前工作树会执行新版 Baseline/Layout 并额外产生
+`template_residue` 结果。要求算法、Evidence 和 Manifest 完全一致时，还必须固定历史
+Git SHA 或容器镜像。
+
+### 9.6 OracleResult 的严格语义
 
 | 情况 | execution_status | metric_status | 数值语义 |
 |---|---|---|---|
@@ -422,6 +451,11 @@ metric/key/page/object/source 确定性哈希生成，因此 Evidence key 不能
 A_base  = sum(w_i * s_i) / sum(w_i)
 A_scene = sum(w_j * s_j) / sum(w_j)
 ```
+
+v4 预研接口另支持 `CONSTRUCT_WEIGHTED_MEAN`：指标先在 content/visual/delivery/
+handoff 等构念内归一，再用固定构念权重聚合。这保证新增同类代理不会自动扩大
+整个构念的总份额，并在 `ScoreBreakdown.base_construct_scores` 中保留各构念分。
+`finished_deck_v4_construct_candidate.json` 仅是 `EXPERIMENTAL / UNVALIDATED`，当前默认仍为 v3 平坦聚合。
 
 最终公式：
 
@@ -472,7 +506,8 @@ S_full = 100 * product(M_base) * product(M_scene)
 |---|---|
 | PPTX 损坏或安全预检拒绝 | 文件 Oracle 成功返回高置信乘子0；其余 Leaf 返回 ERROR；最终硬门 FAIL |
 | Leaf 抛异常 | Atomic 模板包装为 `OracleResult.error` |
-| Composite 出现任一 ERROR | Scheduler 最多重试 `max_retries+1` 次，当前会重跑整个 Composite |
+| 确定性 Composite 出现 ERROR | Scheduler 最多重试 `max_retries+1` 次 |
+| 非确定性/付费 Composite 出现 ERROR | Harness 层不整组重试，避免重复已成功的 API 调用 |
 | Oracle 未注册 | 返回 `ORACLE_NOT_REGISTERED` ERROR，不吞掉已完成结果 |
 | 非 mandatory 节点预算耗尽 | 返回 `COST_BUDGET_EXHAUSTED` ERROR |
 | `supports()` 为 false | 返回 `SKIPPED/NA` |
@@ -480,7 +515,8 @@ S_full = 100 * product(M_base) * product(M_scene)
 | DAG 环或聚合重复指标 | Supervisor 捕获为 Harness ERROR |
 
 `oracle_timeout_seconds` 当前只存在于 Profile 并校验正数，Scheduler 尚未强制执行。Renderer 有自己的
-120 秒超时，Celery task 有 soft 540 秒/hard 600 秒限制，但它们不是 Leaf 级超时。
+120 秒超时，Qwen Flash/Plus 默认传输上限为 120/240 秒，Celery task 有 soft 540 秒/
+hard 600 秒限制，但它们都不是通用 Leaf 级超时。
 
 对于不可信 PPT，顺序必须是：隔离上传 -> ZIP/OOXML preflight -> 解析 -> 必要时再调用 Office 渲染。
 不要先让 PowerPoint 打开未知文件。
@@ -724,7 +760,7 @@ python scripts/reporting/verify_audit.py `
 docker compose config --quiet
 ```
 
-当前已验证为 42 tests。尚缺 API 契约测试、UI E2E、Celery/Postgres/S3 集成、并发压测、完整变形矩阵、
+当前 Python 全量回归、依赖无关 runner、Ruff 和定向 mypy 均可执行。尚缺 UI E2E、Celery/Postgres/S3 集成、并发压测、完整变形矩阵、
 双渲染差分、400 例人工元评测和真实 Shadow。
 
 ## 20. 参数化、校准与自进化
@@ -743,7 +779,9 @@ crop/长宽比和多种 token recall 门槛。
 4. 使用人工金标验证方向性、单调性、局部性、相关性、定位 F1 和 ECE/Brier。
 5. 参数候选只生成新 Profile，不原地覆盖旧 Profile。
 
-治理流程：
+当前 v3 Profile 的 `lifecycle=PRE_RESEARCH`。按项目当前约定，预研期可直接修改功能、Oracle
+和 Profile，不要把下述“生产发布治理”误当作当前必经的开发门禁。当项目进入真正数据飞轮和
+生产阶段后，建议启用的治理流程为：
 
 ```text
 生产反馈
@@ -805,7 +843,7 @@ pii_level/consent/retention/owner/sha256/parent_id
 
 ### 每周
 
-- 运行 42 tests、Ruff、UI build、项目审计和 Compose config。
+- 运行全量 pytest、依赖无关 runner、Ruff、UI build、项目审计和 Compose config。
 - 用固定 smoke deck 做一次 PowerPoint 原生渲染并写入全新目录。
 - 汇总人工推翻率、修改时长、Oracle 分歧和语言/模板/生成模型切片。
 - 审核新增数据的许可、PII、用途、来源 URI 和 SHA-256。
@@ -832,7 +870,7 @@ pii_level/consent/retention/owner/sha256/parent_id
 | UI 请求失败 | `/healthz`、5173 CORS、`VITE_API_BASE` | CORS 当前只允许 localhost/127.0.0.1:5173 |
 | 审计断链 | 是否手改 JSONL 或磁盘损坏 | 从可信备份恢复，不能靠追加修复 |
 | PowerPoint RPC/超时 | Office路径、桌面会话、文件锁、输出目录 | COM 依赖 Windows Office 环境 |
-| LibreOffice 没有 PNG | 输出目录中的 PDF | 当前 Adapter 只导出 PDF |
+| LibreOffice 没有 PNG | 检查 `pdftoppm -v` 和输出 PDF | 未安装 Poppler 或 PDF 栅格化失败时会降级 |
 | Profile timeout 不生效 | Scheduler | Leaf timeout 尚未真正实现 |
 | Compose 正常但 DB 无数据 | runtime composition | API 仍使用 JSON repository |
 | 多个正常覆盖被判 overlap | `layout` evidence | 当前是轴对齐 bbox 启发式，存在合理叠放误报 |
@@ -857,20 +895,23 @@ pii_level/consent/retention/owner/sha256/parent_id
 ## 25. 当前技术债和建议优先级
 
 1. 建立首个 Git commit/tag、Release manifest 和可执行回滚点。
-2. 把 Leaf 阈值外置为 typed `metric_params`，修复 `compression_quality` 分段跳变。
+2. 把 Leaf 阈值外置为 typed `metric_params`；`compression_quality` 1.1.0 已修复分段跳变，
+   但 `.03/.20/.45/1.20` 锚点仍需在金标集上重新校准。
 3. 实现真正的 Calibrator，并冻结 calibration version。
 4. 为每个 Leaf 增加强制 timeout、按错误类型 retry、Circuit Breaker 和独立成本计量。
-5. 接入 PDF/DOCX/OCR、像素渲染、VLM 和逐 chart/series/category 结构核验。
+5. 接入 PDF/DOCX/OCR、像素渲染、真实 LLM/VLM Provider 和逐 chart/series/category 结构核验。
 6. 把 API 异步路径接到 Celery，把 repository/artifact port 接到 PostgreSQL/S3，并实现 Outbox。
 7. 增加上传、鉴权、租户隔离、幂等、配额、限流和证据权限。
 8. 为 feedback/proposal 增加查询、身份签名、参数白名单和 evidence Run 外键校验。
 9. 统一 `application/oracle.py` 与 `oracles/base.py` 中迁移期重复的 Composite 实现。
 10. 完成 API/UI E2E、故障注入、完整变形矩阵、400例金标、2,000缺陷变体和真实 Shadow。
-11. 为30个 Leaf 分别完成 Oracle Card：owner、适用域、金标、ECE/Brier、限制和撤回条件。
+11. 为31个确定性 Leaf 分别完成 Oracle Card，并为 Flash/Plus 模型审计补充
+    model/prompt/usage/cost/稳定性与撤回条件。
 
 已知需要优先修正的具体规则问题：
 
-- `compression_quality` 在 `.03` 和 `.45` 分段边界存在分数跳变。
+- `compression_quality` 1.1.0 已用连续分段函数修复 `.03/.45` 边界跳变；当前遗留问题是锚点
+  仍为启发式参数，尚未外置或完成金标校准。
 - 关键事实/图表硬门使用 `.65/.70`，通用 evidence 标签仍按 `.45` 写 match，可能出现证据文字与门禁不一致。
 - `numeric_accuracy` 不理解单位换算、年份/页码和标签绑定。
 - `chart_data_accuracy` 搜索整份 PPT 文本，没有严格绑定到具体 chart/series。
@@ -889,7 +930,7 @@ pii_level/consent/retention/owner/sha256/parent_id
 ### 第二天：能沿代码追踪
 
 1. 从 `runtime.py` 追到 Supervisor、Compiler、Scheduler。
-2. 找出一次 ready-made Run 的 13 个 Leaf 结果。
+2. 找出一次 ready-made Run 的 14 个 Baseline Leaf，并解释 Flash 审计与条件式 Plus 结果。
 3. 用一个 Evidence 的 page/object/bbox 回到 PPT 对象。
 
 ### 第三天：能制造降级
@@ -918,7 +959,7 @@ pii_level/consent/retention/owner/sha256/parent_id
 - [ ] Python 3.11+ 环境和依赖可重建。
 - [ ] Node/pnpm 与 UI lockfile 可重建。
 - [ ] 已建立可信 Git commit/tag 和容器 digest。
-- [ ] 四场景 Demo、42 tests、Ruff、UI build 均通过。
+- [ ] 四场景 Demo、全量 Python 测试、Ruff、UI build 均通过。
 
 ### 运行和审计
 
@@ -929,7 +970,9 @@ pii_level/consent/retention/owner/sha256/parent_id
 
 ### Oracle 和评分
 
-- [ ] 能解释30个 Leaf 的输入、N/A 条件、公式和限制。
+- [ ] 能解释31个确定性 Leaf 的输入、N/A 条件、公式和限制。
+- [ ] 能解释 v1 确定性、v2 Shadow 和 v3 Flash 计分 + Plus 诊断的版本边界。
+- [ ] 能解释 Flash -> Plus -> Human 触发条件，以及确定性硬门为什么不可被覆盖。
 - [ ] 明确哪些指标是乘子、哪些是加法以及是否 required。
 - [ ] 修改指标时同步更新版本、Card、Profile、测试和实验记录。
 - [ ] 消费方不会把降级 `overall_score` 当作 `full_score`。

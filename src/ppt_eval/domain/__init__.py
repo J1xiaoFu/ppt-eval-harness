@@ -12,6 +12,8 @@ from .enums import (
     SupervisorState,
 )
 from .models import (
+    CONSTRUCT_WEIGHTED_MEAN,
+    FLAT_WEIGHTED_MEAN,
     AuditEvent,
     DagNode,
     EvalCase,
@@ -27,6 +29,7 @@ from .models import (
 
 __all__ = [
     "AuditEvent",
+    "CONSTRUCT_WEIGHTED_MEAN",
     "CoverageStatus",
     "DagNode",
     "DagNodeKind",
@@ -37,6 +40,7 @@ __all__ = [
     "EvaluationDecision",
     "Evidence",
     "ExecutionStatus",
+    "FLAT_WEIGHTED_MEAN",
     "MetricStatus",
     "OracleResult",
     "ReviewCase",

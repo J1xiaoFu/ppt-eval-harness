@@ -1,0 +1,170 @@
+{
+  "schema_version": "1.0",
+  "as_of": "2026-08-26",
+  "policy": "public_access_is_not_production_license",
+  "partitions": [
+    {
+      "id": "local_synthetic_v1",
+      "status": "PREPARED_BY_SCRIPT",
+      "allowed_use": ["development", "frozen_eval", "ci"],
+      "format": ["pptx", "metric_predicate_gt"],
+      "ground_truth": ["metric_status", "score_bounds", "multiplier", "evidence_kind", "metadata"],
+      "license": "repository-owned synthetic fixtures",
+      "prepare_command": "python scripts/datasets/build_local_gold.py",
+      "verify_command": "python scripts/datasets/verify_local_gold.py"
+    },
+    {
+      "id": "slideaudit_starter_v1",
+      "status": "PREPARED_BY_SCRIPT",
+      "source": "https://github.com/zhuohaouw/SlideAudit",
+      "revision": "642d490b7c1d2e78a50a631bfd359433397f3ecf",
+      "allowed_use": ["research", "development", "frozen_eval"],
+      "format": ["slide_png", "defect_annotation", "bbox", "object_description"],
+      "ground_truth": ["design_deficiency_taxonomy", "response", "agreement", "bounding_boxes"],
+      "license": "CC-BY-4.0",
+      "selection": "slide_0001 through slide_0012",
+      "prepare_command": "python scripts/datasets/fetch_slideaudit_starter.py"
+    },
+    {
+      "id": "pptagent_parsed_cc_allowlist",
+      "status": "METADATA_READY_DOWNLOAD_DEFERRED",
+      "source": "https://huggingface.co/datasets/Forceless/PPTAgent-parsed_data",
+      "revision": "14dcdc1c153cfb5c0457c932f78dd6a2eb59c87e",
+      "scale": {"unique_pptx": 639, "storage_bytes": 19114291159},
+      "allowed_use": ["research_quarantine"],
+      "format": ["pptx", "pdf", "media", "structure_json"],
+      "ground_truth": ["editable_structure", "media", "source_metadata"],
+      "license": "per-record; admit only CC-BY-4.0 or CC0 after checksum deduplication",
+      "admission_checks": ["record_license", "author_and_doi", "content_hash", "attribution"]
+    },
+    {
+      "id": "presentbench_rubrics_v1",
+      "status": "PREPARED_BY_SCRIPT_RESEARCH_ONLY",
+      "source": "https://huggingface.co/datasets/PresentBench/PresentBench",
+      "revision": "31ec40084405c5f2e6b8b5adedf2999b6060e7e1",
+      "scale": {"cases": 238, "average_checklist_items": 54.1, "storage_bytes": 863275456},
+      "allowed_use": ["research_quarantine"],
+      "format": ["source_material", "instructions", "binary_checklist", "statistics"],
+      "ground_truth": ["instance_specific_binary_checklist"],
+      "license": "rubrics CC-BY-NC-4.0; each background material retains its source license",
+      "selection": "one rubric/instruction set per domain; source materials excluded",
+      "prepare_command": "python scripts/datasets/fetch_presentbench_rubrics.py"
+    },
+    {
+      "id": "unipptbench_ready",
+      "status": "METADATA_READY_DOWNLOAD_DEFERRED",
+      "source": "https://modelscope.cn/datasets/kunshanyusui/UniPPTBench",
+      "revision": "0cc571f2943a5fc06983ba29aea0cdca7fc4a811",
+      "scale": {"tasks": 126, "ready": 39, "bytes": 1612155581},
+      "allowed_use": ["research_quarantine"],
+      "format": ["source_pdf", "intent", "task_yaml", "annotation_yaml"],
+      "ground_truth": ["scenario_intent", "source_grounding", "task_annotations"],
+      "license": "dataset claims Apache-2.0; source-file rights require review",
+      "admission_checks": ["quality_status_ready", "source_rights", "task_hash", "no_split_leakage"]
+    },
+    {
+      "id": "slidetailor_psp",
+      "status": "GATED_DOWNLOAD_DEFERRED",
+      "source": "https://huggingface.co/datasets/yyyang/SlideTailor-PSP-dataset",
+      "revision": "aba1cfc94dfc72d2e8331d51c06f8f86f6e7d3d6",
+      "scale": {"target_papers": 150, "paper_slide_pairs": 50, "editable_templates": 10},
+      "allowed_use": ["research_quarantine"],
+      "format": ["paper_pdf", "slide_pdf", "template_pptx", "eval_config"],
+      "ground_truth": ["paper_to_slide_pair", "preference_configuration"],
+      "license": "CC-BY-4.0, gated",
+      "admission_checks": ["accept_terms", "pair_provenance", "template_license"]
+    },
+    {
+      "id": "deckedit_bench",
+      "status": "NONCOMMERCIAL_RESEARCH_ONLY",
+      "source": "https://huggingface.co/datasets/EditPPT/DECKEDIT-BENCH",
+      "revision": "0c58abf3cec8ceef6e90065337d16aa81e83f34e",
+      "scale": {"decks": 28, "instructions": 183, "bytes": 976033005},
+      "allowed_use": ["research_quarantine"],
+      "format": ["pptx", "edit_instruction", "taxonomy"],
+      "ground_truth": ["edit_target", "instruction", "non_target_preservation"],
+      "license": "CC-BY-NC-4.0"
+    },
+    {
+      "id": "slides_align_human_preference",
+      "status": "RESEARCH_QUARANTINE_PAIRED_SLICE_READY",
+      "source": "https://huggingface.co/datasets/Yqy6/Slides-Align",
+      "revision": "2f50ac6674a506acb245275e58c8a452c00e6a14",
+      "scale": {"human_rankings": 1326, "pptx_files": 1215, "png_files": 47742, "bytes": 57073806859},
+      "prepared_slice": {
+        "difficulty": "topic_introduction",
+        "topic": "market_analysis",
+        "human_ranked_products": 8,
+        "paired_products": 7,
+        "available_human_ranks": [1, 2, 3, 4, 5, 6, 8],
+        "unavailable_human_ranks": [7],
+        "unavailable_reason": "Zhipu has slide PNGs but no PPTX at the pinned revision",
+        "preparation_script": "scripts/datasets/fetch_slides_align_market_analysis.py"
+      },
+      "allowed_use": ["research_quarantine"],
+      "format": ["relative_ranking", "pptx", "slide_png", "layout_json"],
+      "ground_truth": ["human_relative_preference"],
+      "license": "MIT dataset card; generated product outputs retain product ToS constraints",
+      "admission_checks": ["ranking_file_presence", "product_terms", "parent_topic_split"]
+    },
+    {
+      "id": "pptbench_understanding",
+      "status": "LICENSE_ALLOWLIST_DOWNLOAD_DEFERRED",
+      "source": "https://huggingface.co/datasets/tyrionhuu/PPTBench-Understanding",
+      "revision": "e174181328947ee78cc59a3b76e92ec9ec17fbed",
+      "scale": {"examples": 1039, "bytes": 1535130061},
+      "allowed_use": ["research", "development", "frozen_eval"],
+      "format": ["slide_image", "layout_json", "question", "answer"],
+      "ground_truth": ["human_reviewed_multiple_choice_answer"],
+      "license": "Apache-2.0",
+      "admission_checks": ["question_deduplication", "source_deck_split", "answer_revalidation"]
+    },
+    {
+      "id": "microsoft_ppt_eval",
+      "status": "RUBRIC_READY_SOURCE_FILES_LICENSE_GATED",
+      "source": "https://github.com/microsoft/PPTEval",
+      "revision": "1b8b55a29e48fdc65d423689b6f2370ad91beeea",
+      "scale": {"tasks": 120, "source_files": 12},
+      "allowed_use": ["research_quarantine"],
+      "format": ["creation_edit_task", "structured_rubric", "python_verifier"],
+      "ground_truth": ["critical_node", "partial_credit", "irrelevant_change_penalty"],
+      "license": "MIT code and rubrics; Archive.org source PPTX rights require per-file review",
+      "admission_checks": ["sandbox_executable_rubric", "source_file_rights", "task_split"]
+    },
+    {
+      "id": "pptc_agent_editing",
+      "status": "TASK_GT_READY_TEMPLATE_RIGHTS_GATED",
+      "source": "https://github.com/gydpku/PPTC",
+      "revision": "277f56ffc548ce51024d5cc7c0607aeb49b584b8",
+      "scale": {"sessions": 279, "template_edit_sessions": 50, "source_pptx": 50},
+      "allowed_use": ["research_quarantine"],
+      "format": ["multi_turn_instruction", "api_sequence", "target_pptx"],
+      "ground_truth": ["feasible_api_sequence", "target_presentation_state"],
+      "license": "MIT repository; embedded template content requires per-file review",
+      "admission_checks": ["template_rights", "sandbox_api_execution", "session_split"]
+    },
+    {
+      "id": "sciduet_acl_public",
+      "status": "STRUCTURED_PAIR_GT_READY",
+      "source": "https://github.com/IBM/document2slides",
+      "revision": "40e75ef5cf24545fa73345e87f79776f315acc62",
+      "scale": {"public_pairs": 272, "train": 136, "validation": 55, "test": 81},
+      "allowed_use": ["research", "development", "frozen_eval"],
+      "format": ["paper_json", "slide_text", "figure_alignment", "paper_page_reference"],
+      "ground_truth": ["paper_slide_alignment", "figure_reference", "slide_title_text"],
+      "license": "Apache-2.0 repository; public release is a copyright-limited subset",
+      "admission_checks": ["public_subset_only", "paper_split", "figure_provenance"]
+    },
+    {
+      "id": "slidevqa",
+      "status": "EVALUATION_ONLY_GATED",
+      "source": "https://huggingface.co/datasets/NTT-hil-insight/SlideVQA",
+      "revision": "e780ea258d734958befbfaed19fa059584642ca8",
+      "scale": {"decks": 2619, "qa_pairs": 14484, "bounding_boxes": 890945},
+      "allowed_use": ["isolated_evaluation"],
+      "format": ["slide_images", "qa", "bbox"],
+      "ground_truth": ["answer", "evidence_slide", "bounding_box"],
+      "license": "NTT evaluation-only agreement; no redistribution"
+    }
+  ]
+}

@@ -65,6 +65,16 @@ class DecisionPolicy:
                 f"hard_gate:{metric_id}" for metric_id in scene_hard_failures
             )
 
+        metric_floor_reasons = tuple(
+            f"metric_floor_review:{result.metric_id}"
+            for result in results
+            if result.metric_id in profile.metric_review_thresholds
+            and (score := self._result_score(result)) is not None
+            and score < float(profile.metric_review_thresholds[result.metric_id])
+        )
+        if metric_floor_reasons:
+            return EvaluationDecision.REVIEW, metric_floor_reasons
+
         score = breakdown.full_score
         if score is None:
             return EvaluationDecision.ERROR, ("score_unavailable",)
@@ -73,3 +83,13 @@ class DecisionPolicy:
         if score >= profile.review_threshold:
             return EvaluationDecision.REVIEW, ("score_in_review_band",)
         return EvaluationDecision.FAIL, ("score_below_review_threshold",)
+
+    @staticmethod
+    def _result_score(result: OracleResult) -> float | None:
+        if result.metric_status == MetricStatus.PASS:
+            return 1.0
+        if result.metric_status == MetricStatus.FAIL:
+            return 0.0
+        if result.metric_status == MetricStatus.SCORED:
+            return result.normalized_score
+        return None

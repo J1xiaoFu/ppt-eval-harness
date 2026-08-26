@@ -53,6 +53,28 @@ def profile_from_mapping(payload: Mapping[str, Any]) -> EvalProfile:
     profile_id = str(payload.get("profile_id") or f"default-{scene.value}")
     version = str(payload.get("version") or "1.0")
     defaults = EvalProfile.default(scene, version=version)
+    try:
+        major_version = int(version.split(".", 1)[0])
+    except ValueError:
+        major_version = 1
+    optional_oracles = (
+        tuple(payload.get("optional_oracles") or ()) if major_version >= 2 else ()
+    )
+    configured_oracles = tuple(
+        dict.fromkeys(
+            str(item)
+            for item in (
+                *(payload.get("required_oracles") or ()),
+                *optional_oracles,
+            )
+            if str(item)
+        )
+    )
+    enabled_oracles = tuple(
+        str(item)
+        for item in (payload.get("enabled_oracle_ids") or ())
+        if str(item)
+    )
     return EvalProfile(
         profile_id=profile_id,
         version=version,
@@ -71,20 +93,51 @@ def profile_from_mapping(payload: Mapping[str, Any]) -> EvalProfile:
             else None
         ),
         enabled_oracle_ids=tuple(
-            payload.get("enabled_oracle_ids")
-            or payload.get("required_oracles", ())
+            enabled_oracles
+            or configured_oracles
             or defaults.enabled_oracle_ids
         ),
         lambda_base=float(payload.get("lambda_base", defaults.lambda_base)),
         hard_gate_min_confidence=float(payload.get("hard_gate_min_confidence", 0.90)),
         pass_threshold=float(payload.get("pass_threshold", 80.0)),
         review_threshold=float(payload.get("review_threshold", 60.0)),
+        metric_review_thresholds=dict(
+            payload.get("metric_review_thresholds")
+            or defaults.metric_review_thresholds
+        ),
+        aggregation_strategy=str(
+            payload.get("aggregation_strategy") or defaults.aggregation_strategy
+        ),
+        base_metric_constructs={
+            str(key): str(value)
+            for key, value in dict(
+                payload.get("base_metric_constructs")
+                or defaults.base_metric_constructs
+            ).items()
+        },
+        base_construct_weights=dict(
+            payload.get("base_construct_weights")
+            or defaults.base_construct_weights
+        ),
+        scene_metric_constructs={
+            str(key): str(value)
+            for key, value in dict(
+                payload.get("scene_metric_constructs")
+                or defaults.scene_metric_constructs
+            ).items()
+        },
+        scene_construct_weights=dict(
+            payload.get("scene_construct_weights")
+            or defaults.scene_construct_weights
+        ),
         max_retries=int(payload.get("max_retries", 1)),
         oracle_timeout_seconds=float(payload.get("oracle_timeout_seconds", 60.0)),
         cost_budget=payload.get("cost_budget"),
         metadata={
+            **dict(defaults.metadata),
             **dict(payload.get("metadata", {})),
             "optional_oracles": tuple(payload.get("optional_oracles", ())),
+            "optional_oracles_executed": major_version >= 2,
         },
     )
 
@@ -95,10 +148,10 @@ def load_profile(path: str | Path) -> EvalProfile:
 
 def profile_path_for_scene(scene: SceneType, root: str | Path = "configs/profiles") -> Path:
     names = {
-        SceneType.TEXT_TO_PPT: "text_generation.json",
-        SceneType.PROJECT_SUMMARY: "project_summary.json",
-        SceneType.MULTIMODAL: "multimodal_generation.json",
-        SceneType.READY_MADE: "finished_deck.json",
+        SceneType.TEXT_TO_PPT: "text_generation_v3.json",
+        SceneType.PROJECT_SUMMARY: "project_summary_v3.json",
+        SceneType.MULTIMODAL: "multimodal_generation_v3.json",
+        SceneType.READY_MADE: "finished_deck_v3.json",
     }
     return Path(root) / names[scene]
 

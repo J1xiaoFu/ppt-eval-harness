@@ -1,6 +1,11 @@
 """Public agentic Harness application API."""
 
 from .audit import AuditLog, InMemoryAuditLog
+from .model_escalation import (
+    ModelAuditEscalationPolicy,
+    ModelAuditTier,
+    ModelEscalationOutcome,
+)
 from .oracle import (
     BaselinePptQualityOracle,
     CompositeOracle,
@@ -25,6 +30,9 @@ __all__ = [
     "ExecutionContext",
     "InMemoryAuditLog",
     "MetricDefinition",
+    "ModelAuditEscalationPolicy",
+    "ModelAuditTier",
+    "ModelEscalationOutcome",
     "Oracle",
     "OracleDescriptor",
     "OracleRegistry",

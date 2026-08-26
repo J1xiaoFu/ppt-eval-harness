@@ -18,14 +18,25 @@ from ppt_eval.domain import (
     EvalReport,
     EvaluationDecision,
     ExecutionStatus,
+    MetricStatus,
+    OracleResult,
     RunManifest,
     ScoreBreakdown,
+    ScoreRole,
     SupervisorState,
 )
 from ppt_eval.scoring import DecisionPolicy, PptPdmsAggregator
 
 from .audit import AuditLog
-from .oracle import EvaluationContext
+from .model_escalation import ModelAuditEscalationPolicy, ModelEscalationOutcome
+from .oracle import (
+    EvaluationContext,
+    MetricDefinition,
+    Oracle,
+    OracleDescriptor,
+    coerce_descriptor,
+    normalize_oracle_output,
+)
 from .profile import ProfileCompiler
 from .scheduler import DagScheduler, SchedulerOutcome
 
@@ -58,6 +69,7 @@ class RunSupervisor:
         SupervisorState.FINALIZE: frozenset(),
         SupervisorState.REVIEW: frozenset(),
     }
+    _TIERED_MODEL_AUDIT_ROUTING = "FLASH_PLUS_HUMAN"
 
     def __init__(
         self,
@@ -66,6 +78,8 @@ class RunSupervisor:
         compiler: ProfileCompiler | None = None,
         aggregator: PptPdmsAggregator | None = None,
         decision_policy: DecisionPolicy | None = None,
+        advanced_model_review: Oracle | None = None,
+        model_escalation_policy: ModelAuditEscalationPolicy | None = None,
         audit_log: AuditLog | None = None,
         id_factory: Callable[[str], str] | None = None,
         clock: Callable[[], datetime] | None = None,
@@ -74,6 +88,10 @@ class RunSupervisor:
         self.compiler = compiler or ProfileCompiler()
         self.aggregator = aggregator or PptPdmsAggregator()
         self.decision_policy = decision_policy or DecisionPolicy()
+        self.advanced_model_review = advanced_model_review
+        self.model_escalation_policy = (
+            model_escalation_policy or ModelAuditEscalationPolicy()
+        )
         self.audit_log = audit_log
         self._id_factory = id_factory or (lambda prefix: f"{prefix}-{uuid4()}")
         self._clock = clock or (lambda: datetime.now(timezone.utc))
@@ -126,6 +144,54 @@ class RunSupervisor:
             decision, review_reasons = self.decision_policy.decide(
                 profile, breakdown, scheduler_outcome.results
             )
+            if self._tiered_model_audit_enabled(profile):
+                provisional_decision = decision
+                provisional_reasons = review_reasons
+                flash_results = self._flash_model_results(scheduler_outcome.results)
+                routing = self.model_escalation_policy.decide(
+                    provisional_decision=provisional_decision,
+                    coverage=breakdown.coverage,
+                    provisional_reasons=provisional_reasons,
+                    flash_results=flash_results,
+                )
+                self._audit_model_routing(
+                    run_id,
+                    stage="FLASH",
+                    provisional_decision=provisional_decision,
+                    provisional_reasons=provisional_reasons,
+                    outcome=routing,
+                )
+                if routing.should_call_advanced:
+                    scheduler_outcome, advanced_results, call_status = (
+                        self._execute_advanced_model_review(
+                            context,
+                            profile,
+                            scheduler_outcome,
+                        )
+                    )
+                    routing = self.model_escalation_policy.decide(
+                        provisional_decision=provisional_decision,
+                        coverage=breakdown.coverage,
+                        provisional_reasons=provisional_reasons,
+                        flash_results=flash_results,
+                        advanced_results=advanced_results,
+                    )
+                    self._audit_model_routing(
+                        run_id,
+                        stage="PLUS",
+                        provisional_decision=provisional_decision,
+                        provisional_reasons=provisional_reasons,
+                        outcome=routing,
+                        advanced_call_status=call_status,
+                    )
+                decision = routing.final_recommendation
+                review_reasons = tuple(
+                    dict.fromkeys(
+                        provisional_reasons
+                        + routing.escalation_reasons
+                        + routing.human_review_reasons
+                    )
+                )
             final_state = (
                 SupervisorState.REVIEW
                 if decision in (EvaluationDecision.REVIEW, EvaluationDecision.ERROR)
@@ -186,11 +252,13 @@ class RunSupervisor:
                     profile.metadata.get("font_fingerprint")
                 ),
                 oracle_versions=scheduler_outcome.oracle_versions,
-                model_versions=self._string_mapping(
-                    profile.metadata.get("model_versions")
+                model_versions=self._merge_declared_and_actual_versions(
+                    profile.metadata.get("model_versions"),
+                    self._result_model_versions(scheduler_outcome),
                 ),
-                prompt_versions=self._string_mapping(
-                    profile.metadata.get("prompt_versions")
+                prompt_versions=self._merge_declared_and_actual_versions(
+                    profile.metadata.get("prompt_versions"),
+                    self._result_prompt_versions(scheduler_outcome),
                 ),
                 renderer_versions=self._string_mapping(
                     profile.metadata.get("renderer_versions")
@@ -280,6 +348,14 @@ class RunSupervisor:
             oracle_versions=(
                 scheduler_outcome.oracle_versions if scheduler_outcome else {}
             ),
+            model_versions=self._merge_declared_and_actual_versions(
+                profile.metadata.get("model_versions"),
+                self._result_model_versions(scheduler_outcome),
+            ),
+            prompt_versions=self._merge_declared_and_actual_versions(
+                profile.metadata.get("prompt_versions"),
+                self._result_prompt_versions(scheduler_outcome),
+            ),
             cost=scheduler_outcome.total_cost if scheduler_outcome else 0.0,
             duration_ms=self._duration_ms(started_at, completed_at),
             started_at=started_at,
@@ -293,6 +369,191 @@ class RunSupervisor:
             completed_at,
         )
         return SupervisionOutcome(report, manifest, None)
+
+    @classmethod
+    def _tiered_model_audit_enabled(cls, profile: EvalProfile) -> bool:
+        """Require an explicit Profile opt-in before model-driven escalation."""
+
+        return (
+            profile.metadata.get("model_audit_routing")
+            == cls._TIERED_MODEL_AUDIT_ROUTING
+        )
+
+    @staticmethod
+    def _flash_model_results(
+        results: tuple[OracleResult, ...],
+    ) -> tuple[OracleResult, ...]:
+        """Select only score-bearing FLASH audit results for policy voting.
+
+        Deterministic metrics must never be mistaken for model votes.  PLUS
+        results are diagnostic by contract and are therefore excluded as
+        well, even if a caller reuses a previously enriched result tuple.
+        """
+
+        return tuple(
+            result
+            for result in results
+            if result.score_role != ScoreRole.DIAGNOSTIC
+            and result.metadata.get("audit_type") == "model"
+        )
+
+    def _execute_advanced_model_review(
+        self,
+        context: EvaluationContext,
+        profile: EvalProfile,
+        scheduler_outcome: SchedulerOutcome,
+    ) -> tuple[SchedulerOutcome, tuple[OracleResult, ...], str]:
+        """Run the PLUS composite once and append its diagnostic telemetry.
+
+        The baseline ``ScoreBreakdown`` has already been frozen by the caller.
+        These results are appended for evidence, routing, cost and provenance;
+        they are deliberately not sent through the score aggregator again.
+        """
+
+        oracle = self.advanced_model_review
+        if oracle is None:
+            return scheduler_outcome, (), "UNCONFIGURED"
+
+        descriptor = coerce_descriptor(oracle.describe())
+        attempt_key = f"escalation:{descriptor.oracle_id}"
+        attempts = 0
+        if (
+            profile.cost_budget is not None
+            and scheduler_outcome.total_cost >= profile.cost_budget
+        ):
+            results = self._advanced_error_results(
+                descriptor,
+                error_code="COST_BUDGET_EXHAUSTED",
+                error_message="Evaluation cost budget was exhausted before PLUS review",
+            )
+            call_status = "COST_BUDGET_EXHAUSTED"
+        else:
+            attempts = 1
+            try:
+                if not oracle.supports(context):
+                    results = self._advanced_unavailable_results(descriptor)
+                    call_status = "UNSUPPORTED"
+                else:
+                    results = normalize_oracle_output(oracle.evaluate(context))
+                    if not results:
+                        raise ValueError("Advanced model review returned no results")
+                    call_status = (
+                        "COMPLETED_WITH_ERRORS"
+                        if any(
+                            result.execution_status == ExecutionStatus.ERROR
+                            for result in results
+                        )
+                        else "COMPLETED"
+                    )
+            except Exception as exc:
+                results = self._advanced_error_results(
+                    descriptor,
+                    error_code="ADVANCED_REVIEW_EXCEPTION",
+                    error_message=f"{type(exc).__name__}: {exc}",
+                )
+                call_status = "ERROR"
+
+        enriched = SchedulerOutcome(
+            results=scheduler_outcome.results + results,
+            attempts={
+                **dict(scheduler_outcome.attempts),
+                attempt_key: attempts,
+            },
+            oracle_versions={
+                **dict(scheduler_outcome.oracle_versions),
+                descriptor.oracle_id: descriptor.version,
+            },
+            total_cost=round(
+                scheduler_outcome.total_cost
+                + sum(result.cost for result in results),
+                6,
+            ),
+        )
+        return enriched, results, call_status
+
+    @staticmethod
+    def _descriptor_metrics(
+        descriptor: OracleDescriptor,
+    ) -> tuple[MetricDefinition, ...]:
+        return descriptor.metrics or (
+            MetricDefinition(descriptor.oracle_id, ScoreRole.DIAGNOSTIC),
+        )
+
+    @classmethod
+    def _advanced_error_results(
+        cls,
+        descriptor: OracleDescriptor,
+        *,
+        error_code: str,
+        error_message: str,
+    ) -> tuple[OracleResult, ...]:
+        return tuple(
+            OracleResult.error(
+                oracle_id=descriptor.oracle_id,
+                metric_id=metric.metric_id,
+                score_role=metric.score_role,
+                error_code=error_code,
+                error_message=error_message,
+                version=descriptor.version,
+            )
+            for metric in cls._descriptor_metrics(descriptor)
+        )
+
+    @classmethod
+    def _advanced_unavailable_results(
+        cls,
+        descriptor: OracleDescriptor,
+    ) -> tuple[OracleResult, ...]:
+        return tuple(
+            OracleResult(
+                oracle_id=descriptor.oracle_id,
+                metric_id=metric.metric_id,
+                execution_status=ExecutionStatus.SKIPPED,
+                metric_status=MetricStatus.NA,
+                score_role=metric.score_role,
+                confidence=1.0,
+                version=descriptor.version,
+                error_code="ADVANCED_REVIEW_UNSUPPORTED",
+                error_message="Advanced model review does not support this evaluation context",
+                metadata={"reason_code": "ADVANCED_REVIEW_UNSUPPORTED"},
+            )
+            for metric in cls._descriptor_metrics(descriptor)
+        )
+
+    def _audit_model_routing(
+        self,
+        run_id: str,
+        *,
+        stage: str,
+        provisional_decision: EvaluationDecision,
+        provisional_reasons: tuple[str, ...],
+        outcome: ModelEscalationOutcome,
+        advanced_call_status: str | None = None,
+    ) -> None:
+        payload: dict[str, Any] = {
+            "routing_policy": self._TIERED_MODEL_AUDIT_ROUTING,
+            "stage": stage,
+            "route": outcome.route.value,
+            "should_call_advanced": outcome.should_call_advanced,
+            "provisional_decision": provisional_decision.value,
+            "provisional_reasons": list(provisional_reasons),
+            "final_recommendation": outcome.final_recommendation.value,
+            "escalation_reasons": list(outcome.escalation_reasons),
+            "human_review_reasons": list(outcome.human_review_reasons),
+            "flash_recommendation": (
+                None
+                if outcome.flash_recommendation is None
+                else outcome.flash_recommendation.value
+            ),
+            "plus_recommendation": (
+                None
+                if outcome.plus_recommendation is None
+                else outcome.plus_recommendation.value
+            ),
+        }
+        if advanced_call_status is not None:
+            payload["advanced_call_status"] = advanced_call_status
+        self._audit(run_id, "MODEL_AUDIT_ROUTING", payload, self._now())
 
     def _transition(
         self,
@@ -344,6 +605,59 @@ class RunSupervisor:
         if not isinstance(value, Mapping):
             return {}
         return {str(key): str(item) for key, item in value.items()}
+
+    @classmethod
+    def _merge_declared_and_actual_versions(
+        cls,
+        declared: Any,
+        actual: Mapping[str, str],
+    ) -> Mapping[str, str]:
+        """Merge version metadata with observed provider output taking priority.
+
+        Profiles may declare the intended deployment, but only a validated
+        provider response proves what actually ran.  A metric-id collision is
+        therefore resolved deterministically in favor of the observed value.
+        """
+
+        return {**cls._string_mapping(declared), **dict(actual)}
+
+    @staticmethod
+    def _result_model_versions(
+        outcome: SchedulerOutcome | None,
+    ) -> Mapping[str, str]:
+        versions: dict[str, str] = {}
+        for result in outcome.results if outcome else ():
+            if result.metadata.get("response_schema_version") is None:
+                continue
+            model = result.metadata.get("model")
+            if not isinstance(model, Mapping):
+                continue
+            provider = str(model.get("provider") or "").strip()
+            model_id = str(model.get("model_id") or "").strip()
+            version = str(model.get("version") or "").strip()
+            if provider and model_id and version:
+                versions[result.metric_id] = f"{provider}/{model_id}@{version}"
+        return versions
+
+    @staticmethod
+    def _result_prompt_versions(
+        outcome: SchedulerOutcome | None,
+    ) -> Mapping[str, str]:
+        versions: dict[str, str] = {}
+        for result in outcome.results if outcome else ():
+            if result.metadata.get("response_schema_version") is None:
+                continue
+            prompt = result.metadata.get("prompt")
+            if not isinstance(prompt, Mapping):
+                continue
+            prompt_id = str(prompt.get("prompt_id") or "").strip()
+            version = str(prompt.get("version") or "").strip()
+            fingerprint = str(prompt.get("sha256") or "").strip()
+            if prompt_id and version and fingerprint:
+                versions[result.metric_id] = (
+                    f"{prompt_id}@{version}#{fingerprint}"
+                )
+        return versions
 
     @staticmethod
     def _result_errors(outcome: SchedulerOutcome) -> tuple[str, ...]:
