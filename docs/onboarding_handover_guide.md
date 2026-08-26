@@ -67,7 +67,7 @@ DecisionPolicy   决定业务上怎样处置
 |---|---|---|
 | CLI 与同步评测 | 已实现 | 使用本地 JSON/JSONL 持久化，可完整运行四场景 |
 | 强制 Baseline、DAG、状态机、PDMS | 已实现 | 当前核心控制链已经落地并有测试 |
-| 31 个确定性原子 Oracle | 已实现 | 均为 PPTX 对象树或词法启发式 |
+| 32 个确定性原子 Oracle | 已实现 | 均为 PPTX 对象树或词法启发式 |
 | Flash 基线 + Plus 高级审计 | 已接线 | v3 全量调用 `qwen3.7-flash`，困惑时条件调用 `qwen3.7-plus`，再不确定转人工 |
 | FastAPI 同步接口 | 已实现 | 使用 `LocalEvaluationRuntime` |
 | FastAPI 异步接口 | 部分实现 | 使用进程内线程池，不是 Celery；服务重启后 Job 状态丢失 |
@@ -91,7 +91,7 @@ src/ppt_eval/
   domain/                 稳定枚举和冻结数据契约
   application/            Supervisor、DAG 编译、调度、Oracle 端口
   adapters/               PPTX、事实快照、模型审计端口、PowerPoint/LibreOffice
-  oracles/                31 个确定性 Leaf、3 个 Flash 计分审计、3 个 Plus 诊断审计和 Composite
+  oracles/                32 个确定性 Leaf、标量/结构化 Flash 审计、Plus 诊断审计和 Composite
   scoring/                PPT-PDMS 与 DecisionPolicy
   infrastructure/         本地和生产候选存储/队列 Adapter
   runtime.py              本地 composition root，所有部件从这里接起来
@@ -139,7 +139,7 @@ README.md
 | [scheduler.py](../src/ppt_eval/application/scheduler.py) | 拓扑执行、Registry、预算和重试 |
 | [oracle.py](../src/ppt_eval/application/oracle.py) | Oracle 端口、Descriptor、Context 和 Registry |
 | [oracles/base.py](../src/ppt_eval/oracles/base.py) | Atomic/Composite 模板、解析缓存和证据函数 |
-| [baseline.py](../src/ppt_eval/oracles/baseline.py) | 14 个本体 Leaf |
+| [baseline.py](../src/ppt_eval/oracles/baseline.py) | 15 个本体 Leaf |
 | [scenarios.py](../src/ppt_eval/oracles/scenarios.py) | 17 个场景 Leaf 和 3 个场景 Composite |
 | [model_audits.py](../src/ppt_eval/oracles/model_audits.py) | 3 个未校准模型 Shadow 审计和 1 个可选 Composite |
 | [pdms.py](../src/ppt_eval/scoring/pdms.py) | 外乘内加、Coverage 和重复指标保护 |
@@ -338,17 +338,18 @@ Aggregator 只做纯算术，不调用模型。DecisionPolicy 只做业务决策
 PASS 和质量 FAIL 进入 `FINALIZE`；REVIEW 和 Harness ERROR 进入 `REVIEW` 状态。最终报告与 Manifest
 写入本地仓库，状态事件追加到运行级哈希链。
 
-## 9. Oracle 框架：31 个确定性 Leaf + 分层模型审计
+## 9. Oracle 框架：32 个确定性 Leaf + 分层模型审计
 
-默认 Registry 顶层注册五个 Composite：
+默认 Registry 顶层注册六个 Composite：
 
 | Composite ID | 原子数 | 适用场景 |
 |---|---:|---|
-| `baseline_ppt_quality` | 14 | 所有场景，编译期强制注入 |
+| `baseline_ppt_quality` | 15 | 所有场景，编译期强制注入 |
 | `scenario.instruction_alignment` | 4 | 文字生成 |
 | `scenario.source_faithfulness` | 6 | 项目总结 |
 | `scenario.asset_compliance` | 7 | 多模态 |
 | `high_cost.model_audits` | 3 | v3 四场景默认 Flash；ID 为兼容 v2 保留，无 Provider 时 N/A |
+| `structured.model_audits` | 3 | v5 实验替代组；自适应内容 + 六维视觉 + 场景合规 |
 
 Supervisor 还可条件执行 `advanced.model_review`，其 3 个 Plus 结果都是
 `DIAGNOSTIC`，避免对 Flash 分数二次计权。
@@ -359,7 +360,7 @@ Supervisor 还可条件执行 `advanced.model_review`，其 3 个 Plus 结果都
 - `metric_id`：评分合同中的稳定指标 ID，例如 `layout`。
 - Composite ID：Profile 启用的节点 ID，例如 `scenario.asset_compliance`。
 
-### 9.1 本体 14 项
+### 9.1 本体 15 项
 
 | metric_id | 角色/权重 | v1 实现原理 |
 |---|---:|---|
@@ -369,6 +370,7 @@ Supervisor 还可条件执行 `advanced.model_review`，其 3 个 Plus 结果都
 | `content_clarity` | 基础加法 .14 | 空白页、超700字符页、超18文本框页按比例扣分 |
 | `template_residue` | v3 基础加法 .08 | 检测占位日期/姓名、Lorem ipsum、TODO/TBD、Office 默认提示和模板字段 |
 | `narrative` | 基础加法 .12 | 标题覆盖、首页标题和重复标题率 |
+| `body_completeness` | 诊断 | 文本可观测 deck 的标题空壳/无正文页；封面、结尾和大型图表主体中性 |
 | `visual_hierarchy` | 基础加法 .12 | 标题最大字号相对全页文字中位字号 |
 | `layout` | 基础加法 .12 | 越界对象和重叠超过较小对象35%的对象对 |
 | `typography` | 基础加法 .10 | 显式小于14pt的文本对象比例 |
@@ -905,7 +907,7 @@ pii_level/consent/retention/owner/sha256/parent_id
 8. 为 feedback/proposal 增加查询、身份签名、参数白名单和 evidence Run 外键校验。
 9. 统一 `application/oracle.py` 与 `oracles/base.py` 中迁移期重复的 Composite 实现。
 10. 完成 API/UI E2E、故障注入、完整变形矩阵、400例金标、2,000缺陷变体和真实 Shadow。
-11. 为31个确定性 Leaf 分别完成 Oracle Card，并为 Flash/Plus 模型审计补充
+11. 为32个确定性 Leaf 分别完成 Oracle Card，并为 Flash/Plus 模型审计补充
     model/prompt/usage/cost/稳定性与撤回条件。
 
 已知需要优先修正的具体规则问题：
@@ -930,7 +932,7 @@ pii_level/consent/retention/owner/sha256/parent_id
 ### 第二天：能沿代码追踪
 
 1. 从 `runtime.py` 追到 Supervisor、Compiler、Scheduler。
-2. 找出一次 ready-made Run 的 14 个 Baseline Leaf，并解释 Flash 审计与条件式 Plus 结果。
+2. 找出一次 ready-made Run 的 15 个 Baseline Leaf，并解释 Flash 审计与条件式 Plus 结果。
 3. 用一个 Evidence 的 page/object/bbox 回到 PPT 对象。
 
 ### 第三天：能制造降级
@@ -970,7 +972,7 @@ pii_level/consent/retention/owner/sha256/parent_id
 
 ### Oracle 和评分
 
-- [ ] 能解释31个确定性 Leaf 的输入、N/A 条件、公式和限制。
+- [ ] 能解释32个确定性 Leaf 的输入、N/A 条件、公式和限制。
 - [ ] 能解释 v1 确定性、v2 Shadow 和 v3 Flash 计分 + Plus 诊断的版本边界。
 - [ ] 能解释 Flash -> Plus -> Human 触发条件，以及确定性硬门为什么不可被覆盖。
 - [ ] 明确哪些指标是乘子、哪些是加法以及是否 required。

@@ -30,6 +30,11 @@ qwen3.7-plus 条件式高级审计
 确定性硬门失败始终有最高权威，Plus 不能覆盖；非 `FULL` Coverage 也不会由模型
 “补齐”。Plus 只在高置信且适用的审计项一致时给出最终建议，其余转人工。
 
+v5 还提供非默认的 `structured.model_audits`：视觉 Oracle 在一次请求中返回 6 个
+固定 criterion summary，Harness 校验完整性/唯一性/分数范围后重算结果，并忽略模型全局分。
+详见 [structured_visual_profile_method.md](structured_visual_profile_method.md)。由于尚无同契约 Plus Oracle，
+v5 的 `model_audit_routing=STRUCTURED_FLASH_ONLY`，不调用旧标量 Plus VLM。
+
 仓库另有一个非默认的 `experimental_text_generation_model_scoring.json`，仅用于评分链路和金标校准实验。它明确标记 `EXPERIMENTAL / UNVALIDATED / production_approved=false`，其 3%/4% 权重不是生产标准。
 
 默认映射明确指向 `*_v3.json`，脱离仓库时的 `EvalProfile.default()` 回退也使用 v3。

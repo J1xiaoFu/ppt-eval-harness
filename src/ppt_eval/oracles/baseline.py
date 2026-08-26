@@ -10,11 +10,12 @@ from __future__ import annotations
 import re
 import statistics
 from collections import defaultdict
+from dataclasses import replace
 from typing import Iterable
 
-from ppt_eval.adapters.pptx import PptxAdapterError, SlideObject
+from ppt_eval.adapters.pptx import PptxAdapter, PptxAdapterError, SlideObject
 from ppt_eval.domain.enums import ScoreRole, Severity
-from ppt_eval.domain.models import OracleResult
+from ppt_eval.domain.models import Evidence, OracleResult
 
 from .base import AtomicOracle, CompositeOracle, case_metadata, clamp, evidence
 
@@ -380,6 +381,123 @@ class NarrativeOracle(AtomicOracle):
         )
 
 
+class BodyCompletenessOracle(AtomicOracle):
+    """Diagnostic body-signal coverage for text-observable slides.
+
+    This does not claim semantic correctness. It identifies repeated
+    title-only or near-empty content pages while treating the cover, a
+    conventional closing page, and substantial charts/media as valid bodies.
+    Raster-only decks are N/A because pixels own their content observability.
+    """
+
+    oracle_id = "body_completeness_oracle"
+    metric_id = "body_completeness"
+    score_role = ScoreRole.DIAGNOSTIC
+    version = "1.0.0"
+
+    _CLOSING = re.compile(
+        r"(?:thank(?:\s+you)?|questions?|q\s*&\s*a|contact|the\s+end|"
+        r"谢谢|感谢|提问|联系我们)",
+        re.IGNORECASE,
+    )
+    _SEMANTIC_VISUAL_KINDS = frozenset(
+        {"chart", "table", "picture", "linked_picture", "media"}
+    )
+
+    def _evaluate(self, context: object) -> OracleResult:
+        presentation = self.presentation(context)
+        observable_pages = sum(
+            bool(slide.visible_text.strip()) for slide in presentation.slides
+        )
+        text_page_ratio = observable_pages / max(1, presentation.slide_count)
+        if text_page_ratio < 0.25:
+            result = self.not_applicable(
+                "Too few slides have extractable text for an object-tree body audit.",
+                code="TEXT_OBSERVABILITY_INSUFFICIENT",
+            )
+            return replace(
+                result,
+                metadata={
+                    **dict(result.metadata),
+                    "observable_pages": observable_pages,
+                    "slide_count": presentation.slide_count,
+                    "text_page_ratio": text_page_ratio,
+                },
+            )
+
+        assessed = 0
+        complete = 0
+        exempt_pages: list[int] = []
+        incomplete: list[tuple[int, SlideObject, int]] = []
+        last_page = presentation.slide_count
+        for slide in presentation.slides:
+            if slide.page_number == 1:
+                exempt_pages.append(slide.page_number)
+                continue
+            if slide.page_number == last_page and self._CLOSING.search(
+                slide.visible_text
+            ):
+                exempt_pages.append(slide.page_number)
+                continue
+            text_objects = [
+                item for item in slide.visible_objects if item.visible_text.strip()
+            ]
+            if not text_objects:
+                continue  # blank-page quality belongs to ContentClarityOracle
+            title = _title_object(slide.visible_objects)
+            body_objects = [
+                item
+                for item in text_objects
+                if title is None or item.object_id != title.object_id
+            ]
+            body_characters = len(
+                re.sub(r"\s+", "", "\n".join(item.visible_text for item in body_objects))
+            )
+            has_semantic_visual = any(
+                item.kind in self._SEMANTIC_VISUAL_KINDS and item.bbox.area >= 0.04
+                for item in slide.visible_objects
+            )
+            assessed += 1
+            if body_characters >= 40 or has_semantic_visual:
+                complete += 1
+            else:
+                anchor = title or text_objects[0]
+                incomplete.append((slide.page_number, anchor, body_characters))
+
+        if assessed == 0:
+            return self.not_applicable(
+                "No non-cover text-observable content slides were available.",
+                code="NO_ASSESSABLE_BODY_SLIDES",
+            )
+        score = complete / assessed
+        details = tuple(
+            evidence(
+                self.metric_id,
+                f"body-{page}",
+                "body_content_missing",
+                "Slide has a title or short label but no substantial body text or visual body.",
+                page_number=page,
+                object_id=anchor.object_id,
+                bbox=anchor.bbox.as_tuple(),
+                payload={"body_characters": characters, "minimum_characters": 40},
+            )
+            for page, anchor, characters in incomplete[:20]
+        )
+        return self.scored(
+            score,
+            details,
+            raw_value=score,
+            confidence=0.78,
+            metadata={
+                "assessed_pages": assessed,
+                "complete_pages": complete,
+                "incomplete_pages": [page for page, _, _ in incomplete],
+                "exempt_pages": exempt_pages,
+                "text_page_ratio": text_page_ratio,
+            },
+        )
+
+
 class VisualHierarchyOracle(AtomicOracle):
     oracle_id = "visual_hierarchy_oracle"
     metric_id = "visual_hierarchy"
@@ -518,7 +636,7 @@ class TypographyOracle(AtomicOracle):
 
     def _evaluate(self, context: object) -> OracleResult:
         presentation = self.presentation(context)
-        observed = []
+        observed: list[float] = []
         too_small: list[tuple[int, SlideObject, float]] = []
         for slide in presentation.slides:
             for item in slide.visible_objects:
@@ -577,7 +695,7 @@ class StyleConsistencyOracle(AtomicOracle):
             position_penalty = min(0.30, statistics.pstdev(title_positions) * 2.0)
         score = 1.0 - min(0.45, family_penalty) - position_penalty
         confidence = 0.85 if font_names else 0.62
-        details = ()
+        details: tuple[Evidence, ...] = ()
         if len(set(font_names)) > 5:
             details = (
                 evidence(
@@ -764,9 +882,9 @@ class BaselinePptQualityOracle(CompositeOracle):
     ORACLE_ID = "baseline_ppt_quality"
     oracle_id = ORACLE_ID
     metric_id = "baseline_ppt_quality"
-    version = "2.0.0"
+    version = "2.1.0"
 
-    def __init__(self, adapter=None) -> None:
+    def __init__(self, adapter: PptxAdapter | None = None) -> None:
         children = (
             FileDeliverabilityOracle(adapter),
             CriticalContentVisibilityOracle(adapter),
@@ -774,6 +892,7 @@ class BaselinePptQualityOracle(CompositeOracle):
             ContentClarityOracle(adapter),
             TemplateResidueOracle(adapter),
             NarrativeOracle(adapter),
+            BodyCompletenessOracle(adapter),
             VisualHierarchyOracle(adapter),
             LayoutOracle(adapter),
             TypographyOracle(adapter),

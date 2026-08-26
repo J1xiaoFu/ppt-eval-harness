@@ -116,6 +116,7 @@ def selected_metrics(results: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]
         "template_residue",
         "llm_content_quality_audit",
         "vlm_visual_quality_audit",
+        "structured_vlm_visual_audit",
         "advanced_llm_content_review",
         "advanced_vlm_visual_review",
     )
@@ -171,11 +172,15 @@ def evaluate(
     rerun_products: frozenset[str] | None = None,
     reuse_reports_from: Path | None = None,
     reference_report_dir: Path | None = None,
+    profile_path: Path | None = None,
+    include_products: frozenset[str] | None = None,
 ) -> dict[str, Any]:
     manifest = json.loads((dataset_root / "manifest.json").read_text(encoding="utf-8"))
     output.mkdir(parents=True, exist_ok=True)
-    profile_name = "finished_deck_v3.json" if qwen_v3 else "finished_deck_v2.json"
-    profile = load_profile(ROOT / "configs" / "profiles" / profile_name)
+    if profile_path is None:
+        profile_name = "finished_deck_v3.json" if qwen_v3 else "finished_deck_v2.json"
+        profile_path = ROOT / "configs" / "profiles" / profile_name
+    profile = load_profile(profile_path)
     reference_dir = reference_report_dir or (dataset_root / "report")
     if flash_only:
         if not qwen_v3:
@@ -190,6 +195,19 @@ def evaluate(
     available_products = {
         str(artifact["product_label"]) for artifact in manifest["artifacts"]
     }
+    if include_products is not None:
+        unknown_includes = include_products - available_products
+        if unknown_includes:
+            raise ValueError(
+                "unknown included products: " + ", ".join(sorted(unknown_includes))
+            )
+        dataset_artifacts = [
+            artifact
+            for artifact in manifest["artifacts"]
+            if str(artifact["product_label"]) in include_products
+        ]
+    else:
+        dataset_artifacts = list(manifest["artifacts"])
     if rerun_products is not None:
         unknown = rerun_products - available_products
         if unknown:
@@ -197,7 +215,7 @@ def evaluate(
         if not qwen_v3:
             raise ValueError("--rerun-products requires --qwen-v3")
     cases: list[dict[str, Any]] = []
-    for artifact in manifest["artifacts"]:
+    for artifact in dataset_artifacts:
         pptx = dataset_root / artifact["pptx"]["local_path"]
         case_id = Path(artifact["pptx"]["local_path"]).stem
         report_path = output / f"{case_id}.report.json"
@@ -247,7 +265,7 @@ def evaluate(
                 output / "runtime" / case_id,
                 workspace_root=ROOT,
             )
-            artifacts = {
+            model_artifacts: Mapping[str, Any] | None = {
                 "slide_images": tuple(
                     {
                         "page_number": page_number,
@@ -264,7 +282,7 @@ def evaluate(
             audit_path = runtime.paths.audit
         else:
             runtime = LocalEvaluationRuntime(output / "runtime" / case_id)
-            artifacts = None
+            model_artifacts = None
             audit_path = runtime.paths.audit
         if should_evaluate:
             report = runtime.evaluate(
@@ -278,7 +296,7 @@ def evaluate(
                     },
                 ),
                 profile,
-                artifacts=artifacts,
+                artifacts=model_artifacts,
             )
             report_path.write_text(
                 json.dumps(report, ensure_ascii=False, indent=2) + "\n",
@@ -296,6 +314,7 @@ def evaluate(
             for metric_id in (
                 "llm_content_quality_audit",
                 "vlm_visual_quality_audit",
+                "structured_vlm_visual_audit",
                 "llm_scenario_compliance_audit",
                 "advanced_llm_content_review",
                 "advanced_vlm_visual_review",
@@ -375,7 +394,11 @@ def evaluate(
         "model_audit_mode": (
             "QWEN_V3_FLASH_ONLY"
             if flash_only
-            else ("QWEN_V3" if qwen_v3 else "V2_SHADOW_OFFLINE")
+            else (
+                f"QWEN_PROFILE:{profile.profile_id}"
+                if qwen_v3
+                else "V2_SHADOW_OFFLINE"
+            )
         ),
         "comparison_scope": (
             f"{len(cases)} same-topic decks with exact per-deck human ranks"
@@ -464,15 +487,22 @@ details{{margin-top:12px}} .note{{border-left:4px solid var(--warm);padding:10px
 <h1>真实 PPT：人评排名 vs 当前 Harness</h1>
 <p class="lead">Slides-Align 固定 revision，同一 market_analysis 主题。{len(comparison['cases'])} 份 PPTX 通过当前
 <b>{html.escape(str(comparison['profile_id']))}</b> 评测；人评 rank 越小越好，Harness 分越高越好。</p>
-<div class="summary"><div class="stat"><b>{statistics['spearman_base_vs_human']:.2f}</b>总分 Spearman</div>
-<div class="stat"><b>{statistics['spearman_deterministic_visual_proxy_vs_human']:.2f}</b>确定性视觉代理 Spearman</div>
-<div class="stat"><b>{statistics['pairwise_base_accuracy']:.0%}</b>总分两两一致</div>
-<div class="stat"><b>{statistics['pairwise_deterministic_visual_proxy_accuracy']:.0%}</b>确定性视觉代理两两一致</div></div>
+<div class="summary"><div class="stat"><b>{_display_stat(statistics['spearman_base_vs_human'])}</b>总分 Spearman</div>
+<div class="stat"><b>{_display_stat(statistics['spearman_deterministic_visual_proxy_vs_human'])}</b>确定性视觉代理 Spearman</div>
+<div class="stat"><b>{_display_stat(statistics['pairwise_base_accuracy'], percent=True)}</b>总分两两一致</div>
+<div class="stat"><b>{_display_stat(statistics['pairwise_deterministic_visual_proxy_accuracy'], percent=True)}</b>确定性视觉代理两两一致</div></div>
 {reference_note}
 <p class="note"><b>范围限制：</b>这只是 1 个 topic、{len(comparison['cases'])} 份可配对 deck 的诊断切片，不是跨 topic 相关性结论。</p>
 {case_sections}
 <section><h2>限制与下一步</h2><ul>{limitations}</ul></section>
 </main></body></html>"""
+
+
+def _display_stat(value: object, *, percent: bool = False) -> str:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "N/A"
+    numeric = float(value)
+    return f"{numeric:.0%}" if percent else f"{numeric:.2f}"
 
 
 def case_html(item: Mapping[str, Any], output: Path, dataset_root: Path) -> str:
@@ -538,6 +568,8 @@ def comparison_explanation(item: Mapping[str, Any]) -> str:
     )
     llm = _metric_percent(metrics, "llm_content_quality_audit")
     vlm = _metric_percent(metrics, "vlm_visual_quality_audit")
+    if vlm == "N/A":
+        vlm = _metric_percent(metrics, "structured_vlm_visual_audit")
     if item["product"] == "Kimi-Banana":
         editability = _metric_percent(metrics, "editability")
         return (
@@ -622,6 +654,17 @@ def main() -> None:
         type=Path,
         help="same-code baseline report directory used for score/statistic deltas",
     )
+    parser.add_argument(
+        "--profile",
+        type=Path,
+        help="explicit Profile JSON; --qwen-v3 is required for model-enabled Profiles",
+    )
+    parser.add_argument(
+        "--products",
+        nargs="+",
+        metavar="PRODUCT",
+        help="evaluate only these products from the manifest",
+    )
     args = parser.parse_args()
     if args.reuse_existing and args.rerun_products is not None:
         parser.error("--reuse-existing and --rerun-products are mutually exclusive")
@@ -650,6 +693,10 @@ def main() -> None:
             None
             if args.reference_report_dir is None
             else args.reference_report_dir.resolve()
+        ),
+        profile_path=None if args.profile is None else args.profile.resolve(),
+        include_products=(
+            None if args.products is None else frozenset(args.products)
         ),
     )
     print(json.dumps(comparison["statistics"], ensure_ascii=False, indent=2))

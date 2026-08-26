@@ -2,14 +2,14 @@
 
 An evidence-first, deterministic evaluation harness for generated and existing PowerPoint decks. It combines an always-on intrinsic PPT quality baseline, scenario-specific Oracles, PDMS-style scoring, explicit degradation, human review, and append-only audit evidence.
 
-New maintainers should start with the Chinese [onboarding and handover guide](docs/onboarding_handover_guide.md). It explains the architecture, every component's responsibility, the 31 deterministic atomic metrics, the tiered model audits, scoring and degradation, local operations, extension patterns, release governance, troubleshooting, and current implementation gaps.
+New maintainers should start with the Chinese [onboarding and handover guide](docs/onboarding_handover_guide.md). It explains the architecture, every component's responsibility, the 32 deterministic atomic metrics, the tiered model audits, scoring and degradation, local operations, extension patterns, release governance, troubleshooting, and current implementation gaps.
 
 ## What works
 
 - Four scenarios: `text_to_ppt`, `project_summary`, `multimodal`, and `ready_made`.
 - The `baseline_ppt_quality` composite is injected into every execution DAG and cannot be removed by configuration.
 - Safe PPTX ZIP preflight, `python-pptx` parsing, and an OOXML fallback parser.
-- Fourteen intrinsic metrics plus scenario metrics with page/object/bbox evidence.
+- Fifteen intrinsic metrics plus scenario metrics with page/object/bbox evidence.
 - Deterministic `OBSERVE -> PLAN -> ACT -> VERIFY -> FINALIZE/REVIEW` supervisor.
 - PPT-PDMS aggregation, high-confidence hard multipliers, required/optional `NA`, and isolated runtime `ERROR`.
 - Strict vendor-neutral LLM/VLM contracts. The pre-research v3 profiles score every case with
@@ -19,6 +19,9 @@ New maintainers should start with the Chinese [onboarding and handover guide](do
 - Optional construct-aware aggregation fixes content/visual/delivery/handoff budgets and reports
   construct scores; it is exposed only through an unvalidated v4 candidate. Raster-only decks use
   rendered semantic content recovery instead of treating an empty object-tree text layer as zero.
+- The v5 experimental Profile replaces the scalar visual judge with six fixed visual criteria;
+  Harness validates every criterion and recomputes the visual score, while the model's global score
+  is retained only as metadata. Structured Plus routing remains intentionally disabled.
 - Local CLI/runtime, optional FastAPI/Celery/PostgreSQL/S3 adapters, review UI source, Docker Compose, run export, and hash-chained audit logs.
 - Feedback/edit-diff ingestion, active-sampling priorities, and parameter proposals that require frozen/challenge/shadow validation plus two human approvals; v1 intentionally exposes no automatic production apply method.
 - Three-part research/development/evaluation audit pack and a generated read-only HTML report.
@@ -148,3 +151,8 @@ baseline has Spearman `0.107`, while Flash v3 has `-0.321`; construct-capped
 aggregation alone does not repair the ordering. The audit and the experimental
 v4 construct Profile are documented in
 [`07_aggregation_metric_iteration.md`](reports/03_evaluation/07_aggregation_metric_iteration.md).
+
+The next Oracle/Profile-only iteration is documented in
+[`08_structured_visual_oracle_profile.md`](reports/03_evaluation/08_structured_visual_oracle_profile.md):
+six fixed VLM criteria, Harness-side score recomputation, raster semantic fallback,
+and a diagnostic body-completeness Oracle.

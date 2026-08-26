@@ -41,7 +41,10 @@ from ppt_eval.oracles import (
     ModelSourceAccessPolicy,
     build_default_registry,
 )
-from ppt_eval.oracles.model_audits import MODEL_AUDIT_COMPOSITE_ID
+from ppt_eval.oracles.model_audits import (
+    MODEL_AUDIT_COMPOSITE_ID,
+    STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
+)
 from ppt_eval.reporting import export_run_report
 
 _RENDER_MANIFEST_NAME = "render-manifest.json"
@@ -244,7 +247,10 @@ class LocalEvaluationRuntime:
     ) -> bool:
         if not self._vlm_enabled:
             return False
-        if MODEL_AUDIT_COMPOSITE_ID not in profile.enabled_oracle_ids:
+        if not {
+            MODEL_AUDIT_COMPOSITE_ID,
+            STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
+        }.intersection(profile.enabled_oracle_ids):
             return False
         # Explicit caller-supplied rendering artifacts have authority, even if
         # they later fail validation in the Oracle contract.

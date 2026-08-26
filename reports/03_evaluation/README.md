@@ -12,3 +12,6 @@ Spearman 为 `0.50`，低于历史 v2 切片的 `1.00`：当前模型分、权�
 扩充到 7 份真实 PPT 后的聚合层审计、构念候选与栅格内容回退见
 `07_aggregation_metric_iteration.md`。该结果证明单纯调低 VLM 权重不能修复排序，主要瓶颈是
 构念标签不一致、文本可观测性和模型单一黑盒分。
+
+`08_structured_visual_oracle_profile.md` 记录了仅 Oracle/Profile 的下一轮：六维结构化视觉
+Oracle、v5 实验 Profile、标题空壳页诊断，以及 Skywork/Kimi 的真实 API 契约冒烟。

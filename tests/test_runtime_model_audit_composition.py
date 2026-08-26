@@ -5,8 +5,12 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ppt_eval.adapters import ModelAuditRequest, RenderResult
+from ppt_eval.config import load_profile
 from ppt_eval.domain import EvalCase, EvalProfile, SceneType
-from ppt_eval.oracles.model_audits import MODEL_AUDIT_COMPOSITE_ID
+from ppt_eval.oracles.model_audits import (
+    MODEL_AUDIT_COMPOSITE_ID,
+    STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
+)
 from ppt_eval.runtime import LocalEvaluationRuntime, build_runtime_from_environment
 from tests.fixtures.pptx_factory import PNG_1X1, build_pptx
 
@@ -87,6 +91,24 @@ def test_direct_runtime_is_offline_even_when_a_local_secret_exists(tmp_path) -> 
 
     assert all(child.provider is None for child in composite.children)
     assert runtime.advanced_model_review is None
+
+
+def test_structured_profile_enables_automatic_render_inputs(tmp_path) -> None:
+    runtime = LocalEvaluationRuntime(
+        tmp_path / "var",
+        vlm_provider=RecordingProvider(),
+        slide_renderer=RecordingRenderer(),
+    )
+    profile = load_profile(
+        "configs/profiles/finished_deck_v5_structured_visual_candidate.json"
+    )
+
+    assert STRUCTURED_MODEL_AUDIT_COMPOSITE_ID in profile.enabled_oracle_ids
+    assert runtime._should_render_model_inputs(profile, {}) is True
+    assert runtime._should_render_model_inputs(
+        profile,
+        {"slide_images": (tmp_path / "caller.png",)},
+    ) is False
 
 
 def test_environment_factory_wires_flash_to_baseline_and_plus_to_escalation(

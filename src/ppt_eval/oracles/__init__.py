@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 from .baseline import (
     AccessibilityOracle,
     BaselinePptQualityOracle,
+    BodyCompletenessOracle,
     CompatibilityOracle,
     ContentClarityOracle,
     CriticalContentVisibilityOracle,
@@ -30,6 +31,8 @@ from .baseline import (
     VisualHierarchyOracle,
 )
 from .model_audits import (
+    STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
+    STRUCTURED_VLM_VISUAL_CRITERIA,
     AdvancedLlmContentReviewOracle,
     AdvancedLlmScenarioReviewOracle,
     AdvancedModelReviewOracle,
@@ -37,6 +40,8 @@ from .model_audits import (
     HighCostModelAuditOracle,
     LlmContentQualityAuditOracle,
     LlmScenarioComplianceAuditOracle,
+    StructuredModelAuditOracle,
+    StructuredVlmVisualAuditOracle,
     VlmVisualQualityAuditOracle,
 )
 from .model_source_access import ModelSourceAccessPolicy
@@ -91,6 +96,12 @@ def build_default_oracles(
             vlm_provider=vlm_provider,
             source_access_policy=model_source_access_policy,
         ),
+        StructuredModelAuditOracle(
+            adapter,
+            llm_provider=llm_provider,
+            vlm_provider=vlm_provider,
+            source_access_policy=model_source_access_policy,
+        ),
     )
 
 
@@ -125,6 +136,7 @@ __all__ = [
     "AssetPresentationOracle",
     "AudienceFitOracle",
     "BaselinePptQualityOracle",
+    "BodyCompletenessOracle",
     "ChartDataAccuracyOracle",
     "CompatibilityOracle",
     "CompressionQualityOracle",
@@ -155,6 +167,10 @@ __all__ = [
     "SCENE_ORACLE_IDS",
     "SourceFaithfulnessOracle",
     "StyleConsistencyOracle",
+    "STRUCTURED_MODEL_AUDIT_COMPOSITE_ID",
+    "STRUCTURED_VLM_VISUAL_CRITERIA",
+    "StructuredModelAuditOracle",
+    "StructuredVlmVisualAuditOracle",
     "TemplateResidueOracle",
     "TextGenerationQualityOracle",
     "TraceabilityOracle",

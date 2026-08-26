@@ -33,6 +33,7 @@ BASE_METRICS = {
     "content_clarity",
     "template_residue",
     "narrative",
+    "body_completeness",
     "visual_hierarchy",
     "layout",
     "typography",

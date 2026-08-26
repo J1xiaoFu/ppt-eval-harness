@@ -34,6 +34,9 @@
   `finished_deck_v4_construct_candidate.json`；v3 默认不变。
 - 内容审计在文本页低于 25% 时新增渲染语义回退，避免将栅格 deck 的“无可提取文本”
   伪造为高置信内容 0 分。
+- 新增 v5 结构化视觉 Oracle/Profile：单次 VLM 返回 6 个固定 criterion，Harness 严格校验并
+  重算分数，模型全局分只留 metadata；旧标量 Plus 在 v5 中禁用。
+- Baseline 升至 `2.1.0`，新增不计分的 `body_completeness` 诊断 Oracle，栅格-only deck 为 N/A。
 
 ### 2026-08-26
 
