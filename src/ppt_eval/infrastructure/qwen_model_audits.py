@@ -550,6 +550,19 @@ def _retryable_response_error(exc: Exception) -> bool:
 
 def _response_error_category(exc: Exception) -> str:
     if isinstance(exc, ModelAuditContractError):
+        message = str(exc)
+        if message == "each evidence item must locate a slide or a source_uri":
+            return "EVIDENCE_UNGROUNDED"
+        if message.startswith("evidence.source_uri"):
+            return "SOURCE_URI_INVALID"
+        if message.startswith("evidence.object_id"):
+            return "OBJECT_ID_INVALID"
+        if message.startswith("evidence.page_number"):
+            return "PAGE_NUMBER_INVALID"
+        if message.startswith("evidence.bbox") or message.startswith("bbox"):
+            return "BBOX_INVALID"
+        if "evidence item" in message and "unknown fields" in message:
+            return "EVIDENCE_FIELDS_INVALID"
         return "MODEL_AUDIT_CONTRACT_INVALID"
     message = str(exc)
     if message.endswith("did not contain structured JSON content"):
@@ -694,6 +707,17 @@ def _sanitize_optional_qwen_localization(
             }
             replacement["payload"] = payload
             sanitized_fields.append("related_page_numbers->payload")
+        if (
+            replacement.get("page_number") is None
+            and not replacement.get("source_uri")
+            and isinstance(payload, Mapping)
+            and _is_known_page_list(
+                payload.get("related_page_numbers"),
+                known_pages=known_pages,
+            )
+        ):
+            replacement["page_number"] = int(payload["related_page_numbers"][0])
+            sanitized_fields.append("page_number<-related_page_numbers")
         if "bbox" in replacement and not _is_normalized_bbox(
             replacement.get("bbox")
         ):

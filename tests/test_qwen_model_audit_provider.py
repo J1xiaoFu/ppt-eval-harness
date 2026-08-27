@@ -334,6 +334,35 @@ def test_qwen_adapter_moves_related_pages_into_evidence_payload() -> None:
     ]
 
 
+def test_qwen_adapter_grounds_summary_from_valid_related_pages() -> None:
+    vendor = json.loads(json.dumps(_vendor_response()))
+    content = json.loads(vendor["choices"][0]["message"]["content"])
+    finding = content["evidence"][0]
+    finding.pop("page_number")
+    finding.pop("object_id")
+    finding["payload"]["related_page_numbers"] = [1]
+    vendor["choices"][0]["message"]["content"] = json.dumps(content)
+
+    def fake_urlopen(http_request, *, timeout):
+        del http_request, timeout
+        return _FakeHttpResponse(vendor)
+
+    request = _request()
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+    )
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        payload = provider.audit(request)
+    response = ModelAuditResponse.from_mapping(payload, request=request)
+
+    assert response.evidence[0].page_number == 1
+    assert response.evidence[0].payload["adapter_sanitized_fields"] == [
+        "page_number<-related_page_numbers"
+    ]
+
+
 def test_qwen_adapter_replaces_model_supplied_reserved_adapter_telemetry() -> None:
     vendor = json.loads(json.dumps(_vendor_response()))
     content = json.loads(vendor["choices"][0]["message"]["content"])
@@ -439,7 +468,7 @@ def test_qwen_adapter_retries_ungrounded_structured_evidence() -> None:
 
     assert calls == 2
     assert response.evidence[0].payload["adapter_retry_reasons"] == [
-        "MODEL_AUDIT_CONTRACT_INVALID"
+        "EVIDENCE_UNGROUNDED"
     ]
 
 
