@@ -326,6 +326,37 @@ def test_duplicate_and_transition_proxies_emit_slide_pair_atoms(tmp_path: Path) 
     assert transitions[1].confidence == 0.45
 
 
+def test_raster_only_pairs_abstain_from_text_signature_proxies(tmp_path: Path) -> None:
+    path = build_pptx(
+        tmp_path / "raster-pairs.pptx",
+        tuple(
+            (
+                {
+                    "kind": "image",
+                    "x": 0,
+                    "y": 0,
+                    "w": 12_192_000,
+                    "h": 6_858_000,
+                },
+            )
+            for _ in range(3)
+        ),
+    )
+    context = _context(path)
+
+    duplicates = DuplicateSlideOracle(_ooxml()).evaluate(context).observations
+    transitions = TransitionCoherenceProxyOracle(_ooxml()).evaluate(
+        context
+    ).observations
+
+    assert len(duplicates) == 1
+    assert duplicates[0].metric_status == MetricStatus.NA
+    assert duplicates[0].metadata["raster_or_textless_deck"] is True
+    assert len(transitions) == 2
+    assert all(item.metric_status == MetricStatus.NA for item in transitions)
+    assert all(item.metadata["raster_or_textless_pair"] is True for item in transitions)
+
+
 def test_authorship_specificity_is_explicitly_low_confidence_proxy(tmp_path: Path) -> None:
     path = build_pptx(
         tmp_path / "authorship-atoms.pptx",

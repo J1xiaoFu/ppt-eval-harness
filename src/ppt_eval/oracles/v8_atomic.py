@@ -1197,6 +1197,21 @@ class DuplicateSlideOracle(ScopedObservationOracle):
                     reason="At least two slides are required for duplicate-slide inspection.",
                 ),
             )
+        if not any(slide.visible_text.strip() for slide in presentation.slides):
+            return (
+                _na_observation(
+                    presentation,
+                    oracle_id=self.oracle_id,
+                    metric_id=self.metric_id,
+                    scope=self.expected_scope,
+                    unit_key="pairs:text-unobservable",
+                    reason=(
+                        "No extractable text or pixel-level slide signature is available "
+                        "for duplicate-slide comparison."
+                    ),
+                    metadata={"raster_or_textless_deck": True},
+                ),
+            )
         suspicious = []
         checked = 0
         signatures = {slide.page_number: _slide_signature(slide) for slide in presentation.slides}
@@ -1209,7 +1224,11 @@ class DuplicateSlideOracle(ScopedObservationOracle):
                 exact_text = bool(left_text) and left_text == right_text
                 same_structure = left_kinds == right_kinds and left_geometry == right_geometry
                 duplicate = exact_text and (same_structure or len(left_text) >= 12)
-                near_duplicate = text_similarity >= 0.94 and left_kinds == right_kinds
+                near_duplicate = (
+                    bool(left_text and right_text)
+                    and text_similarity >= 0.94
+                    and left_kinds == right_kinds
+                )
                 if not (duplicate or near_duplicate):
                     continue
                 score = 0.0 if duplicate and same_structure else 0.20
@@ -1291,6 +1310,29 @@ class TransitionCoherenceProxyOracle(ScopedObservationOracle):
             )
         result = []
         for left, right in zip(presentation.slides, presentation.slides[1:]):
+            unit_key = f"pages:{left.page_number}-{right.page_number}"
+            if not left.visible_text.strip() or not right.visible_text.strip():
+                result.append(
+                    _na_observation(
+                        presentation,
+                        oracle_id=self.oracle_id,
+                        metric_id=self.metric_id,
+                        scope=self.expected_scope,
+                        unit_key=unit_key,
+                        reason=(
+                            "Adjacent lexical continuity is unobservable without "
+                            "extractable text on both pages."
+                        ),
+                        page_number=left.page_number,
+                        metadata={
+                            "left_page": left.page_number,
+                            "right_page": right.page_number,
+                            "proxy_only": True,
+                            "raster_or_textless_pair": True,
+                        },
+                    )
+                )
+                continue
             similarity = _jaccard(text_tokens(left.visible_text), text_tokens(right.visible_text))
             right_role = classify_slide_role(right, presentation.slide_count)
             if right_role in {"section", "closing"}:
@@ -1299,7 +1341,6 @@ class TransitionCoherenceProxyOracle(ScopedObservationOracle):
                 score = 0.35
             else:
                 score = 0.55 + 0.45 * clamp(similarity / 0.20)
-            unit_key = f"pages:{left.page_number}-{right.page_number}"
             result.append(
                 _scored_observation(
                     presentation,
