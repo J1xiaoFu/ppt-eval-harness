@@ -12,6 +12,7 @@ license = { text = "Proprietary" }
 authors = [{ name = "PPT Eval Project" }]
 dependencies = [
   "python-pptx>=1.0.2",
+  "Pillow>=10.0",
 ]
 
 [project.optional-dependencies]

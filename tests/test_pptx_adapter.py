@@ -31,6 +31,18 @@ def test_ooxml_adapter_extracts_text_geometry_and_media() -> None:
     assert picture.bbox.as_tuple() == (0.2, 0.3, 0.25, 0.3)
 
 
+def test_python_backend_records_embedded_image_pixel_dimensions(tmp_path: Path) -> None:
+    path = build_pptx(
+        tmp_path / "image-size.pptx",
+        (({"kind": "image", "x": 0, "y": 0, "w": 6_096_000, "h": 3_429_000},),),
+    )
+
+    parsed = PptxAdapter(backend="python-pptx").parse(path)
+    picture = next(item for item in parsed.slides[0].objects if item.kind == "picture")
+
+    assert picture.metadata["image_size_px"] == (1, 1)
+
+
 def test_preflight_reports_active_content_and_external_links_without_fetching() -> None:
     with tempfile.TemporaryDirectory() as directory:
         path = build_pptx(

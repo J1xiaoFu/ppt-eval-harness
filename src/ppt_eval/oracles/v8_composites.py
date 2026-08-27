@@ -87,9 +87,17 @@ _NUMBER = re.compile(r"(?<![\w])[-+]?\d[\d,.]*(?:%|万|亿|k|m)?", re.IGNORECASE
 
 _CRITERION_RULE_METRICS: Mapping[str, tuple[str, ...]] = {
     "composition_layout": ("slide_geometry_integrity",),
-    "typography_legibility": ("slide_typography_functional", "slide_reading_load"),
-    "color_contrast": (),
-    "imagery_data_visualization": ("media_integrity", "crop_geometry_risk"),
+    "typography_legibility": (
+        "slide_typography_functional",
+        "slide_reading_load",
+        "slide_pixel_contrast",
+    ),
+    "color_contrast": ("slide_pixel_contrast",),
+    "imagery_data_visualization": (
+        "media_integrity",
+        "crop_geometry_risk",
+        "effective_image_resolution",
+    ),
     "cross_slide_consistency": ("transition_coherence_proxy", "duplicate_slide"),
     "render_integrity": ("render_availability_parity",),
 }
@@ -577,9 +585,18 @@ class V8QualityReducerOracle:
             "typography_rule",
             ScoreRole.DIAGNOSTIC,
         )
+        contrast_rule = self._reduce(
+            batch,
+            ("slide_pixel_contrast",),
+            EvaluationScope.PAGE,
+            PAGE_QUALITY,
+            "contrast_rule",
+            ScoreRole.DIAGNOSTIC,
+            required=False,
+        )
         media_rule = self._reduce(
             batch,
-            ("media_integrity", "crop_geometry_risk"),
+            ("media_integrity", "crop_geometry_risk", "effective_image_resolution"),
             EvaluationScope.OBJECT,
             IMPORTANCE_COVERAGE,
             "visual_communication_rule",
@@ -616,8 +633,9 @@ class V8QualityReducerOracle:
                     typography_rule,
                     model_scores.get("structured_vlm_typography_legibility"),
                 ),
-                self._model_only(
+                self._fuse(
                     "palette_craft",
+                    contrast_rule,
                     model_scores.get("structured_vlm_color_contrast"),
                 ),
                 self._fuse(

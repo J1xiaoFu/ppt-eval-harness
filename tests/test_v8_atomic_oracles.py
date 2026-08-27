@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from PIL import Image, ImageDraw
 
 from ppt_eval.adapters import PptxAdapter
 from ppt_eval.application.oracle import EvaluationContext
@@ -13,7 +14,9 @@ from ppt_eval.oracles.v8_atomic import (
     CropGeometryRiskOracle,
     DocumentStructureOracle,
     DuplicateSlideOracle,
+    EffectiveImageResolutionOracle,
     MediaIntegrityOracle,
+    PixelContrastProxyOracle,
     ReadingOrderProxyOracle,
     RenderAvailabilityParityOracle,
     SlideContentPresenceOracle,
@@ -572,3 +575,62 @@ def test_reading_order_and_render_parity_are_page_scoped(tmp_path: Path) -> None
     assert parity[1].local_score == 0.0
     assert parity[1].critical is True
     assert parity[1].evidence[0].page_number == 2
+
+
+def test_pixel_contrast_and_effective_resolution_emit_functional_atoms(
+    tmp_path: Path,
+) -> None:
+    path = build_pptx(
+        tmp_path / "pixel-rules.pptx",
+        (
+            (
+                {
+                    "kind": "text",
+                    "text": "High contrast",
+                    "x": 1_219_200,
+                    "y": 685_800,
+                    "w": 6_096_000,
+                    "h": 685_800,
+                    "font_pt": 30,
+                },
+                {
+                    "kind": "image",
+                    "x": 1_219_200,
+                    "y": 2_057_400,
+                    "w": 8_534_400,
+                    "h": 3_429_000,
+                },
+            ),
+        ),
+        image_bytes=PNG_1X1,
+    )
+    render = Image.new("RGB", (1600, 900), "white")
+    drawer = ImageDraw.Draw(render)
+    drawer.rectangle((160, 90, 320, 180), fill="black")
+    render_path = tmp_path / "render.png"
+    render.save(render_path)
+    base = _context(path)
+    context = EvaluationContext(
+        case=base.case,
+        profile=base.profile,
+        artifacts={"slide_images": (render_path,)},
+        memo={},
+    )
+
+    contrast = PixelContrastProxyOracle(_ooxml()).evaluate(context).observations
+    resolution_context = EvaluationContext(
+        case=base.case,
+        profile=base.profile,
+        artifacts=context.artifacts,
+        memo={},
+    )
+    resolution = EffectiveImageResolutionOracle(
+        PptxAdapter(backend="python-pptx")
+    ).evaluate(resolution_context).observations
+
+    assert contrast[0].metric_status == MetricStatus.SCORED
+    assert contrast[0].local_score is not None and contrast[0].local_score > 0.9
+    assert contrast[0].evidence[0].payload["ratio"] > 10
+    assert resolution[0].scope == EvaluationScope.OBJECT
+    assert resolution[0].local_score is not None and resolution[0].local_score < 0.01
+    assert resolution[0].critical is True

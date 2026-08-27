@@ -19,6 +19,8 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from PIL import Image
+
 from ppt_eval.adapters.pptx import (
     ParsedPresentation,
     ParsedSlide,
@@ -1805,6 +1807,225 @@ class ReadingOrderProxyOracle(ScopedObservationOracle):
         return tuple(result)
 
 
+def _rendered_image_paths(context: object) -> Mapping[int, Path]:
+    artifacts = getattr(context, "artifacts", {})
+    value = artifacts.get("slide_images", ()) if isinstance(artifacts, Mapping) else ()
+    if isinstance(value, (str, bytes, Path)) or not isinstance(value, Sequence):
+        return {}
+    result: dict[int, Path] = {}
+    for index, item in enumerate(value, start=1):
+        if isinstance(item, Mapping):
+            page_number = int(item.get("page_number", index))
+            uri = item.get("uri") or item.get("path")
+        elif hasattr(item, "page_number") and hasattr(item, "uri"):
+            page_number = int(getattr(item, "page_number"))
+            uri = getattr(item, "uri")
+        else:
+            page_number = index
+            uri = item
+        if uri:
+            result[page_number] = Path(str(uri))
+    return result
+
+
+def _histogram_percentile(histogram: Sequence[int], fraction: float) -> int:
+    target = max(1, round(sum(histogram) * fraction))
+    cumulative = 0
+    for value, amount in enumerate(histogram):
+        cumulative += amount
+        if cumulative >= target:
+            return value
+    return 255
+
+
+def _relative_luminance(value: int) -> float:
+    channel = value / 255.0
+    return channel / 12.92 if channel <= 0.04045 else ((channel + 0.055) / 1.055) ** 2.4
+
+
+class PixelContrastProxyOracle(ScopedObservationOracle):
+    """Estimate text/background contrast from rendered text regions."""
+
+    oracle_id = "v8.pixel_contrast_proxy"
+    metric_id = "slide_pixel_contrast"
+    expected_scope = EvaluationScope.PAGE
+
+    def _observe(
+        self, context: object, presentation: ParsedPresentation
+    ) -> tuple[AtomicObservation, ...]:
+        paths = _rendered_image_paths(context)
+        result = []
+        for slide in presentation.slides:
+            path = paths.get(slide.page_number)
+            text_objects = [item for item in slide.visible_objects if item.visible_text.strip()]
+            if path is None or not path.is_file() or not text_objects:
+                result.append(
+                    _na_observation(
+                        presentation,
+                        oracle_id=self.oracle_id,
+                        metric_id=self.metric_id,
+                        scope=EvaluationScope.PAGE,
+                        unit_key=f"page:{slide.page_number}",
+                        reason="Rendered pixels or visible text regions are unavailable for contrast estimation.",
+                        metadata={"page_number": slide.page_number},
+                    )
+                )
+                continue
+            try:
+                with Image.open(path) as opened:
+                    image = opened.convert("L")
+                    object_scores: list[tuple[float, SlideObject, float, float]] = []
+                    for item in text_objects:
+                        left = max(0, round(item.bbox.x * image.width))
+                        top = max(0, round(item.bbox.y * image.height))
+                        right = min(image.width, round((item.bbox.x + item.bbox.width) * image.width))
+                        bottom = min(image.height, round((item.bbox.y + item.bbox.height) * image.height))
+                        if right <= left or bottom <= top:
+                            continue
+                        histogram = image.crop((left, top, right, bottom)).histogram()
+                        dark = _relative_luminance(_histogram_percentile(histogram, 0.10))
+                        light = _relative_luminance(_histogram_percentile(histogram, 0.90))
+                        ratio = (light + 0.05) / (dark + 0.05)
+                        largest_font = max(item.font_sizes_pt or (0.0,))
+                        target = 3.0 if largest_font >= 24.0 else 4.5
+                        object_scores.append((clamp(ratio / target), item, ratio, target))
+            except OSError:
+                object_scores = []
+            if not object_scores:
+                result.append(
+                    _na_observation(
+                        presentation,
+                        oracle_id=self.oracle_id,
+                        metric_id=self.metric_id,
+                        scope=EvaluationScope.PAGE,
+                        unit_key=f"page:{slide.page_number}",
+                        reason="Rendered text regions could not be decoded for contrast estimation.",
+                    )
+                )
+                continue
+            page_score = statistics.fmean(item[0] for item in object_scores)
+            worst = min(object_scores, key=lambda item: item[0])
+            role = classify_slide_role(slide, presentation.slide_count)
+            result.append(
+                _scored_observation(
+                    presentation,
+                    oracle_id=self.oracle_id,
+                    metric_id=self.metric_id,
+                    scope=EvaluationScope.PAGE,
+                    unit_key=f"page:{slide.page_number}",
+                    score=page_score,
+                    raw_value=worst[2],
+                    confidence=0.72,
+                    severity=Severity.CRITICAL if page_score < 0.35 else _score_severity(page_score),
+                    importance=_importance(role),
+                    key_unit=role in {"cover", "data"},
+                    critical=page_score < 0.35 and role in {"cover", "data"},
+                    evidence_items=(
+                        evidence(
+                            self.metric_id,
+                            f"contrast-{slide.page_number}-{worst[1].object_id}",
+                            "pixel_contrast_proxy",
+                            f"Worst rendered-region luminance ratio is {worst[2]:.2f}:1.",
+                            page_number=slide.page_number,
+                            object_id=worst[1].object_id,
+                            bbox=worst[1].bbox.as_tuple(),
+                            payload={"ratio": worst[2], "target": worst[3]},
+                        ),
+                    ),
+                    metadata={"proxy_only": True, "text_regions": len(object_scores)},
+                )
+            )
+        return tuple(result)
+
+
+class EffectiveImageResolutionOracle(ScopedObservationOracle):
+    """Measure embedded image pixels against their displayed slide area."""
+
+    oracle_id = "v8.effective_image_resolution"
+    metric_id = "effective_image_resolution"
+    expected_scope = EvaluationScope.OBJECT
+
+    def _observe(
+        self, context: object, presentation: ParsedPresentation
+    ) -> tuple[AtomicObservation, ...]:
+        del context
+        result = []
+        for slide in presentation.slides:
+            role = classify_slide_role(slide, presentation.slide_count)
+            for item in slide.visible_objects:
+                if item.kind not in {"picture", "linked_picture"}:
+                    continue
+                raw_size = item.metadata.get("image_size_px")
+                unit_key = f"page:{slide.page_number}/object:{item.object_id}"
+                if (
+                    not isinstance(raw_size, (tuple, list))
+                    or len(raw_size) != 2
+                    or int(raw_size[0]) <= 0
+                    or int(raw_size[1]) <= 0
+                ):
+                    result.append(
+                        _na_observation(
+                            presentation,
+                            oracle_id=self.oracle_id,
+                            metric_id=self.metric_id,
+                            scope=EvaluationScope.OBJECT,
+                            unit_key=unit_key,
+                            reason="Embedded image pixel dimensions are unavailable.",
+                            metadata={"page_number": slide.page_number},
+                        )
+                    )
+                    continue
+                width_px, height_px = int(raw_size[0]), int(raw_size[1])
+                required_width = max(1.0, item.bbox.width * 1600.0)
+                required_height = max(1.0, item.bbox.height * 900.0)
+                ratio = min(width_px / required_width, height_px / required_height)
+                score = clamp(ratio)
+                key_unit = role in {"cover", "data"} or item.bbox.area >= 0.25
+                result.append(
+                    _scored_observation(
+                        presentation,
+                        oracle_id=self.oracle_id,
+                        metric_id=self.metric_id,
+                        scope=EvaluationScope.OBJECT,
+                        unit_key=unit_key,
+                        score=score,
+                        raw_value=ratio,
+                        confidence=0.96,
+                        severity=Severity.CRITICAL if score < 0.25 else _score_severity(score),
+                        importance=1.5 if key_unit else 1.0,
+                        key_unit=key_unit,
+                        critical=key_unit and score < 0.25,
+                        evidence_items=(
+                            evidence(
+                                self.metric_id,
+                                f"resolution-{slide.page_number}-{item.object_id}",
+                                "effective_image_resolution",
+                                f"Embedded/display pixel ratio is {ratio:.2f}.",
+                                page_number=slide.page_number,
+                                object_id=item.object_id,
+                                bbox=item.bbox.as_tuple(),
+                                payload={
+                                    "image_size_px": (width_px, height_px),
+                                    "required_size_px": (required_width, required_height),
+                                },
+                            ),
+                        ),
+                    )
+                )
+        if not result:
+            result.append(
+                _na_observation(
+                    presentation,
+                    oracle_id=self.oracle_id,
+                    metric_id=self.metric_id,
+                    scope=EvaluationScope.OBJECT,
+                    unit_key="image:none",
+                    reason="No embedded picture object is available for resolution evaluation.",
+                )
+            )
+        return tuple(result)
+
+
 class RenderAvailabilityParityOracle(ScopedObservationOracle):
     """Verify that every object-tree page has a corresponding immutable render."""
 
@@ -1891,4 +2112,6 @@ V8_ATOMIC_ORACLE_TYPES = (
     AuthorshipSpecificitySignalsOracle,
     ReadingOrderProxyOracle,
     RenderAvailabilityParityOracle,
+    PixelContrastProxyOracle,
+    EffectiveImageResolutionOracle,
 )

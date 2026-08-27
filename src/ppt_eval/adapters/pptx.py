@@ -504,8 +504,8 @@ class PptxAdapter:
         source_hash: str,
         report: ZipPreflightReport,
     ) -> ParsedPresentation:
-        from pptx import Presentation  # type: ignore[import-not-found]
-        from pptx.enum.shapes import MSO_SHAPE_TYPE  # type: ignore[import-not-found]
+        from pptx import Presentation
+        from pptx.enum.shapes import MSO_SHAPE_TYPE
 
         presentation = Presentation(io.BytesIO(data))
         width = int(presentation.slide_width or DEFAULT_SLIDE_WIDTH)
@@ -559,12 +559,16 @@ class PptxAdapter:
 
                 media_hash = None
                 target = None
+                image_size_px: tuple[int, int] | None = None
                 if shape.shape_type == MSO_SHAPE_TYPE.PICTURE:
                     try:
                         blob = shape.image.blob
                         media_hash = hashlib.sha256(blob).hexdigest()
                         media_hashes.add(media_hash)
                         target = str(shape.image.filename or "")
+                        raw_size = getattr(shape.image, "size", None)
+                        if isinstance(raw_size, tuple) and len(raw_size) == 2:
+                            image_size_px = (int(raw_size[0]), int(raw_size[1]))
                     except (AttributeError, KeyError, ValueError):
                         pass
 
@@ -594,6 +598,7 @@ class PptxAdapter:
                             "alt_text": _python_shape_alt_text(shape),
                             "crop": _python_picture_crop(shape),
                             "chart_values": chart_values,
+                            "image_size_px": image_size_px,
                         },
                     )
                 )
@@ -778,7 +783,7 @@ def _shape_type_name(value: object) -> str:
 
 def _safe_int(value: object) -> int:
     try:
-        return int(value or 0)
+        return int(str(value or "0"))
     except (TypeError, ValueError, OverflowError):
         return 0
 
@@ -895,7 +900,12 @@ def _ordered_slide_paths(
         for name in archive.namelist()
         if re.fullmatch(r"ppt/slides/slide\d+\.xml", name, flags=re.IGNORECASE)
     ]
-    return sorted(names, key=lambda name: int(re.search(r"\d+", name).group()))
+    return sorted(names, key=_slide_part_number)
+
+
+def _slide_part_number(name: str) -> int:
+    match = re.search(r"\d+", name)
+    return int(match.group()) if match is not None else 0
 
 
 def _parse_ooxml_slide(
