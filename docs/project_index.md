@@ -27,6 +27,7 @@
 - [v5 结构化视觉实验方法](structured_visual_profile_method.md)
 - [v6 六维结构化视觉实验方法](structured_visual_dimensions_profile_method.md)
 - [v7 Grounded Atomic Visual 基线研究与方法](grounded_visual_oracle_method.md)
+- [v8 原子评测、Reducer 与训练准入方法](v8_atomic_evaluation_method.md)
 - [OpenAPI 契约](openapi.yaml)
 
 ## 评测

@@ -79,6 +79,11 @@ from .scenarios import (
     TextGenerationQualityOracle,
     TraceabilityOracle,
 )
+from .v8_composites import (
+    V8AtomicObservationComposite,
+    V8QualityReducerOracle,
+    V8TieredVisualCriterionOracle,
+)
 
 SCENE_ORACLE_IDS: Mapping[SceneType, tuple[str, ...]] = {
     SceneType.TEXT_TO_PPT: (TextGenerationQualityOracle.oracle_id,),
@@ -93,6 +98,7 @@ def build_default_oracles(
     *,
     llm_provider: ModelAuditProvider | None = None,
     vlm_provider: ModelAuditProvider | None = None,
+    advanced_vlm_provider: ModelAuditProvider | None = None,
     model_source_access_policy: ModelSourceAccessPolicy | None = None,
 ) -> tuple[Oracle, ...]:
     """Return the baseline plus deterministic and optional model composites."""
@@ -126,6 +132,18 @@ def build_default_oracles(
             vlm_provider=vlm_provider,
             source_access_policy=model_source_access_policy,
         ),
+        V8AtomicObservationComposite(adapter),
+        *(
+            V8TieredVisualCriterionOracle(
+                criterion_id,
+                vlm_provider,
+                advanced_vlm_provider,
+                adapter,
+                source_access_policy=model_source_access_policy,
+            )
+            for criterion_id in STRUCTURED_VLM_VISUAL_CRITERION_IDS
+        ),
+        V8QualityReducerOracle(),
     )
 
 
@@ -134,6 +152,7 @@ def build_default_registry(
     *,
     llm_provider: ModelAuditProvider | None = None,
     vlm_provider: ModelAuditProvider | None = None,
+    advanced_vlm_provider: ModelAuditProvider | None = None,
     model_source_access_policy: ModelSourceAccessPolicy | None = None,
 ) -> OracleRegistry:
     """Create the Harness registry without making infrastructure import it."""
@@ -145,6 +164,7 @@ def build_default_registry(
             adapter,
             llm_provider=llm_provider,
             vlm_provider=vlm_provider,
+            advanced_vlm_provider=advanced_vlm_provider,
             model_source_access_policy=model_source_access_policy,
         )
     )
@@ -213,6 +233,9 @@ __all__ = [
     "TypographyOracle",
     "VisualHierarchyOracle",
     "VlmVisualQualityAuditOracle",
+    "V8AtomicObservationComposite",
+    "V8QualityReducerOracle",
+    "V8TieredVisualCriterionOracle",
     "build_default_oracles",
     "build_default_registry",
 ]

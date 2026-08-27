@@ -36,7 +36,7 @@ def test_runtime_scene_degradation_keeps_intrinsic_score_and_routes_review(tmp_p
     assert report["decision"] == "REVIEW"
     assert report["base_score"] is not None
     assert report["full_score"] is None
-    assert "unresolved_metric:fact_quality" in report["degradation_reasons"]
+    assert "unresolved_metric:fact_claim" in report["degradation_reasons"]
 
 
 def test_review_and_run_export_are_audited(tmp_path) -> None:

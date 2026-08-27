@@ -4,6 +4,7 @@ import hashlib
 import json
 from copy import deepcopy
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, Mapping
 
 from ppt_eval.adapters import ModelAuditModality, ModelAuditRequest, PptxAdapter
@@ -392,8 +393,14 @@ def test_provider_response_contract_rejects_invalid_required_fields(tmp_path) ->
 def test_four_v3_default_profiles_score_flash_and_declare_escalation_route(
     tmp_path,
 ) -> None:
+    profile_names = {
+        SceneType.TEXT_TO_PPT: "text_generation_v3.json",
+        SceneType.PROJECT_SUMMARY: "project_summary_v3.json",
+        SceneType.MULTIMODAL: "multimodal_generation_v3.json",
+        SceneType.READY_MADE: "finished_deck_v3.json",
+    }
     for scene in SceneType:
-        profile = default_profile(scene)
+        profile = load_profile(Path("configs/profiles") / profile_names[scene])
         fallback = default_profile(scene, root=tmp_path / "missing-profiles")
 
         assert profile.profile_id.endswith("-v3")
@@ -562,7 +569,7 @@ def test_v3_flash_scores_affect_formula_while_v1_replay_stays_available(
         scene=SceneType.READY_MADE,
         pptx_path=str(deck),
     )
-    profile = default_profile(SceneType.READY_MADE)
+    profile = load_profile("configs/profiles/finished_deck_v3.json")
     adapter = PptxAdapter(backend="ooxml")
 
     without_provider = RunSupervisor(
@@ -623,7 +630,7 @@ def test_required_flash_provider_error_is_visible_and_routes_review(
         scene=SceneType.READY_MADE,
         pptx_path=str(deck),
     )
-    profile = default_profile(SceneType.READY_MADE)
+    profile = load_profile("configs/profiles/finished_deck_v3.json")
     adapter = PptxAdapter(backend="ooxml")
     failed_flash = RunSupervisor(
         DagScheduler(
@@ -710,7 +717,7 @@ def test_construct_candidate_profile_caps_visual_model_without_becoming_default(
     assert candidate.aggregation_strategy == CONSTRUCT_WEIGHTED_MEAN
     assert candidate.metadata["lifecycle"] == "EXPERIMENTAL"
     assert candidate.metadata["production_approved"] is False
-    assert default.profile_id == "finished-deck-v3"
+    assert default.profile_id == "finished-deck-v8"
     assert default.aggregation_strategy != CONSTRUCT_WEIGHTED_MEAN
     visual_metrics = {
         metric_id
@@ -733,7 +740,7 @@ def test_manifest_uses_validated_actual_model_and_prompt_over_profile_declaratio
 ) -> None:
     deck = build_pptx(tmp_path / "deck.pptx")
     provider = FakeProvider({"llm_content_quality_audit": 0.9})
-    profile = default_profile(SceneType.READY_MADE)
+    profile = load_profile("configs/profiles/finished_deck_v3.json")
     profile = replace(
         profile,
         metadata={

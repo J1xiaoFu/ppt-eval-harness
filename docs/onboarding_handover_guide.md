@@ -68,7 +68,7 @@ DecisionPolicy   决定业务上怎样处置
 | CLI 与同步评测 | 已实现 | 使用本地 JSON/JSONL 持久化，可完整运行四场景 |
 | 强制 Baseline、DAG、状态机、PDMS | 已实现 | 当前核心控制链已经落地并有测试 |
 | 32 个确定性原子 Oracle | 已实现 | 均为 PPTX 对象树或词法启发式 |
-| Flash 基线 + Advanced 高级审计 | 已接线 | v3.1 全量调用 `qwen3.7-flash`，困惑时条件调用 `qwen3.8-flash`，再不确定转人工；历史 v3.0 使用 Plus |
+| 原子 Flash + Advanced 高级审计 | 已接线 | v8 按视觉构念调用 `qwen3.7-flash`，单维失败、低置信或规则冲突才调用 `qwen3.8-flash`；历史 v3.1 为整体模型路径 |
 | FastAPI 同步接口 | 已实现 | 使用 `LocalEvaluationRuntime` |
 | FastAPI 异步接口 | 部分实现 | 使用进程内线程池，不是 Celery；服务重启后 Job 状态丢失 |
 | React 人工复核台 | 已实现 MVP | 支持列表、原子结果和 APPROVE/REJECT，无鉴权、分配和分页 |
@@ -82,7 +82,7 @@ DecisionPolicy   决定业务上怎样处置
 | 分层审计路由 | 已实现预研版 | Flash -> Advanced -> Human 路由可审计；生产灰度、统计监控和一键回滚尚未实现 |
 | Transactional Outbox | 目标设计 | 当前运行日志是本地追加式 JSONL |
 
-因此当前准确定位是：**可运行、可降级、可审计的预研 v3.1 Harness，而不是已经完成大样本金标校准和工业验收的最终 Judge。**
+因此当前准确定位是：**可运行、可降级、可审计的预研 v8 原子评测 Harness，而不是已经完成大样本金标校准和工业验收的最终 Judge。**
 
 ## 4. 目录地图和推荐阅读顺序
 
@@ -91,7 +91,7 @@ src/ppt_eval/
   domain/                 稳定枚举和冻结数据契约
   application/            Supervisor、DAG 编译、调度、Oracle 端口
   adapters/               PPTX、事实快照、模型审计端口、PowerPoint/LibreOffice
-  oracles/                32 个确定性 Leaf、标量/结构化 Flash 审计、Advanced 诊断审计和 Composite
+  oracles/                legacy Leaf、v8 scoped observation、原子视觉审计、Reducer 和 Composite
   scoring/                PPT-PDMS 与 DecisionPolicy
   infrastructure/         本地和生产候选存储/队列 Adapter
   runtime.py              本地 composition root，所有部件从这里接起来
@@ -304,7 +304,9 @@ Supervisor 创建 `run_id` 和 `report_id`，计算输入哈希和 Profile 指�
 ### 8.2 PLAN
 
 `ProfileCompiler` 首先创建唯一且 mandatory 的 `baseline_ppt_quality`。除成品场景外，再根据
-`enabled_oracle_ids` 创建场景 Composite 节点。所有场景节点依赖基础节点。
+legacy Profile 仍由 `enabled_oracle_ids` 创建扁平场景节点。v8 Profile 使用固定
+`pipeline_nodes` 构建 `OBSERVE → AUDIT → REDUCE` 多阶段 DAG，所有路径都传递依赖强制
+Baseline。
 
 ```text
 baseline_ppt_quality
@@ -326,7 +328,9 @@ supports()   当前 Case 是否适用
 evaluate()   返回一个或多个 OracleResult
 ```
 
-默认 DAG 节点粒度是 Composite，不是直接展开 Leaf。Flash 审计由 Profile 作为默认 Composite 节点调度；Advanced 由 Supervisor 在 VERIFY 的第一次决策后条件调用。Composite 内部按固定顺序执行 Atomic Oracle。
+v8 默认 DAG 将 observation、六个视觉 criterion 和 reducer 分成独立节点。每个视觉节点
+内部只拥有一个 criterion 的 Flash/Advanced 路由，因此预算、失败和重试不会扩散到其他维度。
+legacy Profile 仍保留原 Composite 执行方式以支持回放。
 第一次 Leaf 解析 PPTX 后，结果缓存进 `EvaluationContext.memo`，其他 Leaf 不会重复解压同一文件。
 
 ### 8.4 VERIFY
@@ -340,7 +344,7 @@ PASS 和质量 FAIL 进入 `FINALIZE`；REVIEW 和 Harness ERROR 进入 `REVIEW`
 
 ## 9. Oracle 框架：32 个确定性 Leaf + 分层模型审计
 
-默认 Registry 顶层注册八个 Composite：
+默认 Registry 同时注册 legacy Composite 与 v8 pipeline Oracle：
 
 | Composite ID | 原子数 | 适用场景 |
 |---|---:|---|
@@ -352,6 +356,9 @@ PASS 和质量 FAIL 进入 `FINALIZE`；REVIEW 和 Harness ERROR 进入 `REVIEW`
 | `structured.model_audits` | 3 | v5 实验替代组；自适应内容 + 六维视觉 + 场景合规 |
 | `structured_dimensions.model_audits` | 8 | v6 历史实验；一次 VLM 响应投影六维，加内容与场景审计 |
 | `grounded_structured_dimensions.model_audits` | 8 | v7 实验；六个独立原子视觉调用，加内容与场景审计 |
+| `v8.atomic_observations` | scoped observations | v8 页、对象、页对、claim、requirement、asset、chart-series 事实层 |
+| `v8.visual.<criterion>` | 1/节点 | v8 六个 Flash→Advanced 同构念视觉节点 |
+| `v8.quality_reducers` | 8+ | v8 质量属性融合、硬门与场景 reducer |
 
 Supervisor 还可条件执行 `advanced.model_review`，其 3 个 Advanced 结果都是
 `DIAGNOSTIC`，避免对 Flash 分数二次计权。

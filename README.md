@@ -12,12 +12,11 @@ New maintainers should start with the Chinese [onboarding and handover guide](do
 - Fifteen intrinsic metrics plus scenario metrics with page/object/bbox evidence.
 - Deterministic `OBSERVE -> PLAN -> ACT -> VERIFY -> FINALIZE/REVIEW` supervisor.
 - PPT-PDMS aggregation, high-confidence hard multipliers, required/optional `NA`, and isolated runtime `ERROR`.
-- Strict vendor-neutral LLM/VLM contracts. The pre-research v3.1 profiles score every case with
-  `qwen3.7-flash`, conditionally audit uncertain cases with `qwen3.8-flash` in the Advanced role,
-  then route remaining uncertainty to a human. Historical v1 deterministic and v2 shadow
-  Profiles remain loadable; exact v3.0 `qwen3.7-plus` runs require the historical Git ref or an
-  explicitly reconstructed provider/Profile pair;
-  bit-identical replay also requires the corresponding historical Git SHA or container image.
+- Strict vendor-neutral LLM/VLM contracts. The default v8 profiles run deterministic scoped
+  observations first, then criterion-specific `qwen3.7-flash` audits and same-criterion
+  `qwen3.8-flash` escalation only when Flash is unresolved, uncertain, or conflicts with rules.
+  Historical v1-v7 Profiles remain explicitly loadable; bit-identical replay also requires the
+  corresponding historical Git SHA or container image.
 - Optional construct-aware aggregation fixes content/visual/delivery/handoff budgets and reports
   construct scores; it is exposed only through an unvalidated v4 candidate. Raster-only decks use
   rendered semantic content recovery instead of treating an empty object-tree text layer as zero.
@@ -30,7 +29,11 @@ New maintainers should start with the Chinese [onboarding and handover guide](do
   independent criterion calls over bounded, explicitly labelled page samples. It adds SlideAudit-
   derived defect codes, deterministic score caps, positive aesthetic anchors, Harness-owned
   observability, and a 5% VLM-internal render-integrity budget. It remains experimental and does
-  not replace v6 or the default v3 production path.
+  not replace the historical v6 contract.
+- The default v8 path stores complete object/page/pair/claim/requirement/asset observations in a
+  content-addressed audit artifact, reduces them with versioned lower-tail-aware policies, fuses
+  deterministic caps with model positive signals, and reports independent visual/layout/content/
+  full-deck training eligibility. No holistic LLM/VLM score enters the v8 formula.
 - Local CLI/runtime, optional FastAPI/Celery/PostgreSQL/S3 adapters, review UI source, Docker Compose, run export, and hash-chained audit logs.
 - Feedback/edit-diff ingestion, active-sampling priorities, and parameter proposals that require frozen/challenge/shadow validation plus two human approvals; v1 intentionally exposes no automatic production apply method.
 - Three-part research/development/evaluation audit pack and a generated read-only HTML report.

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Mapping, Sequence
+
 from ppt_eval.domain import DagNode, DagNodeKind, EvalProfile, EvaluationDag
 
 from .oracle import BaselinePptQualityOracle
@@ -20,6 +22,13 @@ class ProfileCompiler:
             kind=DagNodeKind.BASELINE,
             mandatory=True,
         )
+        configured_pipeline = profile.metadata.get("pipeline_nodes", ())
+        if configured_pipeline:
+            nodes = self._pipeline_nodes(configured_pipeline, baseline)
+            dag = EvaluationDag(nodes=(baseline, *nodes))
+            self.assert_invariants(dag)
+            return dag
+
         seen = set(self.BASELINE_ALIASES)
         scene_nodes: list[DagNode] = []
         for oracle_id in profile.enabled_oracle_ids:
@@ -39,6 +48,43 @@ class ProfileCompiler:
         self.assert_invariants(dag)
         return dag
 
+    @staticmethod
+    def _pipeline_nodes(
+        value: object,
+        baseline: DagNode,
+    ) -> tuple[DagNode, ...]:
+        if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+            raise ValueError("profile metadata.pipeline_nodes must be a sequence")
+        nodes: list[DagNode] = []
+        seen = {baseline.node_id}
+        for raw in value:
+            if not isinstance(raw, Mapping):
+                raise ValueError("each pipeline node must be a mapping")
+            node_id = str(raw.get("node_id") or "").strip()
+            oracle_id = str(raw.get("oracle_id") or "").strip()
+            if not node_id or not oracle_id:
+                raise ValueError("pipeline node_id and oracle_id must not be blank")
+            if node_id in seen:
+                raise ValueError(f"duplicate pipeline node_id {node_id!r}")
+            dependencies = tuple(
+                str(item).strip()
+                for item in raw.get("dependencies", ())
+                if str(item).strip()
+            )
+            if not dependencies:
+                dependencies = (baseline.node_id,)
+            nodes.append(
+                DagNode(
+                    node_id=node_id,
+                    oracle_id=oracle_id,
+                    dependencies=dependencies,
+                    kind=DagNodeKind(str(raw.get("kind") or "OBSERVE").upper()),
+                    mandatory=bool(raw.get("mandatory", False)),
+                )
+            )
+            seen.add(node_id)
+        return tuple(nodes)
+
     @classmethod
     def assert_invariants(cls, dag: EvaluationDag) -> None:
         baseline_nodes = [
@@ -51,8 +97,19 @@ class ProfileCompiler:
         baseline = baseline_nodes[0]
         if not baseline.mandatory or baseline.kind != DagNodeKind.BASELINE:
             raise ValueError("baseline PPT quality Oracle must be mandatory")
+        dependencies = {node.node_id: set(node.dependencies) for node in dag.nodes}
         for node in dag.nodes:
-            if node is not baseline and baseline.node_id not in node.dependencies:
+            if node is baseline:
+                continue
+            frontier = list(dependencies[node.node_id])
+            visited: set[str] = set()
+            while frontier:
+                dependency = frontier.pop()
+                if dependency in visited:
+                    continue
+                visited.add(dependency)
+                frontier.extend(dependencies.get(dependency, ()))
+            if baseline.node_id not in visited:
                 raise ValueError(
-                    f"scene node {node.node_id!r} must depend on the baseline node"
+                    f"pipeline node {node.node_id!r} must transitively depend on baseline"
                 )

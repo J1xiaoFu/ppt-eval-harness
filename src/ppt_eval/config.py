@@ -82,10 +82,14 @@ def profile_from_mapping(payload: Mapping[str, Any]) -> EvalProfile:
         base_weights=dict(payload.get("base_weights") or defaults.base_weights),
         scene_weights=dict(payload.get("scene_weights") or defaults.scene_weights),
         base_multiplier_metric_ids=tuple(
-            payload.get("base_multiplier_metric_ids") or DEFAULT_BASE_MULTIPLIERS
+            payload["base_multiplier_metric_ids"]
+            if "base_multiplier_metric_ids" in payload
+            else DEFAULT_BASE_MULTIPLIERS
         ),
         scene_multiplier_metric_ids=tuple(
-            payload.get("scene_multiplier_metric_ids") or DEFAULT_SCENE_MULTIPLIERS[scene]
+            payload["scene_multiplier_metric_ids"]
+            if "scene_multiplier_metric_ids" in payload
+            else DEFAULT_SCENE_MULTIPLIERS[scene]
         ),
         required_metric_ids=(
             tuple(str(item) for item in payload["required_metric_ids"])
@@ -136,6 +140,11 @@ def profile_from_mapping(payload: Mapping[str, Any]) -> EvalProfile:
         metadata={
             **dict(defaults.metadata),
             **dict(payload.get("metadata", {})),
+            **(
+                {"pipeline_nodes": tuple(payload.get("pipeline_nodes", ()))}
+                if "pipeline_nodes" in payload
+                else {}
+            ),
             "optional_oracles": tuple(payload.get("optional_oracles", ())),
             "optional_oracles_executed": major_version >= 2,
         },
@@ -148,10 +157,10 @@ def load_profile(path: str | Path) -> EvalProfile:
 
 def profile_path_for_scene(scene: SceneType, root: str | Path = "configs/profiles") -> Path:
     names = {
-        SceneType.TEXT_TO_PPT: "text_generation_v3.json",
-        SceneType.PROJECT_SUMMARY: "project_summary_v3.json",
-        SceneType.MULTIMODAL: "multimodal_generation_v3.json",
-        SceneType.READY_MADE: "finished_deck_v3.json",
+        SceneType.TEXT_TO_PPT: "text_generation_v8.json",
+        SceneType.PROJECT_SUMMARY: "project_summary_v8.json",
+        SceneType.MULTIMODAL: "multimodal_generation_v8.json",
+        SceneType.READY_MADE: "finished_deck_v8.json",
     }
     return Path(root) / names[scene]
 
