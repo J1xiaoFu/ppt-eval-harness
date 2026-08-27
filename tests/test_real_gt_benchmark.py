@@ -15,6 +15,7 @@ from scripts.benchmarks.evaluate_slides_align_sample import (
     STRUCTURED_VLM_DIMENSION_IDS,
     STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION,
     STRUCTURED_VLM_VISUAL_DIMENSIONS_PROMPT,
+    V8_RASTER_TEXT_MODEL_METRIC_IDS,
     atomic_model_routing_events,
     audit_case_payload,
     average_ranks,
@@ -563,7 +564,7 @@ def test_case_html_exposes_every_slide_and_evidence_page_jump() -> None:
             ]
         },
         "run_id": "run-test",
-        "profile_version": "8.2",
+        "profile_version": "8.3",
         "decision": "REVIEW",
         "coverage": "FULL",
         "base_score": 76.0,
@@ -874,3 +875,27 @@ def test_atomic_model_routing_events_exposes_cross_provider_attempts() -> None:
         "qwen3.8-flash:SCORED -> glm-5.3-flash:SCORED "
         "(FLASH_LOW_CONFIDENCE)"
     )
+
+
+def test_atomic_model_routing_events_includes_raster_text_observation_calls() -> None:
+    metric_id = V8_RASTER_TEXT_MODEL_METRIC_IDS[0]
+    results = {
+        metric_id: {
+            "metadata": {
+                "criterion_id": "raster_content_structure",
+                "routing_attempts": [
+                    {
+                        "tier": "FLASH",
+                        "configured_model": "qwen3.8-flash",
+                        "metric_status": "SCORED",
+                    }
+                ],
+            }
+        }
+    }
+
+    events = atomic_model_routing_events(results)
+
+    assert len(events) == 1
+    assert events[0]["stage"] == "raster_content_structure"
+    assert events[0]["route"] == "qwen3.8-flash:SCORED"

@@ -43,6 +43,7 @@ from .model_audits import (
     STRUCTURED_VLM_VISUAL_DIMENSIONS_PROMPT,
     V8_GROUNDED_VISUAL_CRITERION_IDS,
     V8_GROUNDED_VLM_CRITERION_PROMPTS,
+    V8_RASTER_TEXT_CRITERION_IDS,
     AdvancedLlmContentReviewOracle,
     AdvancedLlmScenarioReviewOracle,
     AdvancedModelReviewOracle,
@@ -86,6 +87,7 @@ from .v8_composites import (
     V8_VISUAL_CRITERION_IDS,
     V8AtomicObservationComposite,
     V8QualityReducerOracle,
+    V8RasterTextObservationOracle,
     V8TieredVisualCriterionOracle,
 )
 
@@ -146,6 +148,16 @@ def build_default_oracles(
                 source_access_policy=model_source_access_policy,
             )
             for criterion_id in V8_VISUAL_CRITERION_IDS
+        ),
+        *(
+            V8RasterTextObservationOracle(
+                criterion_id,
+                vlm_provider,
+                advanced_vlm_provider,
+                adapter,
+                source_access_policy=model_source_access_policy,
+            )
+            for criterion_id in V8_RASTER_TEXT_CRITERION_IDS
         ),
         V8QualityReducerOracle(),
     )
@@ -240,10 +252,12 @@ __all__ = [
     "VlmVisualQualityAuditOracle",
     "V8AtomicObservationComposite",
     "V8QualityReducerOracle",
+    "V8RasterTextObservationOracle",
     "V8TieredVisualCriterionOracle",
     "V8_VISUAL_CRITERION_IDS",
     "V8_GROUNDED_VISUAL_CRITERION_IDS",
     "V8_GROUNDED_VLM_CRITERION_PROMPTS",
+    "V8_RASTER_TEXT_CRITERION_IDS",
     "build_default_oracles",
     "build_default_registry",
 ]

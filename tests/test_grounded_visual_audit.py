@@ -16,7 +16,15 @@ from ppt_eval.adapters import (
 )
 from ppt_eval.application.oracle import EvaluationContext
 from ppt_eval.config import load_profile
-from ppt_eval.domain import EvalCase, MetricStatus, SceneType
+from ppt_eval.domain import (
+    AtomicObservation,
+    EvalCase,
+    EvaluationScope,
+    Evidence,
+    MetricStatus,
+    SceneType,
+    Severity,
+)
 from ppt_eval.infrastructure import to_primitive
 from ppt_eval.oracles import (
     GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
@@ -201,6 +209,82 @@ def test_grounded_atomic_oracle_aggregates_one_observation_per_sampled_page(
     assert composition.normalized_score == pytest.approx(0.82)
     assert cross_slide.metadata["sampled_pages"] == [1, 2, 3, 4, 5]
     assert cross_slide.metadata["observation_count"] == 1
+
+
+def test_contestable_gate_page_displaces_canonical_sample_for_isomorphic_vlm(
+    tmp_path,
+) -> None:
+    slides = tuple(
+        (
+            {
+                "kind": "text",
+                "text": f"Slide {page_number}",
+                "x": 600_000,
+                "y": 300_000,
+                "w": 8_000_000,
+                "h": 800_000,
+                "font_pt": 28,
+            },
+        )
+        for page_number in range(1, 27)
+    )
+    deck = build_pptx(tmp_path / "gate-risk-slide-21.pptx", slides=slides)
+    images = []
+    for page_number in range(1, 27):
+        image = tmp_path / f"slide-{page_number}.png"
+        image.write_bytes(PNG_1X1)
+        images.append(image)
+    candidate = AtomicObservation(
+        observation_id="obs-page-21-out-of-bounds",
+        oracle_id="v8.slide_geometry_integrity",
+        metric_id="slide_geometry_integrity",
+        scope=EvaluationScope.PAGE,
+        unit_key="page:21",
+        local_score=0.2,
+        raw_value=0.2,
+        confidence=0.95,
+        severity=Severity.CRITICAL,
+        critical=True,
+        key_unit=True,
+        evidence=(
+            Evidence(
+                evidence_id="page-21-out-of-bounds",
+                kind="out_of_bounds",
+                message="Page 21 geometry requires visual confirmation.",
+                page_number=21,
+            ),
+        ),
+    )
+    provider = GroundedFakeProvider()
+    context = EvaluationContext(
+        case=EvalCase(
+            case_id="gate-risk-slide-21",
+            scene=SceneType.READY_MADE,
+            pptx_path=str(deck),
+        ),
+        profile=load_profile("configs/profiles/finished_deck_v8.json"),
+        artifacts={"slide_images": tuple(images)},
+        memo={"ppt_eval.atomic_observations": [candidate]},
+    )
+
+    result = GroundedSingleCriterionVlmOracle(
+        "composition_layout",
+        provider,
+        PptxAdapter(backend="ooxml"),
+    ).evaluate(context)
+
+    assert result.metric_status == MetricStatus.SCORED
+    assert result.metadata["sampled_pages"] == [1, 9, 21, 26]
+    assert result.metadata["sampling_limit"] == 4
+    assert result.metadata["sampling_strategy"] == (
+        "contestable_gate_risk_role_and_exploration"
+    )
+    assert provider.requests[0].context["sampled_page_roles"] == {
+        "1": "COVER_OR_OPENING",
+        "9": "BODY",
+        "21": "BODY",
+        "26": "ENDING_OR_APPENDIX",
+    }
 
 
 def test_grounded_prompt_encodes_aesthetic_anti_bias_boundaries() -> None:

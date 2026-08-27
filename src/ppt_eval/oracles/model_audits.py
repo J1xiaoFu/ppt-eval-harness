@@ -59,6 +59,7 @@ STRUCTURED_VLM_VISUAL_ORACLE_VERSION = "1.0.0"
 STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION = "1.2.0"
 GROUNDED_STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION = "2.0.0"
 V8_AUTHORSHIP_VLM_ORACLE_VERSION = "2.1.0"
+V8_RASTER_TEXT_VLM_ORACLE_VERSION = "1.0.0"
 GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID = (
     "grounded_structured_dimensions.model_audits"
 )
@@ -106,9 +107,23 @@ V8_GROUNDED_VISUAL_CRITERION_IDS: tuple[str, ...] = (
     *STRUCTURED_VLM_VISUAL_CRITERION_IDS,
     "authorship_specificity",
 )
+V8_RASTER_TEXT_CRITERION_IDS: tuple[str, ...] = (
+    "raster_content_structure",
+    "raster_language_consistency",
+)
+V8_GROUNDED_ATOMIC_CRITERION_IDS: tuple[str, ...] = (
+    *V8_GROUNDED_VISUAL_CRITERION_IDS,
+    *V8_RASTER_TEXT_CRITERION_IDS,
+)
 _GROUNDED_DECK_LEVEL_CRITERION_IDS = frozenset(
     ("cross_slide_consistency", "authorship_specificity")
 )
+_CONTESTABLE_GATE_RULE_METRICS: Mapping[str, frozenset[str]] = {
+    "composition_layout": frozenset(("slide_geometry_integrity",)),
+    "typography_legibility": frozenset(("slide_typography_functional",)),
+    "color_contrast": frozenset(("slide_pixel_contrast",)),
+    "imagery_data_visualization": frozenset(("effective_image_resolution",)),
+}
 STRUCTURED_VLM_VISUAL_CRITERIA: tuple[tuple[str, float], ...] = (
     ("composition_layout", 0.25),
     ("typography_legibility", 0.20),
@@ -271,6 +286,24 @@ GROUNDED_VLM_DEFECT_CODES: Mapping[str, frozenset[str]] = {
             "weak_focal_claim_specificity",
         }
     ),
+    "raster_content_structure": frozenset(
+        {
+            "missing_semantic_content",
+            "weak_title_body_alignment",
+            "excessive_reading_load",
+            "incomplete_content_structure",
+            "generic_or_unspecific_content",
+            "garbled_visible_wording",
+        }
+    ),
+    "raster_language_consistency": frozenset(
+        {
+            "unintended_language_mixing",
+            "undeclared_bilingual_switching",
+            "garbled_or_unreadable_text",
+            "inconsistent_visible_terminology",
+        }
+    ),
 }
 
 GROUNDED_VLM_POSITIVE_SIGNALS: Mapping[str, frozenset[str]] = {
@@ -333,6 +366,23 @@ GROUNDED_VLM_POSITIVE_SIGNALS: Mapping[str, frozenset[str]] = {
             "purposeful_module_system",
         }
     ),
+    "raster_content_structure": frozenset(
+        {
+            "clear_title_anchor",
+            "coherent_title_body_structure",
+            "manageable_reading_load",
+            "complete_content_structure",
+            "specific_actionable_content",
+        }
+    ),
+    "raster_language_consistency": frozenset(
+        {
+            "consistent_primary_language",
+            "intentional_bilingual_policy",
+            "coherent_technical_terminology",
+            "readable_visible_wording",
+        }
+    ),
 }
 
 _GROUNDED_VLM_SEVERITIES = frozenset({"NONE", "MINOR", "MAJOR", "CRITICAL"})
@@ -380,6 +430,20 @@ _GROUNDED_VLM_CRITERION_RUBRICS: Mapping[str, str] = {
         "hierarchy, spacing, legibility, image relevance, or cross-page consistency themselves; those "
         "belong to other criteria. A defect must be systemic across at least two supplied pages."
     ),
+    "raster_content_structure": (
+        "Recover only visible semantic structure from a flattened slide: whether a clear title or "
+        "claim anchors the page, body content supports it, reading load is manageable, and the page "
+        "contains specific, coherent, usable information. Judge pixels and visible wording, not "
+        "aesthetics, factual correctness, editability, or source faithfulness. In the evidence message, "
+        "quote a short visible phrase when readable so a reviewer can verify the OCR interpretation."
+    ),
+    "raster_language_consistency": (
+        "Recover only the visible language policy of each flattened slide. Distinguish accidental "
+        "Chinese/English mixing, garbled wording, and inconsistent terminology from intentional "
+        "bilingual headings, brand names, product names, common technical acronyms, units, and proper "
+        "nouns. Do not judge layout, typography craft, factual correctness, or writing style. In the "
+        "evidence message, cite short visible wording that supports the language judgment."
+    ),
 }
 
 
@@ -401,6 +465,8 @@ def _grounded_single_criterion_prompt(criterion_id: str) -> PromptSpec:
         version=(
             V8_AUTHORSHIP_VLM_ORACLE_VERSION
             if criterion_id == "authorship_specificity"
+            else V8_RASTER_TEXT_VLM_ORACLE_VERSION
+            if criterion_id in V8_RASTER_TEXT_CRITERION_IDS
             else GROUNDED_STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION
         ),
         instructions=f"""You are a visual presentation auditor performing exactly one atomic
@@ -443,6 +509,10 @@ V8_GROUNDED_VLM_CRITERION_PROMPTS: Mapping[str, PromptSpec] = {
     "authorship_specificity": _grounded_single_criterion_prompt(
         "authorship_specificity"
     ),
+    **{
+        criterion_id: _grounded_single_criterion_prompt(criterion_id)
+        for criterion_id in V8_RASTER_TEXT_CRITERION_IDS
+    },
 }
 
 VLM_CONTENT_RECOVERY_PROMPT = PromptSpec(
@@ -884,7 +954,7 @@ class VlmVisualQualityAuditOracle(_ModelAuditOracle):
         )
         sampled_pages = [item.page_number for item in sampled_images]
         if presentation.slide_count > maximum_images:
-            sampling_strategy = self._sampling_strategy()
+            sampling_strategy = self._sampling_strategy(context)
         else:
             sampling_strategy = "all_pages"
         sampling_metadata = {
@@ -926,7 +996,8 @@ class VlmVisualQualityAuditOracle(_ModelAuditOracle):
         del context, presentation
         return _sample_rendered_images(images, maximum=maximum)
 
-    def _sampling_strategy(self) -> str:
+    def _sampling_strategy(self, context: object | None = None) -> str:
+        del context
         return "deterministic_even_coverage"
 
     def _visual_request_context(
@@ -1377,14 +1448,16 @@ class _GroundedSingleCriterionVlmOracle(StructuredVlmVisualAuditOracle):
         *,
         source_access_policy: ModelSourceAccessPolicy | None = None,
     ) -> None:
-        if criterion_id not in V8_GROUNDED_VISUAL_CRITERION_IDS:
+        if criterion_id not in V8_GROUNDED_ATOMIC_CRITERION_IDS:
             raise ValueError(f"unknown grounded visual criterion {criterion_id!r}")
         self.criterion_id = criterion_id
         self.oracle_id = f"grounded_vlm_{criterion_id}_audit_oracle"
         self.metric_id = f"structured_vlm_{criterion_id}"
         self.prompt = V8_GROUNDED_VLM_CRITERION_PROMPTS[criterion_id]
         self.version = self.prompt.version
-        if criterion_id in _GROUNDED_DECK_LEVEL_CRITERION_IDS:
+        if criterion_id in _GROUNDED_DECK_LEVEL_CRITERION_IDS or criterion_id == (
+            "raster_language_consistency"
+        ):
             self.maximum_images_per_request = 8
         super().__init__(
             provider,
@@ -1426,6 +1499,14 @@ class _GroundedSingleCriterionVlmOracle(StructuredVlmVisualAuditOracle):
         *,
         maximum: int,
     ) -> tuple[ModelImageInput, ...]:
+        gate_risk = self._contestable_gate_risk(context)
+        if gate_risk:
+            return self._sample_contestable_gate_images(
+                presentation,
+                images,
+                maximum=maximum,
+                gate_risk=gate_risk,
+            )
         if self.criterion_id != "authorship_specificity":
             return super()._sample_images(
                 context,
@@ -1509,10 +1590,105 @@ class _GroundedSingleCriterionVlmOracle(StructuredVlmVisualAuditOracle):
             add(page_number)
         return tuple(by_page[page_number] for page_number in selected)
 
-    def _sampling_strategy(self) -> str:
+    def _contestable_gate_risk(
+        self,
+        context: object,
+    ) -> tuple[tuple[int, AtomicObservation], ...]:
+        """Return page-local hard-gate proposals owned by this VLM criterion.
+
+        Deterministic rules run before the model-audit stage in v8.  Their
+        MAJOR/CRITICAL observations are therefore the best pages on which to
+        spend the bounded visual budget.  Legacy profiles have no atomic
+        observation memo and retain canonical sampling unchanged.
+        """
+
+        owned_metrics = _CONTESTABLE_GATE_RULE_METRICS.get(self.criterion_id)
+        if not owned_metrics:
+            return ()
+        observations = getattr(context, "memo", {}).get(
+            "ppt_eval.atomic_observations", ()
+        )
+        risk: list[tuple[int, AtomicObservation]] = []
+        for item in observations:
+            if (
+                not isinstance(item, AtomicObservation)
+                or item.metric_id not in owned_metrics
+                or item.metric_status != MetricStatus.SCORED
+                or item.severity not in (Severity.MAJOR, Severity.CRITICAL)
+            ):
+                continue
+            page_number = _atomic_observation_page_number(item)
+            if page_number is not None:
+                risk.append((page_number, item))
+        return tuple(
+            sorted(
+                risk,
+                key=lambda pair: (
+                    0 if pair[1].severity == Severity.CRITICAL else 1,
+                    not pair[1].critical,
+                    not pair[1].key_unit,
+                    pair[1].local_score if pair[1].local_score is not None else 1.0,
+                    -pair[1].importance,
+                    pair[0],
+                    pair[1].observation_id,
+                ),
+            )
+        )
+
+    @staticmethod
+    def _sample_contestable_gate_images(
+        presentation: ParsedPresentation,
+        images: Sequence[ModelImageInput],
+        *,
+        maximum: int,
+        gate_risk: Sequence[tuple[int, AtomicObservation]],
+    ) -> tuple[ModelImageInput, ...]:
+        """Reserve pixels for gate evidence without abandoning deck coverage.
+
+        At most two highest-risk pages displace canonical samples.  Opening and
+        ending pages remain visible, and any remaining slot is filled from the
+        deterministic canonical exploration sample.  Four images therefore
+        still cover roles while guaranteeing the concrete gate page that
+        triggered the audit is actually inspectable.
+        """
+
+        if maximum < 1:
+            raise ValueError("maximum VLM image count must be positive")
+        ordered = tuple(sorted(images, key=lambda item: item.page_number))
+        if len(ordered) <= maximum:
+            return ordered
+        by_page = {item.page_number: item for item in ordered}
+        selected: set[int] = set()
+        risk_limit = max(1, maximum - 2) if maximum > 1 else 1
+        for page_number, _ in gate_risk:
+            if page_number in by_page:
+                selected.add(page_number)
+            if len(selected) >= risk_limit:
+                break
+
+        # Preserve opening/ending role coverage when the image budget permits.
+        for page_number in (1, presentation.slide_count):
+            if page_number in by_page and len(selected) < maximum:
+                selected.add(page_number)
+        # Canonical pages provide a stable exploration/control sample.
+        for page_number in _canonical_sample_pages(
+            presentation.slide_count,
+            maximum=maximum,
+        ):
+            if page_number in by_page and len(selected) < maximum:
+                selected.add(page_number)
+        for page_number in sorted(by_page):
+            if len(selected) >= maximum:
+                break
+            selected.add(page_number)
+        return tuple(by_page[page_number] for page_number in sorted(selected))
+
+    def _sampling_strategy(self, context: object | None = None) -> str:
         if self.criterion_id == "authorship_specificity":
             return "authorship_risk_role_and_exploration"
-        return super()._sampling_strategy()
+        if context is not None and self._contestable_gate_risk(context):
+            return "contestable_gate_risk_role_and_exploration"
+        return super()._sampling_strategy(context)
 
     def _visual_request_context(
         self,
@@ -2348,6 +2524,26 @@ def _sample_rendered_images(
     return tuple(ordered[index] for index in indices)
 
 
+def _atomic_observation_page_number(
+    observation: AtomicObservation,
+) -> int | None:
+    evidence_pages = sorted(
+        {
+            item.page_number
+            for item in observation.evidence
+            if item.page_number is not None
+        }
+    )
+    if evidence_pages:
+        return evidence_pages[0]
+    for component in observation.unit_key.split(":"):
+        if component.isdigit():
+            page_number = int(component)
+            if page_number >= 1:
+                return page_number
+    return None
+
+
 def _canonical_sample_pages(total_pages: int, *, maximum: int) -> tuple[int, ...]:
     return tuple(
         index + 1
@@ -2682,7 +2878,7 @@ def _grounded_visual_dimension_assessments(
 
     expected = frozenset(expected_criterion_ids)
     if not expected or any(
-        criterion_id not in V8_GROUNDED_VISUAL_CRITERION_IDS
+        criterion_id not in V8_GROUNDED_ATOMIC_CRITERION_IDS
         for criterion_id in expected
     ):
         raise ValueError("expected grounded criterion IDs must be known and non-empty")
@@ -3059,6 +3255,7 @@ __all__ = [
     "GROUNDED_STRUCTURED_DIMENSIONS_VLM_ORACLE_ID",
     "GROUNDED_STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION",
     "V8_AUTHORSHIP_VLM_ORACLE_VERSION",
+    "V8_RASTER_TEXT_VLM_ORACLE_VERSION",
     "GROUNDED_VLM_CRITERION_PROMPTS",
     "V8_GROUNDED_VLM_CRITERION_PROMPTS",
     "GROUNDED_VLM_DEFECT_CODES",
@@ -3084,6 +3281,8 @@ __all__ = [
     "STRUCTURED_VLM_VISUAL_CRITERIA",
     "STRUCTURED_VLM_VISUAL_CRITERION_IDS",
     "V8_GROUNDED_VISUAL_CRITERION_IDS",
+    "V8_GROUNDED_ATOMIC_CRITERION_IDS",
+    "V8_RASTER_TEXT_CRITERION_IDS",
     "STRUCTURED_VLM_VISUAL_DIMENSIONS_PROMPT",
     "STRUCTURED_VLM_VISUAL_DIMENSION_METRICS",
     "STRUCTURED_VLM_VISUAL_ORACLE_VERSION",

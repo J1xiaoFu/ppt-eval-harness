@@ -14,6 +14,7 @@ from ppt_eval.application.oracle import (
     EvaluationContext,
     MetricDefinition,
     OracleDescriptor,
+    OracleExecutionOutput,
 )
 from ppt_eval.domain import (
     AtomicObservation,
@@ -37,6 +38,7 @@ from ppt_eval.scoring import (
 from .base import clamp, evidence, load_presentation, normalize_text, read_materials, text_tokens
 from .model_audits import (
     V8_GROUNDED_VISUAL_CRITERION_IDS,
+    V8_RASTER_TEXT_CRITERION_IDS,
     GroundedSingleCriterionVlmOracle,
 )
 from .scenarios import (
@@ -53,8 +55,12 @@ from .v8_atomic import (
 
 V8_OBSERVATION_COMPOSITE_ID = "v8.atomic_observations"
 V8_REDUCER_ORACLE_ID = "v8.quality_reducers"
-V8_QUALITY_VERSION = "8.2.0"
+V8_QUALITY_VERSION = "8.3.0"
 V8_VISUAL_CRITERION_IDS = V8_GROUNDED_VISUAL_CRITERION_IDS
+V8_RASTER_TEXT_OBSERVATION_METRICS: Mapping[str, str] = {
+    "raster_content_structure": "raster_content_structure_vlm",
+    "raster_language_consistency": "raster_language_consistency_vlm",
+}
 
 V8_BASE_ADDITIVE_METRICS = (
     "content_structure",
@@ -622,6 +628,276 @@ class V8TieredVisualCriterionOracle:
         return model_high_rule_low or model_low_rule_high
 
 
+class V8RasterTextObservationOracle:
+    """Recover page-scoped text semantics only for fully flattened decks.
+
+    The model result is diagnostic provenance.  Score-affecting data enters the
+    reducer exclusively as page-level ``AtomicObservation`` objects so the
+    complete evidence, routing, page sample, and missingness remain auditable.
+    Editable decks do not spend a model call and retain their deterministic
+    content/language owners.
+    """
+
+    version = V8_QUALITY_VERSION
+
+    def __init__(
+        self,
+        criterion_id: str,
+        flash_provider: ModelAuditProvider | None,
+        advanced_provider: ModelAuditProvider | None,
+        adapter: PptxAdapter | None = None,
+        *,
+        source_access_policy: Any = None,
+    ) -> None:
+        if criterion_id not in V8_RASTER_TEXT_CRITERION_IDS:
+            raise ValueError(f"unknown v8 raster text criterion {criterion_id!r}")
+        self.criterion_id = criterion_id
+        self.oracle_id = f"v8.raster_text.{criterion_id}"
+        self.metric_id = f"structured_vlm_{criterion_id}"
+        self.observation_metric_id = V8_RASTER_TEXT_OBSERVATION_METRICS[
+            criterion_id
+        ]
+        self.adapter = adapter or PptxAdapter()
+        self._flash = GroundedSingleCriterionVlmOracle(
+            criterion_id,
+            flash_provider,
+            self.adapter,
+            source_access_policy=source_access_policy,
+        )
+        self._advanced = (
+            GroundedSingleCriterionVlmOracle(
+                criterion_id,
+                advanced_provider,
+                self.adapter,
+                source_access_policy=source_access_policy,
+            )
+            if advanced_provider is not None
+            else None
+        )
+
+    def describe(self) -> OracleDescriptor:
+        return OracleDescriptor(
+            oracle_id=self.oracle_id,
+            name=self.__class__.__name__,
+            version=self.version,
+            metrics=(MetricDefinition(self.metric_id, ScoreRole.DIAGNOSTIC),),
+            deterministic=False,
+            description=(
+                "Raster-only VLM/OCR recovery emitted as page-scoped atomic observations."
+            ),
+        )
+
+    def supports(self, context: EvaluationContext) -> bool:
+        return self._flash.supports(context)
+
+    def evaluate(self, context: EvaluationContext) -> OracleExecutionOutput:
+        if not self._is_fully_rasterized(context):
+            unavailable = self._flash.not_applicable(
+                "Raster text recovery is unnecessary for a deck with editable semantic content.",
+                code="RASTER_TEXT_RECOVERY_NOT_REQUIRED",
+            )
+            result = replace(
+                unavailable,
+                oracle_id=self.oracle_id,
+                metric_id=self.metric_id,
+                score_role=ScoreRole.DIAGNOSTIC,
+                version=self.version,
+                metadata={
+                    **dict(unavailable.metadata),
+                    "criterion_id": self.criterion_id,
+                    "raster_only": False,
+                    "score_affecting": False,
+                },
+            )
+            return OracleExecutionOutput(results=(result,))
+
+        flash = self._flash.evaluate(context)
+        attempted: list[
+            tuple[str, GroundedSingleCriterionVlmOracle, OracleResult]
+        ] = [("FLASH", self._flash, flash)]
+        reason: str | None = None
+        if flash.metric_status != MetricStatus.SCORED:
+            reason = "FLASH_UNRESOLVED"
+        elif flash.confidence < 0.60:
+            reason = "FLASH_LOW_CONFIDENCE"
+
+        chosen = flash
+        tier = "FLASH"
+        selected_attempt_tier = "FLASH"
+        if reason is not None and self._advanced is not None:
+            advanced = self._advanced.evaluate(context)
+            attempted.append(("ADVANCED", self._advanced, advanced))
+            if (
+                advanced.metric_status == MetricStatus.SCORED
+                and advanced.confidence >= 0.60
+            ):
+                chosen = advanced
+                tier = "ADVANCED"
+                selected_attempt_tier = "ADVANCED"
+            else:
+                chosen = replace(
+                    flash,
+                    metric_status=MetricStatus.NA,
+                    raw_value=None,
+                    normalized_score=None,
+                    severity=Severity.INFO,
+                )
+                tier = "FLASH_UNRESOLVED_ADVANCED_FAILED"
+        elif reason is not None:
+            chosen = replace(
+                flash,
+                metric_status=MetricStatus.NA,
+                raw_value=None,
+                normalized_score=None,
+                severity=Severity.INFO,
+            )
+            tier = "FLASH_UNRESOLVED_ADVANCED_UNCONFIGURED"
+
+        routing_attempts = [
+            _model_routing_attempt(
+                attempt_tier,
+                oracle,
+                result,
+                selected=attempt_tier == selected_attempt_tier,
+            )
+            for attempt_tier, oracle, result in attempted
+        ]
+        routed = replace(
+            chosen,
+            oracle_id=self.oracle_id,
+            metric_id=self.metric_id,
+            score_role=ScoreRole.DIAGNOSTIC,
+            version=self.version,
+            duration_ms=sum(item.duration_ms for _, _, item in attempted),
+            cost=sum(item.cost for _, _, item in attempted),
+            metadata={
+                **dict(chosen.metadata),
+                "routing_mode": "RASTER_ATOMIC_FLASH_ADVANCED_HUMAN",
+                "selected_tier": tier,
+                "escalation_reason": reason,
+                "criterion_id": self.criterion_id,
+                "routing_attempts": routing_attempts,
+                "routing_usage": _model_routing_usage(routing_attempts),
+                "raster_only": True,
+                "score_affecting": False,
+                "observation_metric_id": self.observation_metric_id,
+            },
+        )
+        observations = self._to_observations(context, routed)
+        return OracleExecutionOutput(results=(routed,), observations=observations)
+
+    def _is_fully_rasterized(self, context: EvaluationContext) -> bool:
+        presentation = load_presentation(context, self.adapter)
+        raster_pages = {
+            int(item.unit_key.split(":", 1)[1])
+            for item in context.memo.get("ppt_eval.atomic_observations", ())
+            if isinstance(item, AtomicObservation)
+            and item.metric_id == "slide_editability"
+            and item.metadata.get("raster_only") is True
+            and item.unit_key.startswith("page:")
+        }
+        return raster_pages == set(range(1, presentation.slide_count + 1))
+
+    def _to_observations(
+        self,
+        context: EvaluationContext,
+        result: OracleResult,
+    ) -> tuple[AtomicObservation, ...]:
+        if (
+            result.metric_status != MetricStatus.SCORED
+            or result.normalized_score is None
+        ):
+            return ()
+        raw_page_scores = result.metadata.get("page_scores")
+        if not isinstance(raw_page_scores, Mapping):
+            return ()
+        presentation = load_presentation(context, self.adapter)
+        evidence_by_page = {
+            int(item.page_number): item
+            for item in result.evidence
+            if item.page_number is not None
+        }
+        roles = {
+            int(item.unit_key.split(":", 1)[1]): item
+            for item in context.memo.get("ppt_eval.atomic_observations", ())
+            if isinstance(item, AtomicObservation)
+            and item.metric_id == "slide_role"
+            and item.unit_key.startswith("page:")
+        }
+        valid_scores: list[tuple[int, float]] = []
+        for raw_page, raw_score in raw_page_scores.items():
+            if isinstance(raw_score, bool) or not isinstance(raw_score, (int, float)):
+                continue
+            try:
+                page_number = int(raw_page)
+            except (TypeError, ValueError):
+                continue
+            if page_number not in evidence_by_page or not 0.0 <= float(raw_score) <= 1.0:
+                continue
+            valid_scores.append((page_number, float(raw_score)))
+        if not valid_scores:
+            return ()
+        allocated_cost = result.cost / len(valid_scores)
+        observations: list[AtomicObservation] = []
+        for page_number, page_score in sorted(valid_scores):
+            finding = evidence_by_page[page_number]
+            payload = finding.payload
+            raw_confidence = payload.get("criterion_confidence", result.confidence)
+            confidence = (
+                float(raw_confidence)
+                if not isinstance(raw_confidence, bool)
+                and isinstance(raw_confidence, (int, float))
+                and 0.0 <= float(raw_confidence) <= 1.0
+                else result.confidence
+            )
+            raw_severity = str(payload.get("severity") or "NONE")
+            severity = {
+                "CRITICAL": Severity.CRITICAL,
+                "MAJOR": Severity.MAJOR,
+                "MINOR": Severity.MINOR,
+            }.get(raw_severity, Severity.INFO)
+            role = roles.get(page_number)
+            unit_key = f"page:{page_number}"
+            digest = hashlib.sha256(
+                (
+                    f"{self.oracle_id}|{self.observation_metric_id}|{unit_key}|"
+                    f"{presentation.source_sha256}|{result.metadata.get('response_fingerprint')}"
+                ).encode()
+            ).hexdigest()[:20]
+            observations.append(
+                AtomicObservation(
+                    observation_id=f"obs-{digest}",
+                    oracle_id=self.oracle_id,
+                    metric_id=self.observation_metric_id,
+                    scope=EvaluationScope.PAGE,
+                    unit_key=unit_key,
+                    execution_status=ExecutionStatus.SUCCESS,
+                    metric_status=MetricStatus.SCORED,
+                    raw_value=page_score,
+                    local_score=page_score,
+                    confidence=confidence,
+                    severity=severity,
+                    importance=role.importance if role is not None else 1.0,
+                    key_unit=role.key_unit if role is not None else False,
+                    critical=False,
+                    evidence=(finding,),
+                    version=self.version,
+                    cost=0.0,
+                    metadata={
+                        "criterion_id": self.criterion_id,
+                        "source_model_metric_id": self.metric_id,
+                        "selected_tier": result.metadata.get("selected_tier"),
+                        "sampled_pages": list(result.metadata.get("sampled_pages", ())),
+                        "model_input_mode": "RASTER_RENDERED_TEXT_RECOVERY",
+                        "primary_owner": self.observation_metric_id,
+                        "allocated_model_cost": allocated_cost,
+                        "cost_accounted_by_result": True,
+                    },
+                )
+            )
+        return tuple(observations)
+
+
 def _model_routing_attempt(
     tier: str,
     oracle: GroundedSingleCriterionVlmOracle,
@@ -806,6 +1082,32 @@ class V8QualityReducerOracle:
             "language_consistency",
             ScoreRole.BASE_ADDITIVE,
         )
+        content = self._prefer_raster_recovery(
+            content,
+            self._reduce(
+                batch,
+                ("raster_content_structure_vlm",),
+                EvaluationScope.PAGE,
+                PAGE_QUALITY,
+                "raster_content_structure_recovery",
+                ScoreRole.DIAGNOSTIC,
+                required=False,
+            ),
+            output_metric_id="content_structure",
+        )
+        language = self._prefer_raster_recovery(
+            language,
+            self._reduce(
+                batch,
+                ("raster_language_consistency_vlm",),
+                EvaluationScope.PAGE,
+                IMPORTANCE_COVERAGE,
+                "raster_language_consistency_recovery",
+                ScoreRole.DIAGNOSTIC,
+                required=False,
+            ),
+            output_metric_id="language_consistency",
+        )
         composition_rule = self._reduce(
             batch,
             ("slide_geometry_integrity",),
@@ -962,6 +1264,53 @@ class V8QualityReducerOracle:
                 "rule_score": rule_score,
                 "deterministic_cap": cap,
                 "source_reducer": rule_result.metric_id,
+            },
+        )
+
+    def _prefer_raster_recovery(
+        self,
+        deterministic: OracleResult,
+        recovery: OracleResult,
+        *,
+        output_metric_id: str,
+    ) -> OracleResult:
+        """Use model pixels only when the deterministic owner abstained.
+
+        The two sensors never average or penalize the same construct twice.
+        A successful recovery becomes the sole score owner; otherwise the
+        original deterministic N/A and its missingness lineage are preserved.
+        """
+
+        if deterministic.metric_status != MetricStatus.NA:
+            return deterministic
+        if (
+            recovery.metric_status != MetricStatus.SCORED
+            or recovery.normalized_score is None
+        ):
+            return replace(
+                deterministic,
+                metadata={
+                    **dict(deterministic.metadata),
+                    "raster_recovery_attempted": True,
+                    "raster_recovery_status": recovery.metric_status.value,
+                    "raster_recovery_metric_id": recovery.metric_id,
+                },
+            )
+        score = recovery.normalized_score
+        return replace(
+            recovery,
+            metric_id=output_metric_id,
+            score_role=ScoreRole.BASE_ADDITIVE,
+            severity=Severity.INFO if score >= 0.70 else Severity.MINOR,
+            metadata={
+                **dict(recovery.metadata),
+                "fusion_mode": "RASTER_VLM_ATOMIC_FALLBACK",
+                "primary_owner": output_metric_id,
+                "deterministic_metric_status": deterministic.metric_status.value,
+                "deterministic_observability": deterministic.metadata.get(
+                    "observability"
+                ),
+                "no_double_score": True,
             },
         )
 

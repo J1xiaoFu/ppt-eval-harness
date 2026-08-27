@@ -7,12 +7,22 @@
 | Audit schema | 1.0 | 同主版本向后兼容；未知字段显式处理 |
 | Eval API | v1 | 新字段可选；删除/改义升 v2 |
 | Oracle protocol | 1.0 result / v8 AtomicObservation | 原子观察与Reducer结果分离；legacy结果继续兼容 |
-| PPT-PDMS Profile | v8.2 默认 / v7 原子视觉 / v6 六维视觉 / v5 汇总视觉 / v4.1 construct / v3.1及更早历史 | 新行为提升 Profile/Oracle 版本；完整历史回放同时固定 Git SHA |
+| PPT-PDMS Profile | v8.3 默认 / v8.2 authorship+language / v7 原子视觉 / v6 六维视觉 / v5 汇总视觉 / v4.1 construct / v3.1及更早历史 | 新行为提升 Profile/Oracle 版本；完整历史回放同时固定 Git SHA |
 | Rubric | rubric-v1 | 报告携带版本 |
 | Dataset | local-synthetic-v1 / external starter manifests v1 | 每次切分固定 source revision、逐文件 hash、许可和用途分区 |
 | Runnable package | 0.1.0 | 领域契约同主版本兼容；行为变化发布新 Profile/Oracle 版本 |
 
 ## Changelog
+
+### 2026-08-28
+
+- v8.3 将可争议硬门的 MAJOR/CRITICAL 候选页强制纳入同构念 VLM 样本，保留封面、结尾和
+  canonical 探索页；候选页已被观察后才能确认或否决，未观察不再被误作审计完成。
+- 新增仅对全栅格 deck 生效的 `raster_content_structure` 与
+  `raster_language_consistency` 页级 VLM/OCR observations。Reducer 仅在原规则 N/A 时接管，
+  可编辑 deck 不调用，模型费用只在诊断结果中计一次。
+- 修正训练准入优先级：已知 `<60` 分先 REJECT，`content_evidence:missing` 不再把明确低分
+  提升为 REVIEW。
 
 ### 2026-08-27
 

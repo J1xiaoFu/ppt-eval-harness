@@ -36,7 +36,10 @@ New maintainers should start with the Chinese [onboarding and handover guide](do
   deterministic caps with model positive signals, and reports independent visual/layout/content/
   full-deck training eligibility. v8.2 adds an independently owned language-consistency metric and
   a seventh, cross-page authorship-specificity VLM audit for systemic card/icon/template formulaicity;
-  the authorship construct still enters the formula only once. No holistic LLM/VLM score enters it.
+  the authorship construct still enters the formula only once. v8.3 makes contestable hard-gate
+  pages mandatory VLM samples, fixes low-score training rejection precedence, and adds two
+  raster-only page-text observation calls that recover content structure and language without
+  double-scoring editable decks. No holistic LLM/VLM score enters it.
 - Local CLI/runtime, optional FastAPI/Celery/PostgreSQL/S3 adapters, review UI source, Docker Compose, run export, and hash-chained audit logs.
 - Feedback/edit-diff ingestion, active-sampling priorities, and parameter proposals that require frozen/challenge/shadow validation plus two human approvals; v1 intentionally exposes no automatic production apply method.
 - Three-part research/development/evaluation audit pack and a generated read-only HTML report.

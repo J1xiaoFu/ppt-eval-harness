@@ -61,6 +61,12 @@ criterion。七个 v8 criterion 都是独立 DAG 节点，以 `qwen3.8-flash` �
 若厂商 usage 不含货币费用，attempt 标记 `cost_known=false`；数值 `0.0` 不解释为免费，
 也不能在尚无版本化价格表时宣称成本预算已经覆盖该调用。
 
+v8.3 新增两个只在所有页面均被判为 raster-only 时运行的 observation-only 节点：
+`raster_content_structure` 最多审计 4 页，`raster_language_consistency` 最多审计 8 页。
+它们输出页级 `AtomicObservation`、短可见文字证据、独立路由和 usage；Reducer 仅在原
+deterministic owner 为 N/A 时采用该结果，不与规则平均，也不形成第二个公式入口。可编辑
+deck 会返回不计分 N/A 且不发起这两次模型调用。
+
 `language_consistency` 是中英内部混用/部分本地化的唯一 owner；明确请求语言不符合仍由
 scenario instruction 负责。专业缩写和声明的系统性双语不扣分。
 
@@ -81,12 +87,15 @@ VLM 提供语义判断，二者只融合为一个 12% 公式入口。极简、�
 
 训练准入只消费 gate 的 `CONFIRMED` verdict，不再直接读取原始 CRITICAL observation；
 contestable gate 为 UNRESOLVED 时相关 run 进入 REVIEW，而不是由规则直接 REJECT。
+从 v8.3 起，已知分数低于 60 的轨先 REJECT，再处理 content evidence missing；证据缺失
+不能把一个已知低分从 REJECT 提升为 REVIEW。
 
 训练准入与用户侧 PASS/REVIEW/FAIL 是不同合同，不能互相替代。
 
 ## 已知边界
 
 当前已提供 rendered text-region 对比度和 embedded/display pixel ratio 的确定性代理；真实
-OCR 文本裁切、语义裁切和复杂图像含义仍主要依赖 VLM/renderer evidence。v8 是
+OCR 文本裁切、语义裁切和复杂图像含义仍主要依赖 VLM/renderer evidence。全栅格 deck
+已有抽样式 VLM/OCR 语义恢复，但它不等同于逐页全文转写。v8 是
 预研默认，不代表已完成人类金标校准。现有真实切片只能用于合同与排序 sanity check，不能
 反向拟合本方法中的权重和阈值。

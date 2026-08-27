@@ -64,6 +64,12 @@ v8 已成为四场景默认路径。v8.2 保留历史六个视觉构念，并新
 `visual_system_sequence` 由确定性 Reducer 生成。规则提供缺陷 cap，模型提供正向视觉信号，
 两者不作为两个独立构念重复计权。
 
+v8.3 在上述七个视觉节点之外新增两个 raster-only 文字观察节点。它们仍使用相同
+Qwen3.8 → GLM-5.3 同构念路由，但只产生 page-scoped observations；只有 deterministic
+content/language owner 因无可提取文本而 N/A 时，Reducer 才采用这些观察。普通可编辑
+deck 不调用它们。可争议硬门的 MAJOR/CRITICAL 候选页也会优先占用对应视觉 criterion
+的四页预算，避免用未看过风险页的 VLM 结果裁决规则候选。
+
 authorship 节点只判断跨页机械卡片化、图标仪式、模板轮廓重复、公式化文案和缺少特定主张，
 不得推断生成来源，也不得重判 composition、legibility、image relevance 或视觉系统一致性。
 规则与 VLM 只融合为 `authorship_specificity_v2` 一个公式项；旧字段保留为不计分诊断别名。

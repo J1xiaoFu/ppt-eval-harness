@@ -1,6 +1,6 @@
 {
   "profile_id": "text-generation-v8",
-  "version": "8.2",
+  "version": "8.3",
   "scenario": "TEXT_GENERATION",
   "lambda_base": 0.55,
   "base_multiplier_metric_ids": ["file_deliverability", "critical_content_visibility", "internal_data_consistency", "v8_functional_integrity"],
@@ -49,7 +49,9 @@
     {"node_id": "audit:v8-system", "oracle_id": "v8.visual.cross_slide_consistency", "kind": "AUDIT", "dependencies": ["observe:v8"]},
     {"node_id": "audit:v8-render", "oracle_id": "v8.visual.render_integrity", "kind": "AUDIT", "dependencies": ["observe:v8"]},
     {"node_id": "audit:v8-authorship", "oracle_id": "v8.visual.authorship_specificity", "kind": "AUDIT", "dependencies": ["observe:v8"]},
-    {"node_id": "reduce:v8", "oracle_id": "v8.quality_reducers", "kind": "REDUCE", "dependencies": ["audit:v8-composition", "audit:v8-typography", "audit:v8-color", "audit:v8-imagery", "audit:v8-system", "audit:v8-render", "audit:v8-authorship"]}
+    {"node_id": "audit:v8-raster-content", "oracle_id": "v8.raster_text.raster_content_structure", "kind": "AUDIT", "dependencies": ["observe:v8"]},
+    {"node_id": "audit:v8-raster-language", "oracle_id": "v8.raster_text.raster_language_consistency", "kind": "AUDIT", "dependencies": ["observe:v8"]},
+    {"node_id": "reduce:v8", "oracle_id": "v8.quality_reducers", "kind": "REDUCE", "dependencies": ["audit:v8-composition", "audit:v8-typography", "audit:v8-color", "audit:v8-imagery", "audit:v8-system", "audit:v8-render", "audit:v8-authorship", "audit:v8-raster-content", "audit:v8-raster-language"]}
   ],
   "metadata": {
     "lifecycle": "PRE_RESEARCH",

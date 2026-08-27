@@ -31,7 +31,7 @@ def test_v8_is_default_and_emits_atomic_training_contract(tmp_path: Path) -> Non
     )
 
     assert profile.profile_id == "finished-deck-v8"
-    assert profile.version == "8.2"
+    assert profile.version == "8.3"
     assert len(provider.requests) == 6
     metric_ids = {item["metric_id"] for item in report["results"]}
     assert {
@@ -142,4 +142,69 @@ def test_v8_cross_provider_fallback_persists_complete_lineage(tmp_path: Path) ->
     )
     assert report["manifest"]["cost"] >= 0.028
     assert report["training_eligibility"]["critical_issue_codes"] == []
+    assert runtime.audit_log.verify() == (True, None)
+
+
+def test_v8_raster_deck_recovers_required_text_metrics_as_atomic_observations(
+    tmp_path: Path,
+) -> None:
+    deck = build_pptx(
+        tmp_path / "raster-recovery.pptx",
+        tuple(
+            (
+                {
+                    "kind": "image",
+                    "x": 0,
+                    "y": 0,
+                    "w": 12_192_000,
+                    "h": 6_858_000,
+                },
+            )
+            for _ in range(2)
+        ),
+    )
+    images = []
+    for page_number in (1, 2):
+        image = tmp_path / f"raster-render-{page_number}.png"
+        image.write_bytes(PNG_1X1)
+        images.append(image)
+    provider = GroundedFakeProvider()
+    fallback = GroundedFakeProvider()
+    runtime = LocalEvaluationRuntime(
+        tmp_path / "raster-var",
+        vlm_provider=provider,
+        advanced_vlm_provider=fallback,
+    )
+
+    report = runtime.evaluate(
+        EvalCase(
+            case_id="raster-recovery",
+            scene=SceneType.READY_MADE,
+            pptx_path=str(deck),
+        ),
+        default_profile(SceneType.READY_MADE),
+        artifacts={"slide_images": tuple(images)},
+    )
+
+    assert len(provider.requests) == 9
+    assert fallback.requests
+    indexed = {item["metric_id"]: item for item in report["results"]}
+    for metric_id in ("content_structure", "language_consistency"):
+        assert indexed[metric_id]["metric_status"] == "SCORED"
+        assert indexed[metric_id]["normalized_score"] == 0.82
+        assert indexed[metric_id]["metadata"]["fusion_mode"] == (
+            "RASTER_VLM_ATOMIC_FALLBACK"
+        )
+    assert report["coverage"] == "FULL"
+    assert {
+        "raster_content_structure_vlm",
+        "raster_language_consistency_vlm",
+    } <= set(report["observation_summary"]["metric_ids"])
+    assert report["manifest"]["cost"] == 0.004 * (
+        len(provider.requests) + len(fallback.requests)
+    )
+    assert (
+        "structured_vlm_raster_content_structure"
+        in report["manifest"]["model_versions"]
+    )
     assert runtime.audit_log.verify() == (True, None)

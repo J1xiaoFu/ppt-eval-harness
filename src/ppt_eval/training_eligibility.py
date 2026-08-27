@@ -116,10 +116,11 @@ class TrainingEligibility:
         """Apply the deterministic v8 precedence rules.
 
         Precedence is deliberate: key CRITICAL issues reject every track;
-        raster-only decks may enter only the visual track; missing content
-        evidence routes the content and full-deck tracks to REVIEW; only then do
-        the 80/60 score thresholds apply.  A missing score is evidence debt and
-        therefore REVIEW, never an inferred zero.
+        raster-only decks may enter only the visual track; an observed score
+        below the review threshold rejects the affected track even when other
+        evidence is missing.  Evidence debt is considered only after that
+        explicit failure, so it cannot conceal a known-bad score.  A missing
+        score remains REVIEW, never an inferred zero.
         """
 
         train_threshold, review_threshold = _thresholds(
@@ -227,6 +228,13 @@ def _decide_track(
             score,
             ("raster_only:visual_track_only",),
         )
+    if score is not None and score < review_threshold:
+        return TrainingTrackDecision(
+            track,
+            TrainingTrackStatus.REJECT,
+            score,
+            ("score:below_review_threshold",),
+        )
     if not content_evidence_available and track in {
         TrainingTrack.CONTENT,
         TrainingTrack.FULL_DECK,
@@ -258,12 +266,7 @@ def _decide_track(
             score,
             ("score:review_band",),
         )
-    return TrainingTrackDecision(
-        track,
-        TrainingTrackStatus.REJECT,
-        score,
-        ("score:below_review_threshold",),
-    )
+    raise AssertionError("score threshold branches must be exhaustive")
 
 
 def _track_scores(

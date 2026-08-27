@@ -53,6 +53,10 @@ STRUCTURED_VLM_CRITERION_BY_METRIC = {
 }
 STRUCTURED_VLM_DIMENSION_ID_SET = frozenset(STRUCTURED_VLM_DIMENSION_IDS)
 V8_ADDITIONAL_MODEL_METRIC_IDS = ("structured_vlm_authorship_specificity",)
+V8_RASTER_TEXT_MODEL_METRIC_IDS = (
+    "structured_vlm_raster_content_structure",
+    "structured_vlm_raster_language_consistency",
+)
 STRUCTURED_VLM_SENSITIVITY_SHARES = (0.10, 0.15, 0.20, 0.25)
 
 
@@ -990,6 +994,7 @@ def selected_metrics(results: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]
         "structured_vlm_visual_audit",
         *STRUCTURED_VLM_DIMENSION_IDS,
         *V8_ADDITIONAL_MODEL_METRIC_IDS,
+        *V8_RASTER_TEXT_MODEL_METRIC_IDS,
         "advanced_llm_content_review",
         "advanced_vlm_visual_review",
     )
@@ -1320,6 +1325,7 @@ def atomic_model_routing_events(
     for metric_id in (
         *STRUCTURED_VLM_DIMENSION_IDS,
         *V8_ADDITIONAL_MODEL_METRIC_IDS,
+        *V8_RASTER_TEXT_MODEL_METRIC_IDS,
     ):
         result = results.get(metric_id)
         if not isinstance(result, Mapping):
@@ -1626,6 +1632,7 @@ def evaluate(
                 "structured_vlm_visual_audit",
                 *STRUCTURED_VLM_DIMENSION_IDS,
                 *V8_ADDITIONAL_MODEL_METRIC_IDS,
+                *V8_RASTER_TEXT_MODEL_METRIC_IDS,
                 "llm_scenario_compliance_audit",
                 "advanced_llm_content_review",
                 "advanced_vlm_visual_review",

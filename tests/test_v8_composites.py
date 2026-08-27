@@ -7,6 +7,7 @@ import pytest
 
 from ppt_eval.adapters import PptxAdapter
 from ppt_eval.application import EvaluationContext
+from ppt_eval.config import default_profile
 from ppt_eval.domain import (
     AtomicObservation,
     EvalCase,
@@ -23,6 +24,7 @@ from ppt_eval.domain import (
 from ppt_eval.oracles.v8_composites import (
     V8AtomicObservationComposite,
     V8QualityReducerOracle,
+    V8RasterTextObservationOracle,
     V8TieredVisualCriterionOracle,
     _model_routing_usage,
 )
@@ -167,6 +169,122 @@ def test_missing_model_aesthetics_is_na_not_a_neutral_score(tmp_path: Path) -> N
     assert indexed["palette_craft"].metric_status == MetricStatus.NA
     assert indexed["authorship_specificity_v2"].metric_status == MetricStatus.NA
     assert indexed["composition_craft"].normalized_score is None
+
+
+def test_raster_text_model_emits_atomic_fallback_without_double_scoring(
+    tmp_path: Path,
+) -> None:
+    deck = build_pptx(
+        tmp_path / "raster-only.pptx",
+        tuple(
+            (
+                {
+                    "kind": "image",
+                    "x": 0,
+                    "y": 0,
+                    "w": 12_192_000,
+                    "h": 6_858_000,
+                },
+            )
+            for _ in range(2)
+        ),
+    )
+    images = []
+    for page_number in (1, 2):
+        image = tmp_path / f"raster-slide-{page_number}.png"
+        image.write_bytes(PNG_1X1)
+        images.append(image)
+    context = EvaluationContext(
+        case=EvalCase(
+            case_id="raster-text-recovery",
+            scene=SceneType.READY_MADE,
+            pptx_path=str(deck),
+        ),
+        profile=default_profile(SceneType.READY_MADE),
+        artifacts={"slide_images": tuple(images)},
+        memo={},
+    )
+    deterministic = V8AtomicObservationComposite(
+        PptxAdapter(backend="ooxml")
+    ).evaluate(context)
+    context.memo["ppt_eval.atomic_observations"] = list(
+        deterministic.observations
+    )
+    provider = GroundedFakeProvider()
+    recovered = [
+        V8RasterTextObservationOracle(
+            criterion_id,
+            provider,
+            None,
+            PptxAdapter(backend="ooxml"),
+        ).evaluate(context)
+        for criterion_id in (
+            "raster_content_structure",
+            "raster_language_consistency",
+        )
+    ]
+
+    assert len(provider.requests) == 2
+    assert all(
+        output.results[0].metric_status == MetricStatus.SCORED
+        for output in recovered
+    )
+    recovered_observations = tuple(
+        observation for output in recovered for observation in output.observations
+    )
+    assert {item.metric_id for item in recovered_observations} == {
+        "raster_content_structure_vlm",
+        "raster_language_consistency_vlm",
+    }
+    assert len(recovered_observations) == 4
+    assert all(
+        item.scope == EvaluationScope.PAGE for item in recovered_observations
+    )
+    assert all(
+        item.evidence and item.metadata["cost_accounted_by_result"]
+        for item in recovered_observations
+    )
+
+    context.memo["ppt_eval.atomic_observations"].extend(recovered_observations)
+    context.memo["ppt_eval.oracle_results"] = [
+        *_model_results(),
+        *(result for output in recovered for result in output.results),
+    ]
+    indexed = {
+        item.metric_id: item for item in V8QualityReducerOracle().evaluate(context)
+    }
+
+    assert indexed["content_structure"].normalized_score == pytest.approx(0.82)
+    assert indexed["language_consistency"].normalized_score == pytest.approx(0.82)
+    assert indexed["content_structure"].metadata["fusion_mode"] == (
+        "RASTER_VLM_ATOMIC_FALLBACK"
+    )
+    assert indexed["language_consistency"].metadata["no_double_score"] is True
+
+
+def test_editable_deck_skips_raster_text_model_calls(tmp_path: Path) -> None:
+    context = _context(_deck(tmp_path / "editable-no-raster-call.pptx"))
+    deterministic = V8AtomicObservationComposite(
+        PptxAdapter(backend="ooxml")
+    ).evaluate(context)
+    context.memo["ppt_eval.atomic_observations"] = list(
+        deterministic.observations
+    )
+    provider = GroundedFakeProvider()
+
+    output = V8RasterTextObservationOracle(
+        "raster_content_structure",
+        provider,
+        None,
+        PptxAdapter(backend="ooxml"),
+    ).evaluate(context)
+
+    assert provider.requests == []
+    assert output.observations == ()
+    assert output.results[0].metric_status == MetricStatus.NA
+    assert output.results[0].metadata["reason_code"] == (
+        "RASTER_TEXT_RECOVERY_NOT_REQUIRED"
+    )
 
 
 def test_text_scene_reuses_requirement_atoms_without_critical_double_score(

@@ -19,7 +19,7 @@ def test_v8_is_default_for_all_four_scenes() -> None:
     for scene, profile_id in PROFILE_IDS.items():
         profile = default_profile(scene)
         assert profile.profile_id == profile_id
-        assert profile.version == "8.2"
+        assert profile.version == "8.3"
         assert profile.metadata["runtime_wired"] is True
         assert profile.metadata["model_audit_routing"] == (
             "ATOMIC_FLASH_ADVANCED_HUMAN"
@@ -54,6 +54,10 @@ def test_v8_pipeline_exposes_each_visual_criterion_as_its_own_dag_node() -> None
         "v8.visual.render_integrity",
         "v8.visual.authorship_specificity",
     ]
+    assert [item for item in oracle_ids if item.startswith("v8.raster_text.")] == [
+        "v8.raster_text.raster_content_structure",
+        "v8.raster_text.raster_language_consistency",
+    ]
     assert oracle_ids[-1] == "v8.quality_reducers"
     assert set(dag.nodes[-1].dependencies) == {
         "audit:v8-composition",
@@ -63,6 +67,8 @@ def test_v8_pipeline_exposes_each_visual_criterion_as_its_own_dag_node() -> None
         "audit:v8-system",
         "audit:v8-render",
         "audit:v8-authorship",
+        "audit:v8-raster-content",
+        "audit:v8-raster-language",
     }
 
 

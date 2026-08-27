@@ -104,6 +104,50 @@ def test_missing_content_evidence_routes_content_tracks_to_review() -> None:
     )
 
 
+def test_known_failing_scores_reject_before_missing_content_review() -> None:
+    """A Skywork-like low score must not be concealed by missing content GT."""
+
+    eligibility = TrainingEligibility.assess(
+        {
+            TrainingTrack.VISUAL: 65,
+            TrainingTrack.LAYOUT: 65,
+            TrainingTrack.CONTENT: 34.538,
+            TrainingTrack.FULL_DECK: 34.538,
+        },
+        content_evidence_available=False,
+    )
+
+    for track in (TrainingTrack.CONTENT, TrainingTrack.FULL_DECK):
+        decision = eligibility.for_track(track)
+        assert decision.status == TrainingTrackStatus.REJECT
+        assert decision.reason_codes == ("score:below_review_threshold",)
+
+
+def test_missing_content_precedence_respects_review_boundary_and_missing_score() -> None:
+    eligibility = TrainingEligibility.assess(
+        {
+            TrainingTrack.CONTENT: 59.999,
+            TrainingTrack.FULL_DECK: 60,
+        },
+        content_evidence_available=False,
+    )
+
+    assert eligibility.for_track("content").status == TrainingTrackStatus.REJECT
+    assert eligibility.for_track("content").reason_codes == (
+        "score:below_review_threshold",
+    )
+    assert eligibility.for_track("full_deck").status == TrainingTrackStatus.REVIEW
+    assert eligibility.for_track("full_deck").reason_codes == (
+        "content_evidence:missing",
+    )
+
+    missing_score = TrainingEligibility.assess(
+        {TrainingTrack.FULL_DECK: None}, content_evidence_available=False
+    ).for_track(TrainingTrack.FULL_DECK)
+    assert missing_score.status == TrainingTrackStatus.REVIEW
+    assert missing_score.reason_codes == ("content_evidence:missing",)
+
+
 def test_raster_only_decks_are_eligible_only_for_visual_training() -> None:
     eligibility = TrainingEligibility.assess(_scores(95), raster_only=True)
 
@@ -148,7 +192,7 @@ def test_v8_profile_drafts_freeze_construct_and_scene_contracts() -> None:
         )
         expected_lambda, expected_scene_weights = expected
 
-        assert profile["version"] == "8.2"
+        assert profile["version"] == "8.3"
         assert profile["lambda_base"] == expected_lambda
         assert profile["base_weights"] == BASE_WEIGHTS
         assert profile["scene_weights"] == expected_scene_weights
