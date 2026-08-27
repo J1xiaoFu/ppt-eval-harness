@@ -67,7 +67,7 @@ Profile 不再按 deterministic/VLM 分组，而按质量属性计分。确定�
 
 ## 已知边界
 
-当前 pixel contrast、真实文本裁切和复杂图像语义仍主要依赖 VLM/renderer evidence；规则层
-只有 geometry、render availability、reading-order、crop 和 media integrity 代理。v8 是
+当前已提供 rendered text-region 对比度和 embedded/display pixel ratio 的确定性代理；真实
+OCR 文本裁切、语义裁切和复杂图像含义仍主要依赖 VLM/renderer evidence。v8 是
 预研默认，不代表已完成人类金标校准。现有真实切片只能用于合同与排序 sanity check，不能
 反向拟合本方法中的权重和阈值。
