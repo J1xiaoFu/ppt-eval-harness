@@ -208,6 +208,9 @@ Advanced 角色。Provider 本身不做路由决策，因此两个实例可分�
   `adapter_retry_count` / `adapter_retry_reasons` / `adapter_usage_complete`；某次响应未带 usage 时，
   只累计可恢复部分并标记 incomplete。两次都失败时仍将可恢复的总 usage/cost 附在
   `MODEL_PROVIDER_ERROR` 上。模型身份不匹配、本地输入校验和运输安全错误不使用该重试。
+- 若响应已通过通用 Provider Schema，但不满足六维 criterion 专用契约，结构化视觉 Oracle
+  会以同一 request 再调用一次。它同样累计 usage/cost，并记录 `criterion_retry_count`、
+  首次/最终 response fingerprint 和 usage 完整性；第二次仍不合法时继续 ERROR，不用第一次的部分维度凑分。
 - 保存 API 响应的实际 `model` 值和 prompt/completion token；当兼容接口不提供费用字段时，`cost` 暂记为 `0.0`，不把它解读为免费。
 - Provider 会校验响应的实际 model 与配置角色一致，不接受另一个已配置模型的 provenance。
 - `PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS` 配置 Flash HTTP 传输超时（默认 120 秒）；

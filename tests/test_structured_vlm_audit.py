@@ -325,16 +325,16 @@ def test_dimension_oracle_fans_batch_contract_failure_out_to_all_metrics(
 
     results = _evaluate_dimensions(tmp_path, provider)
 
-    assert len(provider.requests) == 1
+    assert len(provider.requests) == 2
     assert tuple(result.metric_id for result in results) == DIMENSION_METRIC_IDS
     assert all(result.execution_status == ExecutionStatus.ERROR for result in results)
     assert all(result.metric_status == MetricStatus.ERROR for result in results)
     assert all(result.error_code == "MODEL_RESPONSE_INVALID" for result in results)
-    assert sum(result.cost for result in results) == pytest.approx(0.003)
+    assert sum(result.cost for result in results) == pytest.approx(0.006)
     assert sum(
         int(result.metadata.get("usage", {}).get("total_tokens", 0))
         for result in results
-    ) == 150
+    ) == 300
     assert sum(
         bool(result.metadata["shared_call_usage_owner"]) for result in results
     ) == 1
@@ -348,6 +348,77 @@ def test_dimension_oracle_fans_batch_contract_failure_out_to_all_metrics(
         in (result.error_message or "")
         for result in results
     )
+
+
+def test_dimension_oracle_retries_criterion_contract_once_and_sums_usage(
+    tmp_path,
+) -> None:
+    class MissingScoreThenValidProvider:
+        def __init__(self) -> None:
+            self.requests: list[ModelAuditRequest] = []
+
+        def audit(self, request: ModelAuditRequest) -> Mapping[str, Any]:
+            self.requests.append(request)
+            payload = deepcopy(
+                _response(
+                    request,
+                    global_score=0.5,
+                    criterion_scores=CRITERION_SCORES,
+                )
+            )
+            if len(self.requests) == 1:
+                payload["evidence"][0]["payload"].pop("criterion_score")
+            return payload
+
+    provider = MissingScoreThenValidProvider()
+    results = _evaluate_dimensions(tmp_path, provider)
+
+    assert len(provider.requests) == 2
+    assert provider.requests[0].fingerprint == provider.requests[1].fingerprint
+    assert all(result.metric_status == MetricStatus.SCORED for result in results)
+    assert sum(result.cost for result in results) == pytest.approx(0.006)
+    assert sum(
+        int(result.metadata.get("usage", {}).get("total_tokens", 0))
+        for result in results
+    ) == 300
+    assert all(result.metadata["criterion_retry_count"] == 1 for result in results)
+    assert all(
+        result.metadata["criterion_retry_usage_complete"] is True
+        for result in results
+    )
+
+
+def test_dimension_oracle_rejects_two_invalid_criterion_responses_with_usage(
+    tmp_path,
+) -> None:
+    class AlwaysMissingScoreProvider:
+        def __init__(self) -> None:
+            self.requests: list[ModelAuditRequest] = []
+
+        def audit(self, request: ModelAuditRequest) -> Mapping[str, Any]:
+            self.requests.append(request)
+            payload = deepcopy(
+                _response(
+                    request,
+                    global_score=0.5,
+                    criterion_scores=CRITERION_SCORES,
+                )
+            )
+            payload["evidence"][0]["payload"].pop("criterion_score")
+            return payload
+
+    provider = AlwaysMissingScoreProvider()
+    results = _evaluate_dimensions(tmp_path, provider)
+
+    assert len(provider.requests) == 2
+    assert all(result.metric_status == MetricStatus.ERROR for result in results)
+    assert all(result.error_code == "MODEL_RESPONSE_INVALID" for result in results)
+    assert sum(result.cost for result in results) == pytest.approx(0.006)
+    assert sum(
+        int(result.metadata.get("usage", {}).get("total_tokens", 0))
+        for result in results
+    ) == 300
+    assert all(len(result.metadata["criterion_retry_errors"]) == 2 for result in results)
 
 
 def test_dimension_oracle_preserves_usage_when_grounding_contract_fails(

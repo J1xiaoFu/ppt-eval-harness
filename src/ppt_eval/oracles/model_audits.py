@@ -727,12 +727,102 @@ class StructuredVlmVisualAuditOracle(VlmVisualQualityAuditOracle):
         try:
             criterion_scores = self._criterion_scores(response)
         except ModelAuditContractError as exc:
-            metadata = {
-                **self._response_metadata(request, response, request_metadata),
-                "criterion_contract_validated": False,
-                "model_global_score": response.score,
-                "model_global_score_used": False,
-            }
+            return self._retry_criterion_contract(
+                request,
+                provider,
+                first_response=response,
+                first_error=exc,
+                request_metadata=request_metadata,
+            )
+
+        return self._validated_response_result(
+            request,
+            response,
+            criterion_scores,
+            request_metadata,
+        )
+
+    def _retry_criterion_contract(
+        self,
+        request: ModelAuditRequest,
+        provider: ModelAuditProvider,
+        *,
+        first_response: ModelAuditResponse,
+        first_error: ModelAuditContractError,
+        request_metadata: Mapping[str, Any],
+    ) -> OracleResult:
+        retry_metadata = {
+            **dict(request_metadata),
+            "criterion_retry_count": 1,
+            "criterion_retry_reasons": ["CRITERION_CONTRACT_INVALID"],
+            "criterion_retry_first_response_fingerprint": (
+                first_response.response_fingerprint
+            ),
+            "response_fingerprint_scope": "FINAL_ATTEMPT",
+        }
+        try:
+            retry_payload = provider.audit(request)
+        except ModelAuditProviderError as exc:
+            provider_metadata = _safe_provider_error_metadata({}, exc)
+            combined_usage = _sum_model_usage(
+                first_response.usage,
+                provider_metadata.get("usage"),
+                cost=first_response.usage.cost + exc.cost,
+            )
+            return replace(
+                OracleResult.error(
+                    oracle_id=self.oracle_id,
+                    metric_id=self.metric_id,
+                    score_role=self.score_role,
+                    error_code="MODEL_PROVIDER_ERROR",
+                    error_message=f"{type(exc).__name__}: {exc}",
+                    version=self.version,
+                ),
+                cost=combined_usage.cost,
+                metadata={
+                    **provider_metadata,
+                    **retry_metadata,
+                    "usage": dict(combined_usage.to_mapping()),
+                    "criterion_contract_validated": False,
+                    "criterion_retry_usage_complete": (
+                        _model_response_usage_complete(first_response)
+                        and provider_metadata.get("provider_usage_complete") is True
+                    ),
+                },
+            )
+        except Exception as exc:
+            return replace(
+                OracleResult.error(
+                    oracle_id=self.oracle_id,
+                    metric_id=self.metric_id,
+                    score_role=self.score_role,
+                    error_code="MODEL_PROVIDER_ERROR",
+                    error_message=f"{type(exc).__name__}: {exc}",
+                    version=self.version,
+                ),
+                cost=first_response.usage.cost,
+                metadata={
+                    **retry_metadata,
+                    "usage": dict(first_response.usage.to_mapping()),
+                    "criterion_contract_validated": False,
+                    "criterion_retry_usage_complete": False,
+                },
+            )
+        try:
+            retry_response = ModelAuditResponse.from_mapping(
+                retry_payload,
+                request=request,
+            )
+        except ModelAuditContractError as exc:
+            recovered_metadata, recovered_cost = _recover_invalid_response_telemetry(
+                retry_payload,
+                request,
+            )
+            combined_usage = _sum_model_usage(
+                first_response.usage,
+                recovered_metadata.get("usage"),
+                cost=first_response.usage.cost + recovered_cost,
+            )
             return replace(
                 OracleResult.error(
                     oracle_id=self.oracle_id,
@@ -742,15 +832,69 @@ class StructuredVlmVisualAuditOracle(VlmVisualQualityAuditOracle):
                     error_message=str(exc),
                     version=self.version,
                 ),
-                cost=response.usage.cost,
-                metadata=metadata,
+                cost=combined_usage.cost,
+                metadata={
+                    **retry_metadata,
+                    **recovered_metadata,
+                    "usage": dict(combined_usage.to_mapping()),
+                    "criterion_contract_validated": False,
+                    "criterion_retry_usage_complete": (
+                        _model_response_usage_complete(first_response)
+                        and recovered_metadata.get(
+                            "telemetry_recovered_from_invalid_response"
+                        )
+                        is True
+                    ),
+                },
             )
-
+        try:
+            retry_scores = self._criterion_scores(retry_response)
+        except ModelAuditContractError as exc:
+            combined_usage = _sum_model_usage(
+                first_response.usage,
+                retry_response.usage,
+            )
+            return replace(
+                OracleResult.error(
+                    oracle_id=self.oracle_id,
+                    metric_id=self.metric_id,
+                    score_role=self.score_role,
+                    error_code="MODEL_RESPONSE_INVALID",
+                    error_message=str(exc),
+                    version=self.version,
+                ),
+                cost=combined_usage.cost,
+                metadata={
+                    **self._response_metadata(
+                        request,
+                        retry_response,
+                        retry_metadata,
+                    ),
+                    "usage": dict(combined_usage.to_mapping()),
+                    "criterion_contract_validated": False,
+                    "criterion_retry_errors": [str(first_error), str(exc)],
+                    "criterion_retry_usage_complete": (
+                        _model_response_usage_complete(first_response)
+                        and _model_response_usage_complete(retry_response)
+                    ),
+                },
+            )
+        combined_usage = _sum_model_usage(
+            first_response.usage,
+            retry_response.usage,
+        )
+        combined_response = replace(retry_response, usage=combined_usage)
+        usage_complete = _model_response_usage_complete(
+            first_response
+        ) and _model_response_usage_complete(retry_response)
         return self._validated_response_result(
             request,
-            response,
-            criterion_scores,
-            request_metadata,
+            combined_response,
+            retry_scores,
+            {
+                **retry_metadata,
+                "criterion_retry_usage_complete": usage_complete,
+            },
         )
 
     @staticmethod
@@ -1478,6 +1622,49 @@ def _safe_provider_error_metadata(
         if key in _PROVIDER_ERROR_TELEMETRY_KEYS
     }
     return {**telemetry, **dict(request_metadata)}
+
+
+def _sum_model_usage(
+    *values: ModelUsage | object,
+    cost: float | None = None,
+) -> ModelUsage:
+    input_tokens = 0
+    output_tokens = 0
+    observed_cost = 0.0
+    for value in values:
+        if isinstance(value, ModelUsage):
+            input_tokens += value.input_tokens
+            output_tokens += value.output_tokens
+            observed_cost += value.cost
+            continue
+        if not isinstance(value, Mapping):
+            continue
+        raw_input = value.get("input_tokens")
+        raw_output = value.get("output_tokens")
+        raw_cost = value.get("cost")
+        if isinstance(raw_input, int) and not isinstance(raw_input, bool):
+            input_tokens += max(0, raw_input)
+        if isinstance(raw_output, int) and not isinstance(raw_output, bool):
+            output_tokens += max(0, raw_output)
+        if (
+            isinstance(raw_cost, (int, float))
+            and not isinstance(raw_cost, bool)
+            and math.isfinite(float(raw_cost))
+            and float(raw_cost) >= 0.0
+        ):
+            observed_cost += float(raw_cost)
+    return ModelUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost=observed_cost if cost is None else cost,
+    )
+
+
+def _model_response_usage_complete(response: ModelAuditResponse) -> bool:
+    return not any(
+        item.payload.get("adapter_usage_complete") is False
+        for item in response.evidence
+    )
 
 
 def _recover_invalid_response_telemetry(
