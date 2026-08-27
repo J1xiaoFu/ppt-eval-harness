@@ -19,8 +19,11 @@ from typing import Any, Iterator, Mapping, Sequence
 from urllib.parse import urlsplit
 
 from ppt_eval.adapters.model_audits import (
+    ModelAuditContractError,
     ModelAuditModality,
+    ModelAuditProviderError,
     ModelAuditRequest,
+    ModelAuditResponse,
     ModelImageInput,
 )
 
@@ -35,9 +38,17 @@ _CHAT_COMPLETIONS_PATH = "/chat/completions"
 DEFAULT_QWEN_HTTP_TIMEOUT_SECONDS = 120.0
 _MAX_HTTP_RESPONSE_BYTES = 8 * 1024 * 1024
 _MAX_IMAGE_BYTES = 20 * 1024 * 1024
+_MAX_STRUCTURED_RESPONSE_ATTEMPTS = 2
+_RETRYABLE_RESPONSE_ERRORS = frozenset(
+    {
+        "Qwen endpoint completion did not contain structured JSON content",
+        "Qwen endpoint completion was not a valid JSON object",
+        "Qwen endpoint completion did not match the requested JSON fields",
+    }
+)
 
 
-class QwenModelAuditProviderError(RuntimeError):
+class QwenModelAuditProviderError(ModelAuditProviderError):
     """A safe, redacted failure while calling the Qwen-compatible endpoint."""
 
 
@@ -118,12 +129,82 @@ class QwenOpenAICompatibleProvider:
                 "Content-Type": "application/json; charset=utf-8",
             },
         )
-        response_payload = _send(http_request, timeout_seconds=self._timeout_seconds)
-        return _translate_response(
-            response_payload,
-            request=request,
-            configured_model=self._model,
-        )
+        accumulated_usage = {"input_tokens": 0, "output_tokens": 0, "cost": 0.0}
+        retry_reasons: list[str] = []
+        attempts_with_usage = 0
+        for attempt in range(1, _MAX_STRUCTURED_RESPONSE_ATTEMPTS + 1):
+            try:
+                response_payload = _send(
+                    http_request,
+                    timeout_seconds=self._timeout_seconds,
+                )
+            except QwenModelAuditProviderError as exc:
+                if attempt == 1:
+                    raise
+                metadata = _retry_audit_metadata(
+                    accumulated_usage,
+                    attempts=attempt,
+                    attempts_with_usage=attempts_with_usage,
+                    retry_reasons=retry_reasons,
+                )
+                raise QwenModelAuditProviderError(
+                    "Qwen endpoint request failed after structured response retry",
+                    audit_metadata=metadata,
+                    cost=float(metadata["usage"]["cost"]),
+                ) from exc
+            try:
+                raw_usage = _response_usage(response_payload)
+            except QwenModelAuditProviderError:
+                raw_usage = None
+            if raw_usage is not None:
+                attempts_with_usage += 1
+                accumulated_usage["input_tokens"] += int(raw_usage["input_tokens"])
+                accumulated_usage["output_tokens"] += int(raw_usage["output_tokens"])
+                accumulated_usage["cost"] += float(raw_usage["cost"])
+            try:
+                translated = _translate_response(
+                    response_payload,
+                    request=request,
+                    configured_model=self._model,
+                )
+                ModelAuditResponse.from_mapping(translated, request=request)
+            except (ModelAuditContractError, QwenModelAuditProviderError) as exc:
+                if not _retryable_response_error(exc):
+                    metadata = _retry_audit_metadata(
+                        accumulated_usage,
+                        attempts=attempt,
+                        attempts_with_usage=attempts_with_usage,
+                        retry_reasons=retry_reasons,
+                    )
+                    raise QwenModelAuditProviderError(
+                        str(exc),
+                        audit_metadata=metadata,
+                        cost=float(metadata["usage"]["cost"]),
+                    ) from exc
+                retry_reasons.append(_response_error_category(exc))
+                if attempt < _MAX_STRUCTURED_RESPONSE_ATTEMPTS:
+                    continue
+                metadata = _retry_audit_metadata(
+                    accumulated_usage,
+                    attempts=attempt,
+                    attempts_with_usage=attempts_with_usage,
+                    retry_reasons=retry_reasons,
+                )
+                raise QwenModelAuditProviderError(
+                    "Qwen endpoint returned an invalid structured response after retry",
+                    audit_metadata=metadata,
+                    cost=float(metadata["usage"]["cost"]),
+                ) from exc
+            if attempt == 1:
+                return translated
+            return _with_retry_telemetry(
+                translated,
+                usage=_usage_for_contract(accumulated_usage),
+                retry_reasons=retry_reasons,
+                attempts=attempt,
+                attempts_with_usage=attempts_with_usage,
+            )
+        raise AssertionError("structured response attempt loop did not return")
 
 
 # Concise compatibility name for composition roots that use the port name.
@@ -392,17 +473,7 @@ def _translate_response(
     else:
         version = version.strip()
 
-    usage = response.get("usage")
-    if not isinstance(usage, Mapping):
-        raise QwenModelAuditProviderError("Qwen endpoint response did not contain usage data")
-    input_tokens = _usage_int(usage, "prompt_tokens", fallback="input_tokens")
-    output_tokens = _usage_int(usage, "completion_tokens", fallback="output_tokens")
-    cost = usage.get("cost", usage.get("total_cost", 0.0))
-    if isinstance(cost, bool) or not isinstance(cost, (int, float)):
-        raise QwenModelAuditProviderError("Qwen endpoint returned invalid usage data")
-    cost = float(cost)
-    if not math.isfinite(cost) or cost < 0:
-        raise QwenModelAuditProviderError("Qwen endpoint returned invalid usage data")
+    usage = _response_usage(response)
 
     return {
         "score": result["score"],
@@ -413,11 +484,7 @@ def _translate_response(
             "version": version,
         },
         "prompt": dict(request.prompt.reference()),
-        "usage": {
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "cost": cost,
-        },
+        "usage": usage,
         "evidence": _sanitize_optional_qwen_localization(
             result["evidence"],
             request=request,
@@ -430,6 +497,123 @@ def _usage_int(usage: Mapping[str, Any], key: str, *, fallback: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise QwenModelAuditProviderError("Qwen endpoint returned invalid usage data")
     return value
+
+
+def _response_usage(response: Mapping[str, Any]) -> dict[str, int | float]:
+    usage = response.get("usage")
+    if not isinstance(usage, Mapping):
+        raise QwenModelAuditProviderError(
+            "Qwen endpoint response did not contain usage data"
+        )
+    input_tokens = _usage_int(usage, "prompt_tokens", fallback="input_tokens")
+    output_tokens = _usage_int(usage, "completion_tokens", fallback="output_tokens")
+    cost = usage.get("cost", usage.get("total_cost", 0.0))
+    if isinstance(cost, bool) or not isinstance(cost, (int, float)):
+        raise QwenModelAuditProviderError("Qwen endpoint returned invalid usage data")
+    numeric_cost = float(cost)
+    if not math.isfinite(numeric_cost) or numeric_cost < 0:
+        raise QwenModelAuditProviderError("Qwen endpoint returned invalid usage data")
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "cost": numeric_cost,
+    }
+
+
+def _usage_for_contract(
+    usage: Mapping[str, int | float],
+) -> dict[str, int | float]:
+    return {
+        "input_tokens": int(usage["input_tokens"]),
+        "output_tokens": int(usage["output_tokens"]),
+        "cost": float(usage["cost"]),
+    }
+
+
+def _usage_with_total(
+    usage: Mapping[str, int | float],
+) -> dict[str, int | float]:
+    contracted = _usage_for_contract(usage)
+    return {
+        **contracted,
+        "total_tokens": int(contracted["input_tokens"])
+        + int(contracted["output_tokens"]),
+    }
+
+
+def _retryable_response_error(exc: Exception) -> bool:
+    return isinstance(exc, ModelAuditContractError) or (
+        isinstance(exc, QwenModelAuditProviderError)
+        and str(exc) in _RETRYABLE_RESPONSE_ERRORS
+    )
+
+
+def _response_error_category(exc: Exception) -> str:
+    if isinstance(exc, ModelAuditContractError):
+        return "MODEL_AUDIT_CONTRACT_INVALID"
+    message = str(exc)
+    if message.endswith("did not contain structured JSON content"):
+        return "CONTENT_MISSING"
+    if message.endswith("was not a valid JSON object"):
+        return "JSON_INVALID"
+    if message.endswith("did not match the requested JSON fields"):
+        return "TOP_LEVEL_FIELDS_INVALID"
+    return "STRUCTURED_RESPONSE_INVALID"
+
+
+def _retry_audit_metadata(
+    usage: Mapping[str, int | float],
+    *,
+    attempts: int,
+    attempts_with_usage: int,
+    retry_reasons: Sequence[str],
+) -> dict[str, Any]:
+    return {
+        "usage": _usage_with_total(usage),
+        "provider_attempts": attempts,
+        "provider_attempts_with_usage": attempts_with_usage,
+        "provider_usage_complete": attempts_with_usage == attempts,
+        "provider_retry_reasons": list(retry_reasons),
+    }
+
+
+def _with_retry_telemetry(
+    translated: Mapping[str, Any],
+    *,
+    usage: Mapping[str, int | float],
+    retry_reasons: Sequence[str],
+    attempts: int,
+    attempts_with_usage: int,
+) -> Mapping[str, Any]:
+    raw_evidence = translated.get("evidence")
+    if isinstance(raw_evidence, (str, bytes)) or not isinstance(
+        raw_evidence, Sequence
+    ):
+        raise AssertionError("validated response lost its evidence sequence")
+    evidence: list[Mapping[str, Any]] = []
+    for item in raw_evidence:
+        if not isinstance(item, Mapping):
+            raise AssertionError("validated response contains invalid evidence")
+        payload = item.get("payload", {})
+        if not isinstance(payload, Mapping):
+            raise AssertionError("validated response contains invalid evidence payload")
+        evidence.append(
+            {
+                **dict(item),
+                "payload": {
+                    **dict(payload),
+                    "adapter_retry_count": attempts - 1,
+                    "adapter_retry_reasons": list(retry_reasons),
+                    "adapter_attempts_with_usage": attempts_with_usage,
+                    "adapter_usage_complete": attempts_with_usage == attempts,
+                },
+            }
+        )
+    return {
+        **dict(translated),
+        "usage": dict(usage),
+        "evidence": evidence,
+    }
 
 
 def _sanitize_optional_qwen_localization(
@@ -458,6 +642,15 @@ def _sanitize_optional_qwen_localization(
         for slide in request.slides
     }
     known_pages = frozenset(known_objects)
+    known_source_uris = frozenset(
+        str(item)
+        for item in (
+            *request.context.get("source_uris", ()),
+            *request.context.get("asset_uris", ()),
+            *(image.uri for image in request.images),
+        )
+        if str(item)
+    )
     sanitized: list[object] = []
     for item in value:
         if not isinstance(item, Mapping):
@@ -468,6 +661,22 @@ def _sanitize_optional_qwen_localization(
         payload = replacement.get("payload")
         if payload is None:
             payload = {}
+        if isinstance(payload, Mapping) and all(
+            isinstance(key, str) for key in payload
+        ):
+            reserved_keys = sorted(
+                key for key in payload if key.startswith("adapter_")
+            )
+            if reserved_keys:
+                payload = {
+                    key: item
+                    for key, item in payload.items()
+                    if key not in reserved_keys
+                }
+                replacement["payload"] = payload
+                sanitized_fields.extend(
+                    f"payload.{key}" for key in reserved_keys
+                )
         if (
             "related_page_numbers" in replacement
             and isinstance(payload, Mapping)
@@ -510,6 +719,17 @@ def _sanitize_optional_qwen_localization(
         ):
             replacement.pop("object_id", None)
             sanitized_fields.append("object_id")
+        source_uri = replacement.get("source_uri")
+        if (
+            isinstance(source_uri, str)
+            and source_uri.strip()
+            and isinstance(page_number, int)
+            and not isinstance(page_number, bool)
+            and page_number in known_pages
+            and source_uri not in known_source_uris
+        ):
+            replacement.pop("source_uri", None)
+            sanitized_fields.append("source_uri")
         if not sanitized_fields:
             sanitized.append(item)
             continue

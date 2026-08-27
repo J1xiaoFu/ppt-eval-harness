@@ -26,6 +26,28 @@ class ModelAuditContractError(ValueError):
     """A provider response does not satisfy the model-audit contract."""
 
 
+class ModelAuditProviderError(RuntimeError):
+    """Safe provider failure with optional auditable usage telemetry."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        audit_metadata: Mapping[str, Any] | None = None,
+        cost: float = 0.0,
+    ) -> None:
+        if (
+            isinstance(cost, bool)
+            or not isinstance(cost, (int, float))
+            or not math.isfinite(float(cost))
+            or float(cost) < 0.0
+        ):
+            raise ValueError("provider error cost must be a non-negative finite number")
+        super().__init__(message)
+        self.audit_metadata = dict(audit_metadata or {})
+        self.cost = float(cost)
+
+
 class ModelAuditModality(str, Enum):
     LLM = "LLM"
     VLM = "VLM"
@@ -559,6 +581,7 @@ __all__ = [
     "ModelAuditEvidence",
     "ModelAuditModality",
     "ModelAuditProvider",
+    "ModelAuditProviderError",
     "ModelAuditRequest",
     "ModelAuditResponse",
     "ModelIdentity",

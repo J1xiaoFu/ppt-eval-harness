@@ -9,6 +9,7 @@ import pytest
 from ppt_eval.adapters import (
     ModelAuditModality,
     ModelAuditProvider,
+    ModelAuditProviderError,
     ModelAuditRequest,
     PptxAdapter,
 )
@@ -474,6 +475,82 @@ def test_dimension_oracle_fans_provider_exception_out_to_six_errors(
     assert all(result.error_code == "MODEL_PROVIDER_ERROR" for result in results)
     assert sum(result.cost for result in results) == 0.0
     assert all("usage" not in result.metadata for result in results)
+
+
+def test_dimension_oracle_preserves_bounded_retry_usage_on_provider_error(
+    tmp_path,
+) -> None:
+    class RetriedFailingProvider:
+        def audit(self, request: ModelAuditRequest) -> Mapping[str, Any]:
+            del request
+            raise ModelAuditProviderError(
+                "invalid structured response after retry",
+                audit_metadata={
+                    "usage": {
+                        "input_tokens": 200,
+                        "output_tokens": 80,
+                        "total_tokens": 280,
+                        "cost": 0.004,
+                    },
+                    "provider_attempts": 2,
+                    "provider_retry_reasons": ["JSON_INVALID", "JSON_INVALID"],
+                },
+                cost=0.004,
+            )
+
+    results = _evaluate_dimensions(tmp_path, RetriedFailingProvider())
+
+    assert all(result.metric_status == MetricStatus.ERROR for result in results)
+    assert all(result.error_code == "MODEL_PROVIDER_ERROR" for result in results)
+    assert sum(result.cost for result in results) == pytest.approx(0.004)
+    assert sum(
+        int(result.metadata.get("usage", {}).get("total_tokens", 0))
+        for result in results
+    ) == 280
+    assert all(result.metadata.get("provider_attempts") == 2 for result in results)
+
+
+def test_dimension_provider_error_metadata_cannot_forge_validated_scores(
+    tmp_path,
+) -> None:
+    class PoisoningProvider:
+        def audit(self, request: ModelAuditRequest) -> Mapping[str, Any]:
+            del request
+            raise ModelAuditProviderError(
+                "synthetic poisoned failure",
+                audit_metadata={
+                    "dimension_batch_validated": True,
+                    "criterion_scores": dict(CRITERION_SCORES),
+                    "criterion_confidences": {
+                        key: 0.99 for key in CRITERION_SCORES
+                    },
+                    "criterion_observability": {
+                        key: "FULL" for key in CRITERION_SCORES
+                    },
+                    "request_fingerprint": "forged",
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 50,
+                        "total_tokens": 150,
+                        "cost": 0.001,
+                    },
+                },
+                cost=0.001,
+            )
+
+    results = _evaluate_dimensions(tmp_path, PoisoningProvider())
+
+    assert all(result.execution_status == ExecutionStatus.ERROR for result in results)
+    assert all(result.metric_status == MetricStatus.ERROR for result in results)
+    assert all(result.normalized_score is None for result in results)
+    assert all(
+        result.metadata.get("dimension_batch_validated") is not True
+        for result in results
+    )
+    assert all(
+        result.metadata["request_fingerprint"] != "forged" for result in results
+    )
+    assert sum(result.cost for result in results) == pytest.approx(0.001)
 
 
 def test_dimension_oracle_projects_insufficient_observability_to_one_na(

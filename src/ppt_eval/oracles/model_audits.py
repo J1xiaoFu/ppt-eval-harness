@@ -17,6 +17,7 @@ from ppt_eval.adapters.model_audits import (
     ModelAuditContractError,
     ModelAuditModality,
     ModelAuditProvider,
+    ModelAuditProviderError,
     ModelAuditRequest,
     ModelAuditResponse,
     ModelIdentity,
@@ -298,6 +299,19 @@ class _ModelAuditOracle(AtomicOracle):
         }
         try:
             payload = provider.audit(request)
+        except ModelAuditProviderError as exc:
+            return replace(
+                OracleResult.error(
+                    oracle_id=self.oracle_id,
+                    metric_id=self.metric_id,
+                    score_role=self.score_role,
+                    error_code="MODEL_PROVIDER_ERROR",
+                    error_message=f"{type(exc).__name__}: {exc}",
+                    version=self.version,
+                ),
+                cost=exc.cost,
+                metadata=_safe_provider_error_metadata(request_metadata, exc),
+            )
         except Exception as exc:
             return replace(
                 OracleResult.error(
@@ -666,6 +680,19 @@ class StructuredVlmVisualAuditOracle(VlmVisualQualityAuditOracle):
         }
         try:
             payload = provider.audit(request)
+        except ModelAuditProviderError as exc:
+            return replace(
+                OracleResult.error(
+                    oracle_id=self.oracle_id,
+                    metric_id=self.metric_id,
+                    score_role=self.score_role,
+                    error_code="MODEL_PROVIDER_ERROR",
+                    error_message=f"{type(exc).__name__}: {exc}",
+                    version=self.version,
+                ),
+                cost=exc.cost,
+                metadata=_safe_provider_error_metadata(request_metadata, exc),
+            )
         except Exception as exc:
             return replace(
                 OracleResult.error(
@@ -919,7 +946,11 @@ class StructuredVlmVisualDimensionsAuditOracle:
             if metric_id != usage_owner_metric_id:
                 metadata.pop("usage", None)
 
-            if batch.metadata.get("dimension_batch_validated") is not True:
+            if (
+                batch.execution_status != ExecutionStatus.SUCCESS
+                or batch.metric_status != MetricStatus.PASS
+                or batch.metadata.get("dimension_batch_validated") is not True
+            ):
                 dimension_results.append(
                     replace(
                         batch,
@@ -1424,6 +1455,29 @@ def _canonical_sample_indices(total: int, *, maximum: int) -> tuple[int, ...]:
         return (0,)
     last = total - 1
     return tuple((position * last) // (maximum - 1) for position in range(maximum))
+
+
+_PROVIDER_ERROR_TELEMETRY_KEYS = frozenset(
+    {
+        "usage",
+        "provider_attempts",
+        "provider_attempts_with_usage",
+        "provider_usage_complete",
+        "provider_retry_reasons",
+    }
+)
+
+
+def _safe_provider_error_metadata(
+    request_metadata: Mapping[str, Any],
+    exc: ModelAuditProviderError,
+) -> Mapping[str, Any]:
+    telemetry = {
+        key: value
+        for key, value in exc.audit_metadata.items()
+        if key in _PROVIDER_ERROR_TELEMETRY_KEYS
+    }
+    return {**telemetry, **dict(request_metadata)}
 
 
 def _recover_invalid_response_telemetry(

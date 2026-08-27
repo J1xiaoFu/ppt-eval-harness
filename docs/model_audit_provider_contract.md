@@ -196,13 +196,18 @@ Advanced 角色。Provider 本身不做路由决策，因此两个实例可分�
 - 发送 `response_format={"type":"json_object"}` 和 wire-level `enable_thinking=true`。
 - 显式发送 `temperature=0`、`seed=0` 和 `max_tokens=4096`，与 Manifest 的默认随机种子对齐并限制单次输出成本。
 - 模型只输出 `score` / `confidence` / `evidence`；Provider 负责补齐实际 model ID、Prompt 引用和 usage，之后仍由 `ModelAuditResponse` 作最终严格校验。
-- Qwen 偶尔会把像素 bbox 误当成归一化坐标、产生无法在请求对象树核对的
-  可选 `object_id`，或对 `object_id/source_uri` 返回 null/空串。适配器只删除这些
+- Qwen 偶尔会把像素 bbox 误当成归一化坐标、产生无法在请求对象树/来源集核对的
+  可选 `object_id/source_uri`，或对它们返回 null/空串。当 evidence 已有合法页码时，适配器只删除这些
   无效可选值；若模型把合法 `related_page_numbers` 放在 evidence 顶层，则迁移至 payload。
   所有修复都在 `adapter_sanitized_fields` 记录；页码、必填字段和非空定位仍严格校验。
 - VLM 请求在本地重算图片 SHA-256，仅在与 `ModelImageInput` 一致时转换为 `data:image/...;base64,...`；本地路径不进入请求体。
 - 兼容 Qwen 的 `reasoning_content`，但主动丢弃该字段，不进入 Report、指纹或错误信息。
 - HTTP/JSON 异常只暴露分类和 HTTP 状态码，不回显 Authorization、原始响应体或模型原文。
+- 若同一请求的模型返回非法 JSON、错误顶层字段或未定位 evidence，Provider 使用完全相同的
+  request 最多重试一次。成功时累计两次 usage/cost，并在 evidence payload 记录
+  `adapter_retry_count` / `adapter_retry_reasons` / `adapter_usage_complete`；某次响应未带 usage 时，
+  只累计可恢复部分并标记 incomplete。两次都失败时仍将可恢复的总 usage/cost 附在
+  `MODEL_PROVIDER_ERROR` 上。模型身份不匹配、本地输入校验和运输安全错误不使用该重试。
 - 保存 API 响应的实际 `model` 值和 prompt/completion token；当兼容接口不提供费用字段时，`cost` 暂记为 `0.0`，不把它解读为免费。
 - Provider 会校验响应的实际 model 与配置角色一致，不接受另一个已配置模型的 provenance。
 - `PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS` 配置 Flash HTTP 传输超时（默认 120 秒）；

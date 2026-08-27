@@ -282,6 +282,32 @@ def test_qwen_adapter_drops_unverifiable_optional_object_id() -> None:
     ]
 
 
+def test_qwen_adapter_drops_unverifiable_optional_source_when_page_is_valid() -> None:
+    vendor = json.loads(json.dumps(_vendor_response()))
+    content = json.loads(vendor["choices"][0]["message"]["content"])
+    content["evidence"][0]["source_uri"] = "sha256:not-a-request-source"
+    vendor["choices"][0]["message"]["content"] = json.dumps(content)
+
+    def fake_urlopen(http_request, *, timeout):
+        del http_request, timeout
+        return _FakeHttpResponse(vendor)
+
+    request = _request()
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+    )
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        payload = provider.audit(request)
+    response = ModelAuditResponse.from_mapping(payload, request=request)
+
+    assert response.evidence[0].source_uri is None
+    assert response.evidence[0].payload["adapter_sanitized_fields"] == [
+        "source_uri"
+    ]
+
+
 def test_qwen_adapter_moves_related_pages_into_evidence_payload() -> None:
     vendor = json.loads(json.dumps(_vendor_response()))
     content = json.loads(vendor["choices"][0]["message"]["content"])
@@ -306,6 +332,233 @@ def test_qwen_adapter_moves_related_pages_into_evidence_payload() -> None:
     assert response.evidence[0].payload["adapter_sanitized_fields"] == [
         "related_page_numbers->payload"
     ]
+
+
+def test_qwen_adapter_replaces_model_supplied_reserved_adapter_telemetry() -> None:
+    vendor = json.loads(json.dumps(_vendor_response()))
+    content = json.loads(vendor["choices"][0]["message"]["content"])
+    content["evidence"][0]["payload"].update(
+        {
+            "adapter_retry_count": 99,
+            "adapter_retry_reasons": ["FAKE"],
+            "adapter_usage_complete": True,
+            "adapter_sanitized_fields": ["page_number"],
+        }
+    )
+    vendor["choices"][0]["message"]["content"] = json.dumps(content)
+
+    def fake_urlopen(http_request, *, timeout):
+        del http_request, timeout
+        return _FakeHttpResponse(vendor)
+
+    request = _request()
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+    )
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        payload = provider.audit(request)
+    response = ModelAuditResponse.from_mapping(payload, request=request)
+    detail = response.evidence[0].payload
+
+    assert "adapter_retry_count" not in detail
+    assert "adapter_retry_reasons" not in detail
+    assert "adapter_usage_complete" not in detail
+    assert detail["adapter_sanitized_fields"] == [
+        "payload.adapter_retry_count",
+        "payload.adapter_retry_reasons",
+        "payload.adapter_sanitized_fields",
+        "payload.adapter_usage_complete",
+    ]
+
+
+def test_qwen_adapter_retries_invalid_json_and_accumulates_usage() -> None:
+    invalid = json.loads(json.dumps(_vendor_response()))
+    invalid["choices"][0]["message"]["content"] = "not-json"
+    invalid["usage"] = {
+        "prompt_tokens": 100,
+        "completion_tokens": 50,
+        "total_tokens": 150,
+    }
+    responses = iter((invalid, _vendor_response()))
+    calls = 0
+
+    def fake_urlopen(http_request, *, timeout):
+        del http_request, timeout
+        nonlocal calls
+        calls += 1
+        return _FakeHttpResponse(next(responses))
+
+    request = _request()
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+    )
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        payload = provider.audit(request)
+    response = ModelAuditResponse.from_mapping(payload, request=request)
+
+    assert calls == 2
+    assert response.usage.input_tokens == 421
+    assert response.usage.output_tokens == 95
+    assert response.usage.total_tokens == 516
+    assert response.evidence[0].payload["adapter_retry_count"] == 1
+    assert response.evidence[0].payload["adapter_retry_reasons"] == [
+        "JSON_INVALID"
+    ]
+    assert response.evidence[0].payload["adapter_attempts_with_usage"] == 2
+    assert response.evidence[0].payload["adapter_usage_complete"] is True
+
+
+def test_qwen_adapter_retries_ungrounded_structured_evidence() -> None:
+    ungrounded = json.loads(json.dumps(_vendor_response()))
+    content = json.loads(ungrounded["choices"][0]["message"]["content"])
+    content["evidence"][0].pop("page_number")
+    content["evidence"][0].pop("object_id")
+    ungrounded["choices"][0]["message"]["content"] = json.dumps(content)
+    responses = iter((ungrounded, _vendor_response()))
+    calls = 0
+
+    def fake_urlopen(http_request, *, timeout):
+        del http_request, timeout
+        nonlocal calls
+        calls += 1
+        return _FakeHttpResponse(next(responses))
+
+    request = _request()
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+    )
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        payload = provider.audit(request)
+    response = ModelAuditResponse.from_mapping(payload, request=request)
+
+    assert calls == 2
+    assert response.evidence[0].payload["adapter_retry_reasons"] == [
+        "MODEL_AUDIT_CONTRACT_INVALID"
+    ]
+
+
+def test_qwen_adapter_marks_retry_usage_partial_when_first_usage_is_missing() -> None:
+    invalid = json.loads(json.dumps(_vendor_response()))
+    invalid["choices"][0]["message"]["content"] = "not-json"
+    invalid.pop("usage")
+    responses = iter((invalid, _vendor_response()))
+
+    def fake_urlopen(http_request, *, timeout):
+        del http_request, timeout
+        return _FakeHttpResponse(next(responses))
+
+    request = _request()
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+    )
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        payload = provider.audit(request)
+    response = ModelAuditResponse.from_mapping(payload, request=request)
+
+    assert response.usage.total_tokens == 366
+    assert response.evidence[0].payload["adapter_attempts_with_usage"] == 1
+    assert response.evidence[0].payload["adapter_usage_complete"] is False
+
+
+def test_qwen_adapter_preserves_first_usage_when_retry_transport_fails() -> None:
+    invalid = json.loads(json.dumps(_vendor_response()))
+    invalid["choices"][0]["message"]["content"] = "not-json"
+    calls = 0
+
+    def fake_urlopen(http_request, *, timeout):
+        del http_request, timeout
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return _FakeHttpResponse(invalid)
+        raise urllib.error.URLError("synthetic retry transport failure")
+
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+    )
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        try:
+            provider.audit(_request())
+        except QwenModelAuditProviderError as exc:
+            assert "after structured response retry" in str(exc)
+            assert exc.audit_metadata["usage"]["total_tokens"] == 366
+            assert exc.audit_metadata["provider_attempts"] == 2
+            assert exc.audit_metadata["provider_attempts_with_usage"] == 1
+            assert exc.audit_metadata["provider_usage_complete"] is False
+        else:
+            raise AssertionError("retry transport failure must be reported")
+
+
+def test_qwen_adapter_preserves_usage_when_retry_model_mismatches() -> None:
+    invalid = json.loads(json.dumps(_vendor_response()))
+    invalid["choices"][0]["message"]["content"] = "not-json"
+    mismatched = _vendor_response(model="qwen3.8-flash")
+    responses = iter((invalid, mismatched))
+
+    def fake_urlopen(http_request, *, timeout):
+        del http_request, timeout
+        return _FakeHttpResponse(next(responses))
+
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+    )
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        try:
+            provider.audit(_request())
+        except QwenModelAuditProviderError as exc:
+            assert "outside the configured audit tier" in str(exc)
+            assert exc.audit_metadata["usage"]["total_tokens"] == 732
+            assert exc.audit_metadata["provider_attempts_with_usage"] == 2
+            assert exc.audit_metadata["provider_usage_complete"] is True
+        else:
+            raise AssertionError("mismatched retry model must fail")
+
+
+def test_qwen_adapter_reports_usage_when_bounded_json_retry_fails() -> None:
+    invalid = json.loads(json.dumps(_vendor_response()))
+    invalid["choices"][0]["message"]["content"] = "not-json"
+    calls = 0
+
+    def fake_urlopen(http_request, *, timeout):
+        del http_request, timeout
+        nonlocal calls
+        calls += 1
+        return _FakeHttpResponse(invalid)
+
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+    )
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        try:
+            provider.audit(_request())
+        except QwenModelAuditProviderError as exc:
+            assert "after retry" in str(exc)
+            assert exc.audit_metadata["provider_attempts"] == 2
+            assert exc.audit_metadata["provider_retry_reasons"] == [
+                "JSON_INVALID",
+                "JSON_INVALID",
+            ]
+            assert exc.audit_metadata["usage"]["total_tokens"] == 732
+            assert exc.audit_metadata["provider_attempts_with_usage"] == 2
+            assert exc.audit_metadata["provider_usage_complete"] is True
+        else:
+            raise AssertionError("invalid structured responses must fail")
+
+    assert calls == 2
 
 
 def test_provider_rejects_actual_model_from_another_configured_tier() -> None:
