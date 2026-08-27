@@ -27,3 +27,6 @@ Oracle、v5 实验 Profile、标题空壳页诊断，以及 Skywork/Kimi 的真�
 `11_kimi_smart_authorship_language_iteration.md` 记录 v8.2 对 partial localization 与系统性
 卡片/图标/模板 formulaicity 的原子评测改造，以及 Kimi-Smart 的真实 Qwen3.8 重放；旧六维
 合同保持可回放，新 authorship 只进入公式一次。
+
+`12_v83_gate_raster_validation.md` 记录 v8.3 对硬门候选页定向采样、同页同缺陷确认、
+栅格文字原子观察和训练准入优先级的真实双例验证。
