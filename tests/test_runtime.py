@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 from ppt_eval.domain import EvalCase, EvalProfile, SceneType
 from ppt_eval.infrastructure import LocalArtifactStore
@@ -8,7 +9,7 @@ from ppt_eval.runtime import LocalEvaluationRuntime
 from tests.fixtures.pptx_factory import build_pptx
 
 
-def test_local_artifact_store_uses_short_atomic_temp_name(tmp_path, monkeypatch) -> None:
+def test_local_artifact_store_uses_short_atomic_temp_name(tmp_path) -> None:
     written_names: list[str] = []
     original_write_bytes = Path.write_bytes
 
@@ -16,8 +17,8 @@ def test_local_artifact_store_uses_short_atomic_temp_name(tmp_path, monkeypatch)
         written_names.append(path.name)
         return original_write_bytes(path, data)
 
-    monkeypatch.setattr(Path, "write_bytes", tracked_write_bytes)
-    artifact = LocalArtifactStore(tmp_path / ("nested-" * 12)).put_bytes(b"observation")
+    with patch.object(Path, "write_bytes", tracked_write_bytes):
+        artifact = LocalArtifactStore(tmp_path / ("nested-" * 12)).put_bytes(b"observation")
 
     assert Path(artifact["uri"]).read_bytes() == b"observation"
     assert len(written_names) == 1
