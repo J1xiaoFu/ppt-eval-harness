@@ -12,16 +12,20 @@ New maintainers should start with the Chinese [onboarding and handover guide](do
 - Fifteen intrinsic metrics plus scenario metrics with page/object/bbox evidence.
 - Deterministic `OBSERVE -> PLAN -> ACT -> VERIFY -> FINALIZE/REVIEW` supervisor.
 - PPT-PDMS aggregation, high-confidence hard multipliers, required/optional `NA`, and isolated runtime `ERROR`.
-- Strict vendor-neutral LLM/VLM contracts. The pre-research v3 profiles score every case with
-  `qwen3.7-flash`, conditionally audit uncertain cases with `qwen3.7-plus`, then route remaining
-  uncertainty to a human. Historical v1 deterministic and v2 shadow formulas remain loadable;
+- Strict vendor-neutral LLM/VLM contracts. The pre-research v3.1 profiles score every case with
+  `qwen3.7-flash`, conditionally audit uncertain cases with `qwen3.8-flash` in the Advanced role,
+  then route remaining uncertainty to a human. Historical v1 deterministic and v2 shadow
+  Profiles remain loadable; exact v3.0 `qwen3.7-plus` runs require the historical Git ref or an
+  explicitly reconstructed provider/Profile pair;
   bit-identical replay also requires the corresponding historical Git SHA or container image.
 - Optional construct-aware aggregation fixes content/visual/delivery/handoff budgets and reports
   construct scores; it is exposed only through an unvalidated v4 candidate. Raster-only decks use
   rendered semantic content recovery instead of treating an empty object-tree text layer as zero.
-- The v5 experimental Profile replaces the scalar visual judge with six fixed visual criteria;
+- The v5 historical experimental Profile replaces the scalar visual judge with six fixed visual criteria;
   Harness validates every criterion and recomputes the visual score, while the model's global score
-  is retained only as metadata. Structured Plus routing remains intentionally disabled.
+  is retained only as metadata. The v6 candidate exposes the six criteria as independent metrics,
+  hard-caps VLM at 20% of visual, and keeps scalar Advanced routing disabled until a dimension-
+  isomorphic reviewer is released.
 - Local CLI/runtime, optional FastAPI/Celery/PostgreSQL/S3 adapters, review UI source, Docker Compose, run export, and hash-chained audit logs.
 - Feedback/edit-diff ingestion, active-sampling priorities, and parameter proposals that require frozen/challenge/shadow validation plus two human approvals; v1 intentionally exposes no automatic production apply method.
 - Three-part research/development/evaluation audit pack and a generated read-only HTML report.
@@ -39,13 +43,14 @@ ppt-eval audit verify
 The environment-aware CLI/API runtime reads the DashScope key from
 `DASHSCOPE_API_KEY`, or from the ignored local file
 `api/qwen3.7_flash_api.txt`. The default endpoint is
-`https://dashscope.aliyuncs.com/compatible-mode/v1`; both Qwen tiers run with
+`https://dashscope.aliyuncs.com/compatible-mode/v1`; both Qwen roles run with
 thinking enabled. Do not put a real key in `.env.example` or commit the `api/`
 directory.
 
-HTTP ceilings default to 120 seconds for Flash and 240 seconds for Plus
+HTTP ceilings default to 120 seconds for baseline and 240 seconds for Advanced
 (`PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS` and
-`PPT_EVAL_QWEN_PLUS_HTTP_TIMEOUT_SECONDS`). These are transport limits; the
+`PPT_EVAL_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS`). Legacy
+`PPT_EVAL_QWEN_PLUS_*` names remain accepted when the new names are unset. These are transport limits; the
 Profile-level `oracle_timeout_seconds` is not yet enforced by the scheduler.
 
 Local files named in `EvalCase.source_materials` are fail-closed for remote

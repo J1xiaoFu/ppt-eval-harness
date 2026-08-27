@@ -25,7 +25,10 @@ from ppt_eval.adapters.model_audits import (
 )
 
 QWEN_FLASH_MODEL = "qwen3.7-flash"
-QWEN_PLUS_MODEL = "qwen3.7-plus"
+QWEN_ADVANCED_MODEL = "qwen3.8-flash"
+QWEN_LEGACY_PLUS_MODEL = "qwen3.7-plus"
+# Historical symbol remains pinned for explicit v3.0 replay.
+QWEN_PLUS_MODEL = QWEN_LEGACY_PLUS_MODEL
 
 _PROVIDER_NAME = "qwen-dashscope-openai-compatible"
 _CHAT_COMPLETIONS_PATH = "/chat/completions"
@@ -42,7 +45,7 @@ class QwenOpenAICompatibleProvider:
     """Translate :class:`ModelAuditRequest` to Qwen Chat Completions.
 
     ``model`` is also the tier selector: callers pass ``qwen3.7-flash`` for
-    the inexpensive baseline and ``qwen3.7-plus`` for escalation.  The
+    the inexpensive baseline and ``qwen3.8-flash`` for advanced review.  The
     constructor intentionally accepts no arbitrary headers or request body
     fields, keeping credentials and vendor-specific behavior isolated here.
     """
@@ -427,34 +430,59 @@ def _usage_int(usage: Mapping[str, Any], key: str, *, fallback: str) -> int:
 
 
 def _sanitize_optional_qwen_localization(value: object) -> object:
-    """Drop only invalid optional bboxes while preserving an audit marker.
+    """Drop safely repairable invalid optional localization fields.
 
     Qwen occasionally returns pixel coordinates even after being instructed to
-    use normalized slide coordinates.  A finding grounded to a valid page is
-    still useful, so the vendor adapter removes that optional precision rather
-    than discarding the entire paid audit.  All required fields and every
-    other optional field remain subject to the strict provider-neutral schema.
+    use normalized slide coordinates, or emits JSON null/blank strings for
+    optional IDs.  A finding grounded to a valid page is still useful, so the
+    vendor adapter removes only those optional values rather than discarding
+    the entire paid audit.  Required fields and non-empty optional values remain
+    subject to the strict provider-neutral schema.
     """
 
     if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
         return value
     sanitized: list[object] = []
     for item in value:
-        if not isinstance(item, Mapping) or "bbox" not in item:
-            sanitized.append(item)
-            continue
-        if _is_normalized_bbox(item.get("bbox")):
+        if not isinstance(item, Mapping):
             sanitized.append(item)
             continue
         replacement = dict(item)
-        replacement.pop("bbox", None)
+        sanitized_fields: list[str] = []
+        if "bbox" in replacement and not _is_normalized_bbox(
+            replacement.get("bbox")
+        ):
+            replacement.pop("bbox", None)
+            sanitized_fields.append("bbox")
+        for field_name in ("object_id", "source_uri"):
+            field_value = replacement.get(field_name)
+            if field_name in replacement and (
+                field_value is None
+                or (isinstance(field_value, str) and not field_value.strip())
+            ):
+                replacement.pop(field_name, None)
+                sanitized_fields.append(field_name)
+        if not sanitized_fields:
+            sanitized.append(item)
+            continue
         payload = replacement.get("payload")
+        if payload is None:
+            payload = {}
         if isinstance(payload, Mapping) and all(
             isinstance(key, str) for key in payload
         ):
+            existing = payload.get("adapter_sanitized_fields", ())
+            existing_fields = (
+                [str(field) for field in existing]
+                if isinstance(existing, Sequence)
+                and not isinstance(existing, (str, bytes))
+                else []
+            )
             replacement["payload"] = {
                 **dict(payload),
-                "adapter_sanitized_fields": ["bbox"],
+                "adapter_sanitized_fields": list(
+                    dict.fromkeys((*existing_fields, *sanitized_fields))
+                ),
             }
         sanitized.append(replacement)
     return sanitized
@@ -515,7 +543,9 @@ def _nonblank(value: object, label: str) -> str:
 __all__ = [
     "DEFAULT_QWEN_HTTP_TIMEOUT_SECONDS",
     "QWEN_FLASH_MODEL",
+    "QWEN_ADVANCED_MODEL",
     "QWEN_PLUS_MODEL",
+    "QWEN_LEGACY_PLUS_MODEL",
     "QwenModelAuditProvider",
     "QwenModelAuditProviderError",
     "QwenOpenAICompatibleProvider",

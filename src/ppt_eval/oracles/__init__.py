@@ -31,8 +31,12 @@ from .baseline import (
     VisualHierarchyOracle,
 )
 from .model_audits import (
+    STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
     STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
     STRUCTURED_VLM_VISUAL_CRITERIA,
+    STRUCTURED_VLM_VISUAL_CRITERION_IDS,
+    STRUCTURED_VLM_VISUAL_DIMENSION_METRICS,
+    STRUCTURED_VLM_VISUAL_DIMENSIONS_PROMPT,
     AdvancedLlmContentReviewOracle,
     AdvancedLlmScenarioReviewOracle,
     AdvancedModelReviewOracle,
@@ -40,8 +44,10 @@ from .model_audits import (
     HighCostModelAuditOracle,
     LlmContentQualityAuditOracle,
     LlmScenarioComplianceAuditOracle,
+    StructuredDimensionsModelAuditOracle,
     StructuredModelAuditOracle,
     StructuredVlmVisualAuditOracle,
+    StructuredVlmVisualDimensionsAuditOracle,
     VlmVisualQualityAuditOracle,
 )
 from .model_source_access import ModelSourceAccessPolicy
@@ -97,6 +103,12 @@ def build_default_oracles(
             source_access_policy=model_source_access_policy,
         ),
         StructuredModelAuditOracle(
+            adapter,
+            llm_provider=llm_provider,
+            vlm_provider=vlm_provider,
+            source_access_policy=model_source_access_policy,
+        ),
+        StructuredDimensionsModelAuditOracle(
             adapter,
             llm_provider=llm_provider,
             vlm_provider=vlm_provider,
@@ -167,10 +179,16 @@ __all__ = [
     "SCENE_ORACLE_IDS",
     "SourceFaithfulnessOracle",
     "StyleConsistencyOracle",
+    "STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID",
     "STRUCTURED_MODEL_AUDIT_COMPOSITE_ID",
     "STRUCTURED_VLM_VISUAL_CRITERIA",
+    "STRUCTURED_VLM_VISUAL_CRITERION_IDS",
+    "STRUCTURED_VLM_VISUAL_DIMENSIONS_PROMPT",
+    "STRUCTURED_VLM_VISUAL_DIMENSION_METRICS",
+    "StructuredDimensionsModelAuditOracle",
     "StructuredModelAuditOracle",
     "StructuredVlmVisualAuditOracle",
+    "StructuredVlmVisualDimensionsAuditOracle",
     "TemplateResidueOracle",
     "TextGenerationQualityOracle",
     "TraceabilityOracle",

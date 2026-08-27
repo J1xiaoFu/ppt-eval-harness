@@ -348,7 +348,7 @@ class EvalProfile:
                     )
 
     @classmethod
-    def default(cls, scene: SceneType, version: str = "3.0") -> "EvalProfile":
+    def default(cls, scene: SceneType, version: str = "3.1") -> "EvalProfile":
         scene = SceneType(scene)
         try:
             major_version = int(version.split(".", 1)[0])
@@ -415,9 +415,17 @@ class EvalProfile:
             }
             metadata = {
                 "lifecycle": "PRE_RESEARCH",
-                "model_audit_routing": "FLASH_PLUS_HUMAN",
+                "model_audit_routing": (
+                    "FLASH_PLUS_HUMAN"
+                    if version == "3.0"
+                    else "FLASH_ADVANCED_HUMAN"
+                ),
                 "flash_model": "qwen3.7-flash",
-                "plus_model": "qwen3.7-plus",
+                **(
+                    {"plus_model": "qwen3.7-plus"}
+                    if version == "3.0"
+                    else {"advanced_model": "qwen3.8-flash"}
+                ),
             }
         return cls(
             profile_id=f"default-{scene.value}",

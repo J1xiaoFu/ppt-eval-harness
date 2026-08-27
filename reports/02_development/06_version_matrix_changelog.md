@@ -7,7 +7,7 @@
 | Audit schema | 1.0 | 同主版本向后兼容；未知字段显式处理 |
 | Eval API | v1 | 新字段可选；删除/改义升 v2 |
 | Oracle protocol | 1.0 | 返回 Schema 严格校验 |
-| PPT-PDMS Profile | v3 默认 / v4 construct 实验 / v2 Shadow / v1 formula | 不原地修改；v4 尚未校准且非默认 |
+| PPT-PDMS Profile | v3.1 默认 / v4.1 construct 实验 / v5 汇总视觉 / v6 六维视觉 / v2 Shadow / v1 formula | 新行为提升 Profile/Oracle 版本；完整历史回放同时固定 Git SHA |
 | Rubric | rubric-v1 | 报告携带版本 |
 | Dataset | local-synthetic-v1 / external starter manifests v1 | 每次切分固定 source revision、逐文件 hash、许可和用途分区 |
 | Runnable package | 0.1.0 | 领域契约同主版本兼容；行为变化发布新 Profile/Oracle 版本 |
@@ -16,6 +16,15 @@
 
 ### 2026-08-27
 
+- 新增 v6 六维视觉候选：一次 VLM 调用返回六个独立 metric，Prompt/Oracle `1.2.0`
+  要求单维 score/confidence/observability；低置信或不可观测转 N/A/REVIEW。
+- v6 将 `visual_deterministic=40%` 与 `visual_vlm=10%` 硬隔离；VLM 占合并视觉
+  20%、总分 10%，不会因可选确定性视觉指标 N/A 被重归一化扩权。
+- 现行 v3 Profile 升至 `3.1`、v4 候选升至 `4.1`：基线仍为 `qwen3.7-flash`，
+  Advanced 角色默认迁移至 `qwen3.8-flash`。新 `PPT_EVAL_QWEN_ADVANCED_*` 环境变量优先，
+  旧 `PLUS_*` 仅作无冲突兼容入口；历史 v3.0 精确回放需固定旧 Git ref。
+- v6 当前仍为 Flash-only；`qwen3.8-flash` 尚未作为六维复核结果接入，后续必须另发
+  criterion-isomorphic Advanced reviewer/Profile，不得使用旧标量视觉 Oracle。
 - 新增四个 `3.0` Profile：`qwen3.7-flash` 全量进入 base/scene 公式，单项复核线、
   Flash 分歧/困惑触发 `qwen3.7-plus`，Plus 仍不确定时转人工。
 - 新增 `template_residue` 指标，Layout 升至 `1.1.0`，降低真实卡片/时间线/背景装饰误报。

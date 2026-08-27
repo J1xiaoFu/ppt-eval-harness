@@ -1,6 +1,6 @@
 {
   "profile_id": "text-generation-v3",
-  "version": "3.0",
+  "version": "3.1",
   "scenario": "TEXT_GENERATION",
   "lambda_base": 0.55,
   "required_oracles": [
@@ -63,8 +63,8 @@
   },
   "metadata": {
     "lifecycle": "PRE_RESEARCH",
-    "model_audit_routing": "FLASH_PLUS_HUMAN",
+    "model_audit_routing": "FLASH_ADVANCED_HUMAN",
     "flash_model": "qwen3.7-flash",
-    "plus_model": "qwen3.7-plus"
+    "advanced_model": "qwen3.8-flash"
   }
 }

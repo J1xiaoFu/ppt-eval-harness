@@ -9,6 +9,7 @@ from ppt_eval.config import load_profile
 from ppt_eval.domain import EvalCase, EvalProfile, SceneType
 from ppt_eval.oracles.model_audits import (
     MODEL_AUDIT_COMPOSITE_ID,
+    STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
     STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
 )
 from ppt_eval.runtime import LocalEvaluationRuntime, build_runtime_from_environment
@@ -111,7 +112,30 @@ def test_structured_profile_enables_automatic_render_inputs(tmp_path) -> None:
     ) is False
 
 
-def test_environment_factory_wires_flash_to_baseline_and_plus_to_escalation(
+def test_structured_dimensions_profile_enables_automatic_render_inputs(
+    tmp_path,
+) -> None:
+    runtime = LocalEvaluationRuntime(
+        tmp_path / "var",
+        vlm_provider=RecordingProvider(),
+        slide_renderer=RecordingRenderer(),
+    )
+    profile = load_profile(
+        "configs/profiles/finished_deck_v6_structured_visual_dimensions_candidate.json"
+    )
+
+    assert (
+        STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID
+        in profile.enabled_oracle_ids
+    )
+    assert runtime._should_render_model_inputs(profile, {}) is True
+    assert runtime._should_render_model_inputs(
+        profile,
+        {"render_result": object()},
+    ) is False
+
+
+def test_environment_factory_wires_flash_baseline_and_qwen38_advanced_review(
     tmp_path,
 ) -> None:
     secret = "sk-runtime-factory-test-secret"
@@ -132,7 +156,7 @@ def test_environment_factory_wires_flash_to_baseline_and_plus_to_escalation(
     }
 
     assert baseline_models == {"qwen3.7-flash"}
-    assert advanced_models == {"qwen3.7-plus"}
+    assert advanced_models == {"qwen3.8-flash"}
     assert secret not in repr(runtime)
     assert secret not in repr(baseline.children[0].provider)
 

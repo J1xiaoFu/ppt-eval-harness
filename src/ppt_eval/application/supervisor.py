@@ -69,7 +69,8 @@ class RunSupervisor:
         SupervisorState.FINALIZE: frozenset(),
         SupervisorState.REVIEW: frozenset(),
     }
-    _TIERED_MODEL_AUDIT_ROUTING = "FLASH_PLUS_HUMAN"
+    _TIERED_MODEL_AUDIT_ROUTING = "FLASH_ADVANCED_HUMAN"
+    _LEGACY_TIERED_MODEL_AUDIT_ROUTING = "FLASH_PLUS_HUMAN"
 
     def __init__(
         self,
@@ -156,6 +157,7 @@ class RunSupervisor:
                 )
                 self._audit_model_routing(
                     run_id,
+                    routing_policy=str(profile.metadata.get("model_audit_routing")),
                     stage="FLASH",
                     provisional_decision=provisional_decision,
                     provisional_reasons=provisional_reasons,
@@ -178,7 +180,15 @@ class RunSupervisor:
                     )
                     self._audit_model_routing(
                         run_id,
-                        stage="PLUS",
+                        routing_policy=str(
+                            profile.metadata.get("model_audit_routing")
+                        ),
+                        stage=(
+                            "PLUS"
+                            if profile.metadata.get("model_audit_routing")
+                            == self._LEGACY_TIERED_MODEL_AUDIT_ROUTING
+                            else "ADVANCED"
+                        ),
                         provisional_decision=provisional_decision,
                         provisional_reasons=provisional_reasons,
                         outcome=routing,
@@ -374,10 +384,10 @@ class RunSupervisor:
     def _tiered_model_audit_enabled(cls, profile: EvalProfile) -> bool:
         """Require an explicit Profile opt-in before model-driven escalation."""
 
-        return (
-            profile.metadata.get("model_audit_routing")
-            == cls._TIERED_MODEL_AUDIT_ROUTING
-        )
+        return profile.metadata.get("model_audit_routing") in {
+            cls._TIERED_MODEL_AUDIT_ROUTING,
+            cls._LEGACY_TIERED_MODEL_AUDIT_ROUTING,
+        }
 
     @staticmethod
     def _flash_model_results(
@@ -524,6 +534,7 @@ class RunSupervisor:
         self,
         run_id: str,
         *,
+        routing_policy: str,
         stage: str,
         provisional_decision: EvaluationDecision,
         provisional_reasons: tuple[str, ...],
@@ -531,7 +542,7 @@ class RunSupervisor:
         advanced_call_status: str | None = None,
     ) -> None:
         payload: dict[str, Any] = {
-            "routing_policy": self._TIERED_MODEL_AUDIT_ROUTING,
+            "routing_policy": routing_policy,
             "stage": stage,
             "route": outcome.route.value,
             "should_call_advanced": outcome.should_call_advanced,
@@ -716,5 +727,10 @@ class EvaluationService:
     def __init__(self, supervisor: RunSupervisor) -> None:
         self.supervisor = supervisor
 
-    def evaluate(self, case: EvalCase, profile: EvalProfile, **kwargs) -> SupervisionOutcome:
+    def evaluate(
+        self,
+        case: EvalCase,
+        profile: EvalProfile,
+        **kwargs: Any,
+    ) -> SupervisionOutcome:
         return self.supervisor.run(case, profile, **kwargs)

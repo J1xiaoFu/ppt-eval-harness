@@ -16,8 +16,9 @@ from ppt_eval.adapters import (
     PromptSpec,
 )
 from ppt_eval.infrastructure import (
+    QWEN_ADVANCED_MODEL,
     QWEN_FLASH_MODEL,
-    QWEN_PLUS_MODEL,
+    QWEN_LEGACY_PLUS_MODEL,
     QwenModelAuditProvider,
     QwenModelAuditProviderError,
     QwenOpenAICompatibleProvider,
@@ -226,11 +227,40 @@ def test_qwen_adapter_drops_invalid_optional_bbox_with_audit_marker() -> None:
     assert response.evidence[0].payload["adapter_sanitized_fields"] == ["bbox"]
 
 
+def test_qwen_adapter_drops_null_or_blank_optional_ids_with_audit_marker() -> None:
+    vendor = json.loads(json.dumps(_vendor_response(model="qwen3.8-flash")))
+    content = json.loads(vendor["choices"][0]["message"]["content"])
+    content["evidence"][0]["object_id"] = ""
+    content["evidence"][0]["source_uri"] = None
+    vendor["choices"][0]["message"]["content"] = json.dumps(content)
+
+    def fake_urlopen(http_request, *, timeout):
+        del http_request, timeout
+        return _FakeHttpResponse(vendor)
+
+    request = _request()
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_ADVANCED_MODEL,
+    )
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        payload = provider.audit(request)
+    response = ModelAuditResponse.from_mapping(payload, request=request)
+
+    assert response.evidence[0].object_id is None
+    assert response.evidence[0].source_uri is None
+    assert response.evidence[0].payload["adapter_sanitized_fields"] == [
+        "object_id",
+        "source_uri",
+    ]
+
+
 def test_provider_rejects_actual_model_from_another_configured_tier() -> None:
     def fake_urlopen(http_request, *, timeout):
         del http_request, timeout
         return _FakeHttpResponse(
-            _vendor_response(model="qwen3.7-plus-2026-08-01")
+            _vendor_response(model="qwen3.8-flash-2026-08-01")
         )
 
     provider = QwenOpenAICompatibleProvider(
@@ -246,6 +276,26 @@ def test_provider_rejects_actual_model_from_another_configured_tier() -> None:
         )
 
 
+def test_provider_can_explicitly_replay_legacy_qwen37_plus() -> None:
+    def fake_urlopen(http_request, *, timeout):
+        del http_request, timeout
+        return _FakeHttpResponse(
+            _vendor_response(model="qwen3.7-plus-2026-08-01")
+        )
+
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_LEGACY_PLUS_MODEL,
+    )
+    request = _request()
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        payload = provider.audit(request)
+
+    response = ModelAuditResponse.from_mapping(payload, request=request)
+    assert response.model.model_id == "qwen3.7-plus-2026-08-01"
+
+
 def test_vlm_images_are_integrity_checked_and_sent_as_data_uris(
     tmp_path,
 ) -> None:
@@ -257,13 +307,13 @@ def test_vlm_images_are_integrity_checked_and_sent_as_data_uris(
     def fake_urlopen(http_request, *, timeout):
         del timeout
         captured["body"] = json.loads(http_request.data.decode("utf-8"))
-        return _FakeHttpResponse(_vendor_response(model="qwen3.7-plus-2026-08-01"))
+        return _FakeHttpResponse(_vendor_response(model="qwen3.8-flash-2026-08-01"))
 
     request = _request(modality=ModelAuditModality.VLM, image=image)
     provider = QwenOpenAICompatibleProvider(
         "fake-api-key",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        QWEN_PLUS_MODEL,
+        QWEN_ADVANCED_MODEL,
     )
 
     with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
@@ -297,7 +347,7 @@ def test_vlm_rejects_changed_image_before_network_call(tmp_path) -> None:
     provider = QwenOpenAICompatibleProvider(
         "fake-api-key",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        QWEN_PLUS_MODEL,
+        QWEN_ADVANCED_MODEL,
     )
 
     with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):

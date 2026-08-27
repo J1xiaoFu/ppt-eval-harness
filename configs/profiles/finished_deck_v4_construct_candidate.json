@@ -1,6 +1,6 @@
 {
   "profile_id": "finished-deck-v4-construct-candidate",
-  "version": "4.0",
+  "version": "4.1",
   "scenario": "FINISHED_DECK",
   "lambda_base": 1.0,
   "required_oracles": [
@@ -75,9 +75,9 @@
     "aggregation_candidate": "CONSTRUCT_CAP_V1",
     "calibration_status": "UNVALIDATED",
     "production_approved": false,
-    "model_audit_routing": "FLASH_PLUS_HUMAN",
+    "model_audit_routing": "FLASH_ADVANCED_HUMAN",
     "flash_model": "qwen3.7-flash",
-    "plus_model": "qwen3.7-plus",
+    "advanced_model": "qwen3.8-flash",
     "notes": "Fixed construct budgets; VLM is capped at 10% inside visual and 5% overall."
   }
 }

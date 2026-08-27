@@ -257,6 +257,42 @@ def test_plus_results_cost_and_provenance_are_appended_without_rescoring() -> No
     assert audit.verify_chain()
 
 
+def test_qwen38_advanced_route_uses_new_stage_without_breaking_legacy_route() -> None:
+    advanced = StaticOracle(
+        "advanced.model_review",
+        (
+            scored(
+                "advanced_visual",
+                0.90,
+                ScoreRole.DIAGNOSTIC,
+                model="qwen3.8-flash",
+            ),
+        ),
+    )
+    audit = InMemoryAuditLog()
+
+    outcome = supervisor_for(0.70, advanced, audit=audit).run(
+        evaluation_case(),
+        profile(routing="FLASH_ADVANCED_HUMAN"),
+    )
+
+    assert outcome.report.decision == EvaluationDecision.PASS
+    assert outcome.manifest.model_versions["advanced_visual"] == (
+        "qwen/qwen3.8-flash@2026-08-26"
+    )
+    routing_events = tuple(
+        event for event in audit.events if event.event_type == "MODEL_AUDIT_ROUTING"
+    )
+    assert [event.payload["stage"] for event in routing_events] == [
+        "FLASH",
+        "ADVANCED",
+    ]
+    assert all(
+        event.payload["routing_policy"] == "FLASH_ADVANCED_HUMAN"
+        for event in routing_events
+    )
+
+
 def test_uncertain_plus_result_routes_to_human_review() -> None:
     advanced = StaticOracle(
         "advanced.model_review",

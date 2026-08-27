@@ -402,7 +402,7 @@ def test_four_v3_default_profiles_score_flash_and_declare_escalation_route(
         assert profile.required_metric_ids == fallback.required_metric_ids
         assert profile.metric_review_thresholds == fallback.metric_review_thresholds
         for candidate in (profile, fallback):
-            assert candidate.version == "3.0"
+            assert candidate.version == "3.1"
             assert "high_cost.model_audits" in candidate.enabled_oracle_ids
             assert candidate.base_weights["template_residue"] == 0.08
             assert candidate.base_weights["llm_content_quality_audit"] == 0.08
@@ -428,10 +428,10 @@ def test_four_v3_default_profiles_score_flash_and_declare_escalation_route(
             assert candidate.metadata["lifecycle"] == "PRE_RESEARCH"
             assert (
                 candidate.metadata["model_audit_routing"]
-                == "FLASH_PLUS_HUMAN"
+                == "FLASH_ADVANCED_HUMAN"
             )
             assert candidate.metadata["flash_model"] == "qwen3.7-flash"
-            assert candidate.metadata["plus_model"] == "qwen3.7-plus"
+            assert candidate.metadata["advanced_model"] == "qwen3.8-flash"
 
             if scene == SceneType.READY_MADE:
                 assert "llm_scenario_compliance_audit" not in candidate.scene_weights

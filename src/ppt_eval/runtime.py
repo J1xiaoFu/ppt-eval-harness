@@ -43,6 +43,7 @@ from ppt_eval.oracles import (
 )
 from ppt_eval.oracles.model_audits import (
     MODEL_AUDIT_COMPOSITE_ID,
+    STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
     STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
 )
 from ppt_eval.reporting import export_run_report
@@ -249,6 +250,7 @@ class LocalEvaluationRuntime:
             return False
         if not {
             MODEL_AUDIT_COMPOSITE_ID,
+            STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
             STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
         }.intersection(profile.enabled_oracle_ids):
             return False
@@ -507,7 +509,8 @@ def build_runtime_from_environment(
     This is deliberately separate from ``LocalEvaluationRuntime.__init__`` so
     direct construction remains offline and deterministic.  Presence of
     ``DASHSCOPE_API_KEY`` or the ignored local key file enables both Qwen
-    tiers; an explicit ``PPT_EVAL_QWEN_AUDIT_ENABLED=false`` disables them.
+    tiers: qwen3.7-flash baseline and qwen3.8-flash advanced review.  An
+    explicit ``PPT_EVAL_QWEN_AUDIT_ENABLED=false`` disables them.
     Local ``source_materials`` files remain unavailable to remote model audits
     unless their parent root is explicitly supplied through
     ``model_source_roots`` or ``PPT_EVAL_MODEL_SOURCE_ROOTS``.
@@ -519,7 +522,7 @@ def build_runtime_from_environment(
         env,
         workspace_root=project_root,
     )
-    flash, plus = settings.providers()
+    flash, advanced = settings.providers()
     data_root = root if root is not None else env.get("PPT_EVAL_DATA_DIR", "var")
     source_roots = _configured_model_source_roots(
         model_source_roots,
@@ -536,8 +539,8 @@ def build_runtime_from_environment(
         data_root,
         llm_provider=flash,
         vlm_provider=flash,
-        advanced_llm_provider=plus,
-        advanced_vlm_provider=plus,
+        advanced_llm_provider=advanced,
+        advanced_vlm_provider=advanced,
         slide_renderer=slide_renderer,
         model_source_roots=source_roots,
         model_source_denied_paths=(

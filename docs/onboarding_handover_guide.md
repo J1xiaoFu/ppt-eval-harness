@@ -68,7 +68,7 @@ DecisionPolicy   决定业务上怎样处置
 | CLI 与同步评测 | 已实现 | 使用本地 JSON/JSONL 持久化，可完整运行四场景 |
 | 强制 Baseline、DAG、状态机、PDMS | 已实现 | 当前核心控制链已经落地并有测试 |
 | 32 个确定性原子 Oracle | 已实现 | 均为 PPTX 对象树或词法启发式 |
-| Flash 基线 + Plus 高级审计 | 已接线 | v3 全量调用 `qwen3.7-flash`，困惑时条件调用 `qwen3.7-plus`，再不确定转人工 |
+| Flash 基线 + Advanced 高级审计 | 已接线 | v3.1 全量调用 `qwen3.7-flash`，困惑时条件调用 `qwen3.8-flash`，再不确定转人工；历史 v3.0 使用 Plus |
 | FastAPI 同步接口 | 已实现 | 使用 `LocalEvaluationRuntime` |
 | FastAPI 异步接口 | 部分实现 | 使用进程内线程池，不是 Celery；服务重启后 Job 状态丢失 |
 | React 人工复核台 | 已实现 MVP | 支持列表、原子结果和 APPROVE/REJECT，无鉴权、分配和分页 |
@@ -79,10 +79,10 @@ DecisionPolicy   决定业务上怎样处置
 | OCR、VLM、LLM Judge | 部分实现 | Qwen LLM/VLM 真实 API 已接入严格 Provider 端口；OCR 尚未接入，模型分数尚未完成大样本金标校准 |
 | Calibrator | 未实现 | Leaf 启发式分直接进入 PDMS |
 | 参数候选治理 | 已实现 MVP | 可到 `RELEASE_CANDIDATE`，故意没有自动 production apply |
-| 分层审计路由 | 已实现预研版 | Flash -> Plus -> Human 路由可审计；生产灰度、统计监控和一键回滚尚未实现 |
+| 分层审计路由 | 已实现预研版 | Flash -> Advanced -> Human 路由可审计；生产灰度、统计监控和一键回滚尚未实现 |
 | Transactional Outbox | 目标设计 | 当前运行日志是本地追加式 JSONL |
 
-因此当前准确定位是：**可运行、可降级、可审计的预研 v3 Harness，而不是已经完成大样本金标校准和工业验收的最终 Judge。**
+因此当前准确定位是：**可运行、可降级、可审计的预研 v3.1 Harness，而不是已经完成大样本金标校准和工业验收的最终 Judge。**
 
 ## 4. 目录地图和推荐阅读顺序
 
@@ -91,7 +91,7 @@ src/ppt_eval/
   domain/                 稳定枚举和冻结数据契约
   application/            Supervisor、DAG 编译、调度、Oracle 端口
   adapters/               PPTX、事实快照、模型审计端口、PowerPoint/LibreOffice
-  oracles/                32 个确定性 Leaf、标量/结构化 Flash 审计、Plus 诊断审计和 Composite
+  oracles/                32 个确定性 Leaf、标量/结构化 Flash 审计、Advanced 诊断审计和 Composite
   scoring/                PPT-PDMS 与 DecisionPolicy
   infrastructure/         本地和生产候选存储/队列 Adapter
   runtime.py              本地 composition root，所有部件从这里接起来
@@ -326,7 +326,7 @@ supports()   当前 Case 是否适用
 evaluate()   返回一个或多个 OracleResult
 ```
 
-默认 DAG 节点粒度是 Composite，不是直接展开 Leaf。Flash 审计由 Profile 作为默认 Composite 节点调度；Plus 由 Supervisor 在 VERIFY 的第一次决策后条件调用。Composite 内部按固定顺序执行 Atomic Oracle。
+默认 DAG 节点粒度是 Composite，不是直接展开 Leaf。Flash 审计由 Profile 作为默认 Composite 节点调度；Advanced 由 Supervisor 在 VERIFY 的第一次决策后条件调用。Composite 内部按固定顺序执行 Atomic Oracle。
 第一次 Leaf 解析 PPTX 后，结果缓存进 `EvaluationContext.memo`，其他 Leaf 不会重复解压同一文件。
 
 ### 8.4 VERIFY
@@ -348,10 +348,10 @@ PASS 和质量 FAIL 进入 `FINALIZE`；REVIEW 和 Harness ERROR 进入 `REVIEW`
 | `scenario.instruction_alignment` | 4 | 文字生成 |
 | `scenario.source_faithfulness` | 6 | 项目总结 |
 | `scenario.asset_compliance` | 7 | 多模态 |
-| `high_cost.model_audits` | 3 | v3 四场景默认 Flash；ID 为兼容 v2 保留，无 Provider 时 N/A |
+| `high_cost.model_audits` | 3 | v3.1 四场景默认 Flash；ID 为兼容 v2 保留，无 Provider 时 N/A |
 | `structured.model_audits` | 3 | v5 实验替代组；自适应内容 + 六维视觉 + 场景合规 |
 
-Supervisor 还可条件执行 `advanced.model_review`，其 3 个 Plus 结果都是
+Supervisor 还可条件执行 `advanced.model_review`，其 3 个 Advanced 结果都是
 `DIAGNOSTIC`，避免对 Flash 分数二次计权。
 
 三个 ID 不要混淆：
@@ -412,18 +412,20 @@ Supervisor 还可条件执行 `advanced.model_review`，其 3 个 Plus 结果都
 | `chart_data_accuracy` | 场景加法 .20 | 有可编辑 chart 后，对预期值做平均词法召回 |
 | `media_availability` | 场景加法 .10 | 有可读取内嵌 payload 的媒体对象比例 |
 
-### 9.5 Flash -> Plus -> Human 模型审计
+### 9.5 Flash -> Advanced -> Human 模型审计
 
-v3 默认用 `qwen3.7-flash` 产生内容、视觉和场景合规分，并保存置信度、定位证据、
+v3.1 默认用 `qwen3.7-flash` 产生内容、视觉和场景合规分，并保存置信度、定位证据、
 model/prompt 版本、usage/cost 与 request/response 指纹。当总分处于 REVIEW 灰区、单项跌破
 复核线、Flash 与确定性结果相反，或 Flash 自身低置信/灰区/分歧时，Supervisor 才调用
-`qwen3.7-plus`。Plus 必须高置信且适用审计一致，否则转人工。
+`qwen3.8-flash` 承担的 Advanced 审计。Advanced 必须高置信且适用审计一致，否则转人工。
+这是调用角色迁移，尚不表示 qwen3.8 已被大样本证明更强；历史 v3.0/Plus 语义需通过
+历史 Git ref 或显式的 legacy 环境变量回放。
 
 模型模态不等于评测构念。内容 Oracle 平时消费可提取文本；当有文本页比例低于
 25% 且有页图时，会用多模态能力从像素恢复语义内容，但该分仍归入 content 构念，
 不是视觉加分。无文本且无页图时返回 `SEMANTIC_INPUT_UNOBSERVABLE` N/A，不再伪造内容 0 分。
 当前路由仍有已知限制：内容低、视觉高是跨构念画像，不应简单当作 judge disagreement；
-后续 Plus 需要按同构维度定向复核。
+后续 Advanced reviewer 需要按同构维度定向复核。
 
 确定性硬门不允许被任何模型覆盖，缺失确定性证据造成的非 `FULL` Coverage 也直接转人工。
 v1 纯确定性和 v2 Shadow Profile 仍可显式加载回放。详细接入契约见
@@ -457,7 +459,7 @@ A_scene = sum(w_j * s_j) / sum(w_j)
 v4 预研接口另支持 `CONSTRUCT_WEIGHTED_MEAN`：指标先在 content/visual/delivery/
 handoff 等构念内归一，再用固定构念权重聚合。这保证新增同类代理不会自动扩大
 整个构念的总份额，并在 `ScoreBreakdown.base_construct_scores` 中保留各构念分。
-`finished_deck_v4_construct_candidate.json` 仅是 `EXPERIMENTAL / UNVALIDATED`，当前默认仍为 v3 平坦聚合。
+`finished_deck_v4_construct_candidate.json` 仅是 `EXPERIMENTAL / UNVALIDATED`，当前默认仍为 v3.1 平坦聚合。
 
 最终公式：
 
@@ -517,7 +519,7 @@ S_full = 100 * product(M_base) * product(M_scene)
 | DAG 环或聚合重复指标 | Supervisor 捕获为 Harness ERROR |
 
 `oracle_timeout_seconds` 当前只存在于 Profile 并校验正数，Scheduler 尚未强制执行。Renderer 有自己的
-120 秒超时，Qwen Flash/Plus 默认传输上限为 120/240 秒，Celery task 有 soft 540 秒/
+120 秒超时，Qwen Flash/Advanced 默认传输上限为 120/240 秒，Celery task 有 soft 540 秒/
 hard 600 秒限制，但它们都不是通用 Leaf 级超时。
 
 对于不可信 PPT，顺序必须是：隔离上传 -> ZIP/OOXML preflight -> 解析 -> 必要时再调用 Office 渲染。
@@ -781,7 +783,7 @@ crop/长宽比和多种 token recall 门槛。
 4. 使用人工金标验证方向性、单调性、局部性、相关性、定位 F1 和 ECE/Brier。
 5. 参数候选只生成新 Profile，不原地覆盖旧 Profile。
 
-当前 v3 Profile 的 `lifecycle=PRE_RESEARCH`。按项目当前约定，预研期可直接修改功能、Oracle
+当前 v3.1 Profile 的 `lifecycle=PRE_RESEARCH`。按项目当前约定，预研期可直接修改功能、Oracle
 和 Profile，不要把下述“生产发布治理”误当作当前必经的开发门禁。当项目进入真正数据飞轮和
 生产阶段后，建议启用的治理流程为：
 
@@ -907,7 +909,7 @@ pii_level/consent/retention/owner/sha256/parent_id
 8. 为 feedback/proposal 增加查询、身份签名、参数白名单和 evidence Run 外键校验。
 9. 统一 `application/oracle.py` 与 `oracles/base.py` 中迁移期重复的 Composite 实现。
 10. 完成 API/UI E2E、故障注入、完整变形矩阵、400例金标、2,000缺陷变体和真实 Shadow。
-11. 为32个确定性 Leaf 分别完成 Oracle Card，并为 Flash/Plus 模型审计补充
+11. 为32个确定性 Leaf 分别完成 Oracle Card，并为 Flash/Advanced 模型审计补充
     model/prompt/usage/cost/稳定性与撤回条件。
 
 已知需要优先修正的具体规则问题：
@@ -932,7 +934,7 @@ pii_level/consent/retention/owner/sha256/parent_id
 ### 第二天：能沿代码追踪
 
 1. 从 `runtime.py` 追到 Supervisor、Compiler、Scheduler。
-2. 找出一次 ready-made Run 的 15 个 Baseline Leaf，并解释 Flash 审计与条件式 Plus 结果。
+2. 找出一次 ready-made Run 的 15 个 Baseline Leaf，并解释 Flash 审计与条件式 Advanced 结果。
 3. 用一个 Evidence 的 page/object/bbox 回到 PPT 对象。
 
 ### 第三天：能制造降级
@@ -973,8 +975,8 @@ pii_level/consent/retention/owner/sha256/parent_id
 ### Oracle 和评分
 
 - [ ] 能解释32个确定性 Leaf 的输入、N/A 条件、公式和限制。
-- [ ] 能解释 v1 确定性、v2 Shadow 和 v3 Flash 计分 + Plus 诊断的版本边界。
-- [ ] 能解释 Flash -> Plus -> Human 触发条件，以及确定性硬门为什么不可被覆盖。
+- [ ] 能解释 v1 确定性、v2 Shadow、v3.0 Plus 历史路由和 v3.1 Advanced 路由的版本边界。
+- [ ] 能解释 Flash -> Advanced -> Human 触发条件，以及确定性硬门为什么不可被覆盖。
 - [ ] 明确哪些指标是乘子、哪些是加法以及是否 required。
 - [ ] 修改指标时同步更新版本、Card、Profile、测试和实验记录。
 - [ ] 消费方不会把降级 `overall_score` 当作 `full_score`。

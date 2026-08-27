@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import pytest
+
 from ppt_eval.infrastructure.model_audit_runtime import (
+    DEFAULT_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS,
     DEFAULT_QWEN_BASE_URL,
     DEFAULT_QWEN_PLUS_HTTP_TIMEOUT_SECONDS,
     ModelAuditConfigurationError,
@@ -15,17 +18,21 @@ def test_settings_load_ignored_local_key_without_exposing_it(tmp_path) -> None:
     key_file.write_text(secret, encoding="utf-8")
 
     settings = QwenAuditSettings.from_environment({}, workspace_root=tmp_path)
-    flash, plus = settings.providers()
+    flash, advanced = settings.providers()
 
     assert settings.enabled is True
     assert settings.api_key_source == "ignored_local_file"
     assert settings.base_url == DEFAULT_QWEN_BASE_URL
     assert settings.http_timeout_seconds == 120.0
+    assert settings.advanced_http_timeout_seconds == (
+        DEFAULT_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS
+    )
     assert settings.plus_http_timeout_seconds == DEFAULT_QWEN_PLUS_HTTP_TIMEOUT_SECONDS
     assert flash is not None and flash.model == "qwen3.7-flash"
-    assert plus is not None and plus.model == "qwen3.7-plus"
+    assert advanced is not None and advanced.model == "qwen3.8-flash"
+    assert settings.plus_model == settings.advanced_model
     assert flash.timeout_seconds == 120.0
-    assert plus.timeout_seconds == DEFAULT_QWEN_PLUS_HTTP_TIMEOUT_SECONDS
+    assert advanced.timeout_seconds == DEFAULT_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS
     assert secret not in repr(settings)
     assert secret not in repr(flash)
 
@@ -89,24 +96,73 @@ def test_http_timeout_is_environment_configurable_and_validated(tmp_path) -> Non
         },
         workspace_root=tmp_path,
     )
-    flash, plus = settings.providers()
+    flash, advanced = settings.providers()
 
     assert settings.http_timeout_seconds == 42.5
-    assert settings.plus_http_timeout_seconds == DEFAULT_QWEN_PLUS_HTTP_TIMEOUT_SECONDS
+    assert settings.advanced_http_timeout_seconds == (
+        DEFAULT_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS
+    )
     assert flash is not None and flash.timeout_seconds == 42.5
-    assert plus is not None and plus.timeout_seconds == DEFAULT_QWEN_PLUS_HTTP_TIMEOUT_SECONDS
+    assert advanced is not None and advanced.timeout_seconds == (
+        DEFAULT_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS
+    )
 
-    explicit_plus = QwenAuditSettings.from_environment(
+    explicit_advanced = QwenAuditSettings.from_environment(
         {
             "DASHSCOPE_API_KEY": "sk-local-test-secret-value",
             "PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS": "42.5",
-            "PPT_EVAL_QWEN_PLUS_HTTP_TIMEOUT_SECONDS": "55",
+            "PPT_EVAL_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS": "55",
+            "PPT_EVAL_QWEN_ADVANCED_MODEL": "qwen3.8-flash-custom",
         },
         workspace_root=tmp_path,
     )
-    _, plus = explicit_plus.providers()
-    assert explicit_plus.plus_http_timeout_seconds == 55.0
-    assert plus is not None and plus.timeout_seconds == 55.0
+    _, advanced = explicit_advanced.providers()
+    assert explicit_advanced.advanced_http_timeout_seconds == 55.0
+    assert explicit_advanced.advanced_model == "qwen3.8-flash-custom"
+    assert advanced is not None and advanced.timeout_seconds == 55.0
+
+    legacy_alias = QwenAuditSettings.from_environment(
+        {
+            "DASHSCOPE_API_KEY": "sk-local-test-secret-value",
+            "PPT_EVAL_QWEN_PLUS_MODEL": "legacy-advanced-model",
+            "PPT_EVAL_QWEN_PLUS_HTTP_TIMEOUT_SECONDS": "56",
+        },
+        workspace_root=tmp_path,
+    )
+    assert legacy_alias.advanced_model == "legacy-advanced-model"
+    assert legacy_alias.advanced_http_timeout_seconds == 56.0
+
+    empty_preferred_uses_legacy = QwenAuditSettings.from_environment(
+        {
+            "DASHSCOPE_API_KEY": "sk-local-test-secret-value",
+            "PPT_EVAL_QWEN_ADVANCED_MODEL": "",
+            "PPT_EVAL_QWEN_PLUS_MODEL": "legacy-advanced-model",
+            "PPT_EVAL_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS": "",
+            "PPT_EVAL_QWEN_PLUS_HTTP_TIMEOUT_SECONDS": "57",
+        },
+        workspace_root=tmp_path,
+    )
+    assert empty_preferred_uses_legacy.advanced_model == "legacy-advanced-model"
+    assert empty_preferred_uses_legacy.advanced_http_timeout_seconds == 57.0
+
+    for conflicting in (
+        {
+            "PPT_EVAL_QWEN_ADVANCED_MODEL": "qwen3.8-flash",
+            "PPT_EVAL_QWEN_PLUS_MODEL": "qwen3.7-plus",
+        },
+        {
+            "PPT_EVAL_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS": "55",
+            "PPT_EVAL_QWEN_PLUS_HTTP_TIMEOUT_SECONDS": "56",
+        },
+    ):
+        with pytest.raises(ModelAuditConfigurationError, match="conflicts"):
+            QwenAuditSettings.from_environment(
+                {
+                    "DASHSCOPE_API_KEY": "sk-local-test-secret-value",
+                    **conflicting,
+                },
+                workspace_root=tmp_path,
+            )
 
     for invalid in ("0", "-1", "nan", "not-a-number"):
         try:
@@ -126,11 +182,11 @@ def test_http_timeout_is_environment_configurable_and_validated(tmp_path) -> Non
             QwenAuditSettings.from_environment(
                 {
                     "DASHSCOPE_API_KEY": "sk-local-test-secret-value",
-                    "PPT_EVAL_QWEN_PLUS_HTTP_TIMEOUT_SECONDS": invalid,
+                    "PPT_EVAL_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS": invalid,
                 },
                 workspace_root=tmp_path,
             )
         except ModelAuditConfigurationError as exc:
             assert "positive finite" in str(exc)
         else:
-            raise AssertionError(f"invalid Plus HTTP timeout {invalid!r} should fail")
+            raise AssertionError(f"invalid advanced HTTP timeout {invalid!r} should fail")
