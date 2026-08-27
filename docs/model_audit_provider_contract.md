@@ -56,12 +56,22 @@ cross-slide 使用最多 8 页。局部调用要求每个实际上传页一条 o
 `RENDERED_SLIDE_PAGE=N` 直接绑定。详见
 [grounded_visual_oracle_method.md](grounded_visual_oracle_method.md)。
 
-v8 已成为四场景默认路径。六个视觉构念分别是独立 DAG 节点
-`v8.visual.<criterion_id>`：v8.1 先调用 `qwen3.8-flash`，只有主结果 N/A/ERROR、单维低置信或
+v8 已成为四场景默认路径。v8.2 保留历史六个视觉构念，并新增独立
+`v8.visual.authorship_specificity` 跨页原子节点；它不修改 v6/v7 的六维常量。
+`v8.visual.<criterion_id>` 先调用 `qwen3.8-flash`，只有主结果 N/A/ERROR、单维低置信或
 同构念规则冲突时才通过独立 BigModel Provider 调用 `glm-5.3-flash`。模型仍只提交页级或跨页原子判断；最终
 `composition_craft`、`typography_craft`、`palette_craft`、`visual_communication` 和
 `visual_system_sequence` 由确定性 Reducer 生成。规则提供缺陷 cap，模型提供正向视觉信号，
 两者不作为两个独立构念重复计权。
+
+authorship 节点只判断跨页机械卡片化、图标仪式、模板轮廓重复、公式化文案和缺少特定主张，
+不得推断生成来源，也不得重判 composition、legibility、image relevance 或视觉系统一致性。
+规则与 VLM 只融合为 `authorship_specificity_v2` 一个公式项；旧字段保留为不计分诊断别名。
+
+functional hard gate 也不再对异构 observation 做全局生计数。规则先产生按 primary owner
+归一化的候选；geometry、typography、contrast、resolution 等可争议视觉候选必须由对应
+VLM 在已采样页面确认。模型未覆盖候选页、低置信或调用失败时返回 N/A/REVIEW，不能由规则
+单独作最终硬门决定；文件损坏、媒体载荷和有 GT 的 correctness 事实仍可确定性落门。
 
 仓库另有一个非默认的 `experimental_text_generation_model_scoring.json`，仅用于评分链路和金标校准实验。它明确标记 `EXPERIMENTAL / UNVALIDATED / production_approved=false`，其 3%/4% 权重不是生产标准。
 
@@ -195,7 +205,7 @@ baseline_provider = QwenOpenAICompatibleProvider(
 )
 ```
 
-v8.1 将 `qwen3.8-flash` 注入主线。`QWEN_FLASH_MODEL=qwen3.7-flash` 只作为历史代码兼容
+v8.2 将 `qwen3.8-flash` 注入主线。`QWEN_FLASH_MODEL=qwen3.7-flash` 只作为历史代码兼容
 符号保留；Provider 本身不做路由决策。
 
 线上请求具有以下约束：

@@ -2,7 +2,7 @@
 
 An evidence-first, deterministic evaluation harness for generated and existing PowerPoint decks. It combines an always-on intrinsic PPT quality baseline, scenario-specific Oracles, PDMS-style scoring, explicit degradation, human review, and append-only audit evidence.
 
-New maintainers should start with the Chinese [onboarding and handover guide](docs/onboarding_handover_guide.md). It explains the architecture, every component's responsibility, the 32 deterministic atomic metrics, the tiered model audits, scoring and degradation, local operations, extension patterns, release governance, troubleshooting, and current implementation gaps.
+New maintainers should start with the Chinese [onboarding and handover guide](docs/onboarding_handover_guide.md). It explains the architecture, every component's responsibility, the versioned deterministic atomic metrics, the tiered model audits, scoring and degradation, local operations, extension patterns, release governance, troubleshooting, and current implementation gaps.
 
 ## What works
 
@@ -34,7 +34,9 @@ New maintainers should start with the Chinese [onboarding and handover guide](do
 - The default v8 path stores complete object/page/pair/claim/requirement/asset observations in a
   content-addressed audit artifact, reduces them with versioned lower-tail-aware policies, fuses
   deterministic caps with model positive signals, and reports independent visual/layout/content/
-  full-deck training eligibility. No holistic LLM/VLM score enters the v8 formula.
+  full-deck training eligibility. v8.2 adds an independently owned language-consistency metric and
+  a seventh, cross-page authorship-specificity VLM audit for systemic card/icon/template formulaicity;
+  the authorship construct still enters the formula only once. No holistic LLM/VLM score enters it.
 - Local CLI/runtime, optional FastAPI/Celery/PostgreSQL/S3 adapters, review UI source, Docker Compose, run export, and hash-chained audit logs.
 - Feedback/edit-diff ingestion, active-sampling priorities, and parameter proposals that require frozen/challenge/shadow validation plus two human approvals; v1 intentionally exposes no automatic production apply method.
 - Three-part research/development/evaluation audit pack and a generated read-only HTML report.

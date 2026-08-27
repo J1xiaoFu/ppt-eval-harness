@@ -7,7 +7,14 @@ from PIL import Image, ImageDraw
 
 from ppt_eval.adapters import PptxAdapter
 from ppt_eval.application.oracle import EvaluationContext
-from ppt_eval.domain import EvalCase, EvalProfile, EvaluationScope, MetricStatus, SceneType
+from ppt_eval.domain import (
+    EvalCase,
+    EvalProfile,
+    EvaluationScope,
+    MetricStatus,
+    SceneType,
+    Severity,
+)
 from ppt_eval.oracles.v8_atomic import (
     AltTextOracle,
     AuthorshipSpecificitySignalsOracle,
@@ -15,6 +22,7 @@ from ppt_eval.oracles.v8_atomic import (
     DocumentStructureOracle,
     DuplicateSlideOracle,
     EffectiveImageResolutionOracle,
+    LanguageConsistencyOracle,
     MediaIntegrityOracle,
     PixelContrastProxyOracle,
     ReadingOrderProxyOracle,
@@ -396,6 +404,210 @@ def test_repeated_card_grid_lowers_authorship_signal_without_penalizing_minimali
     assert observations[0].metadata["visual_and_text_signals"] is True
     assert observations[0].evidence[0].payload["mechanical_grid_signal"] is True
     assert observations[0].local_score < observations[1].local_score
+
+
+def test_language_consistency_penalizes_partial_localization_but_allows_bilingual_policy(
+    tmp_path: Path,
+) -> None:
+    path = build_pptx(
+        tmp_path / "language-consistency.pptx",
+        (
+            (
+                {
+                    "kind": "text",
+                    "text": "Market Analysis 汇报人",
+                    "x": 600_000,
+                    "y": 250_000,
+                    "w": 7_000_000,
+                    "h": 700_000,
+                    "font_pt": 28,
+                },
+            ),
+            (
+                {
+                    "kind": "text",
+                    "text": "Define the market and quantify customer demand",
+                    "x": 600_000,
+                    "y": 250_000,
+                    "w": 7_000_000,
+                    "h": 700_000,
+                    "font_pt": 28,
+                },
+            ),
+            (
+                {
+                    "kind": "text",
+                    "text": "感谢观看 THANKS",
+                    "x": 600_000,
+                    "y": 250_000,
+                    "w": 7_000_000,
+                    "h": 700_000,
+                    "font_pt": 28,
+                },
+            ),
+        ),
+    )
+    oracle = LanguageConsistencyOracle(_ooxml())
+
+    undeclared = oracle.evaluate(_context(path)).observations[0]
+    bilingual = oracle.evaluate(
+        _context(path, metadata={"language_policy": "BILINGUAL"})
+    ).observations[0]
+
+    assert undeclared.scope == EvaluationScope.DECK
+    assert undeclared.local_score is not None and undeclared.local_score < 0.80
+    assert undeclared.metadata["minority_language_pages"] == [1, 3]
+    assert undeclared.metadata["primary_owner"] == "language_consistency"
+    assert bilingual.local_score == 1.0
+
+
+def test_language_consistency_ignores_common_technical_acronyms(tmp_path: Path) -> None:
+    path = build_pptx(
+        tmp_path / "language-acronyms.pptx",
+        (
+            (
+                {
+                    "kind": "text",
+                    "text": "使用 AI、SaaS、ROI 与 CRM 指标分析客户价值",
+                    "x": 600_000,
+                    "y": 250_000,
+                    "w": 8_000_000,
+                    "h": 700_000,
+                    "font_pt": 28,
+                },
+            ),
+        ),
+    )
+
+    observation = LanguageConsistencyOracle(_ooxml()).evaluate(_context(path)).observations[0]
+
+    assert observation.local_score == 1.0
+    assert observation.metadata["dominant_language"] == "ZH"
+
+
+def test_systematic_mixed_language_requires_explicit_bilingual_policy(
+    tmp_path: Path,
+) -> None:
+    mixed_slide = (
+        {
+            "kind": "text",
+            "text": "市场分析 Market analysis decision framework",
+            "x": 600_000,
+            "y": 250_000,
+            "w": 8_000_000,
+            "h": 700_000,
+            "font_pt": 28,
+        },
+    )
+    path = build_pptx(
+        tmp_path / "undeclared-systematic-bilingual.pptx",
+        (mixed_slide, mixed_slide, mixed_slide),
+    )
+    oracle = LanguageConsistencyOracle(_ooxml())
+
+    undeclared = oracle.evaluate(_context(path)).observations[0]
+    declared = oracle.evaluate(
+        _context(path, metadata={"allowed_languages": ["zh", "en"]})
+    ).observations[0]
+
+    assert undeclared.metadata["systematic_bilingual"] is True
+    assert undeclared.local_score is not None and undeclared.local_score < 0.50
+    assert declared.local_score == 1.0
+
+
+def test_placeholder_numbers_do_not_masquerade_as_authorship_specificity(
+    tmp_path: Path,
+) -> None:
+    path = build_pptx(
+        tmp_path / "authorship-placeholders.pptx",
+        (
+            (
+                {
+                    "kind": "text",
+                    "text": "Competitor A Speed 8/10 Cost ?/10; a SaaS firm saved millions.",
+                    "x": 600_000,
+                    "y": 250_000,
+                    "w": 8_000_000,
+                    "h": 900_000,
+                    "font_pt": 24,
+                },
+            ),
+            (
+                {
+                    "kind": "text",
+                    "text": "Acme renewal conversion rose 12% in 2026 after checkout time fell from 9 to 4 minutes.",
+                    "x": 600_000,
+                    "y": 250_000,
+                    "w": 8_000_000,
+                    "h": 900_000,
+                    "font_pt": 24,
+                },
+            ),
+        ),
+    )
+
+    observations = AuthorshipSpecificitySignalsOracle(_ooxml()).evaluate(
+        _context(path)
+    ).observations
+
+    assert observations[0].evidence[0].payload["placeholder_authorship_hits"] >= 2
+    assert observations[0].local_score < observations[1].local_score
+    assert all(item.severity != Severity.MAJOR for item in observations)
+
+
+def test_repeated_section_silhouette_is_an_authorship_signal(tmp_path: Path) -> None:
+    repeated = tuple(
+        {
+            "kind": "text",
+            "text": text,
+            "x": 900_000,
+            "y": 1_500_000,
+            "w": 8_000_000,
+            "h": 900_000,
+            "font_pt": 30,
+        }
+        for text in ("PART 01",)
+    )
+    path = build_pptx(
+        tmp_path / "repeated-silhouette.pptx",
+        (
+            repeated,
+            tuple({**item, "text": "PART 02"} for item in repeated),
+            tuple({**item, "text": "PART 03"} for item in repeated),
+            (
+                {
+                    "kind": "text",
+                    "text": "Revenue grew 18% after the named enterprise segment launched.",
+                    "x": 900_000,
+                    "y": 500_000,
+                    "w": 8_000_000,
+                    "h": 1_800_000,
+                    "font_pt": 30,
+                },
+                {
+                    "kind": "text",
+                    "text": "The result changes the channel investment decision.",
+                    "x": 1_500_000,
+                    "y": 3_000_000,
+                    "w": 6_000_000,
+                    "h": 1_000_000,
+                    "font_pt": 20,
+                },
+            ),
+        ),
+    )
+
+    observations = AuthorshipSpecificitySignalsOracle(_ooxml()).evaluate(
+        _context(path)
+    ).observations
+
+    assert all(
+        item.evidence[0].payload["repeated_silhouette_signal"] is True
+        for item in observations[:3]
+    )
+    assert max(item.local_score or 0.0 for item in observations[:3]) < (
+        observations[3].local_score or 0.0
+    )
 
 
 def test_requirement_helper_expands_page_scopes_without_deck_aggregation(tmp_path: Path) -> None:

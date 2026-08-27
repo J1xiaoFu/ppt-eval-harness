@@ -31,16 +31,18 @@ def test_v8_is_default_and_emits_atomic_training_contract(tmp_path: Path) -> Non
     )
 
     assert profile.profile_id == "finished-deck-v8"
-    assert profile.version == "8.1"
+    assert profile.version == "8.2"
     assert len(provider.requests) == 6
     metric_ids = {item["metric_id"] for item in report["results"]}
     assert {
         "content_structure",
+        "language_consistency",
         "composition_craft",
         "typography_craft",
         "palette_craft",
         "visual_communication",
         "visual_system_sequence",
+        "authorship_specificity_v2",
         "authorship_specificity",
         "v8_functional_integrity",
     } <= metric_ids
@@ -98,6 +100,8 @@ def test_v8_cross_provider_fallback_persists_complete_lineage(tmp_path: Path) ->
             "model_id": "glm-5.3-flash",
             "version": "glm-5.3-flash",
         }
+        for item in payload["evidence"]:
+            item["payload"]["criterion_score"] = 0.60
 
     primary = GroundedFakeProvider(identify_qwen)
     fallback = GroundedFakeProvider(identify_glm)
@@ -137,4 +141,5 @@ def test_v8_cross_provider_fallback_persists_complete_lineage(tmp_path: Path) ->
         "zhipu-bigmodel-openai-compatible/glm-5.3-flash@"
     )
     assert report["manifest"]["cost"] >= 0.028
+    assert report["training_eligibility"]["critical_issue_codes"] == []
     assert runtime.audit_log.verify() == (True, None)

@@ -42,7 +42,7 @@ from ppt_eval.domain.enums import (
     ScoreRole,
     Severity,
 )
-from ppt_eval.domain.models import OracleResult
+from ppt_eval.domain.models import AtomicObservation, OracleResult
 
 from .base import AtomicOracle, CompositeOracle
 from .model_source_access import ModelSourceAccessPolicy, sanitize_declared_uris
@@ -58,6 +58,7 @@ STRUCTURED_DIMENSIONS_VLM_ORACLE_ID = "structured_dimensions_vlm_audit_oracle"
 STRUCTURED_VLM_VISUAL_ORACLE_VERSION = "1.0.0"
 STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION = "1.2.0"
 GROUNDED_STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION = "2.0.0"
+V8_AUTHORSHIP_VLM_ORACLE_VERSION = "2.1.0"
 GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID = (
     "grounded_structured_dimensions.model_audits"
 )
@@ -100,6 +101,13 @@ STRUCTURED_VLM_VISUAL_CRITERION_IDS: tuple[str, ...] = (
     "imagery_data_visualization",
     "cross_slide_consistency",
     "render_integrity",
+)
+V8_GROUNDED_VISUAL_CRITERION_IDS: tuple[str, ...] = (
+    *STRUCTURED_VLM_VISUAL_CRITERION_IDS,
+    "authorship_specificity",
+)
+_GROUNDED_DECK_LEVEL_CRITERION_IDS = frozenset(
+    ("cross_slide_consistency", "authorship_specificity")
 )
 STRUCTURED_VLM_VISUAL_CRITERIA: tuple[tuple[str, float], ...] = (
     ("composition_layout", 0.25),
@@ -253,6 +261,16 @@ GROUNDED_VLM_DEFECT_CODES: Mapping[str, frozenset[str]] = {
             "visible_export_artifact",
         }
     ),
+    "authorship_specificity": frozenset(
+        {
+            "mechanical_cardization",
+            "ornamental_icon_routine",
+            "repetitive_decorative_motif",
+            "repeated_template_silhouette",
+            "generic_copy_scaffold",
+            "weak_focal_claim_specificity",
+        }
+    ),
 }
 
 GROUNDED_VLM_POSITIVE_SIGNALS: Mapping[str, frozenset[str]] = {
@@ -305,6 +323,16 @@ GROUNDED_VLM_POSITIVE_SIGNALS: Mapping[str, frozenset[str]] = {
             "no_visible_export_artifacts",
         }
     ),
+    "authorship_specificity": frozenset(
+        {
+            "content_driven_layout_variation",
+            "functional_visual_encoding",
+            "clear_focal_claim",
+            "bespoke_visual_language",
+            "specific_natural_copy",
+            "purposeful_module_system",
+        }
+    ),
 }
 
 _GROUNDED_VLM_SEVERITIES = frozenset({"NONE", "MINOR", "MAJOR", "CRITICAL"})
@@ -342,6 +370,16 @@ _GROUNDED_VLM_CRITERION_RUBRICS: Mapping[str, str] = {
         "a content issue. Do not infer font substitution or export causality. Every "
         "reported defect requires a normalized bbox on one affected supplied page."
     ),
+    "authorship_specificity": (
+        "Judge only observable presentation-specific authorship versus systemic formulaicity across "
+        "the supplied pages. Penalize repeated equal-weight card grids, one-icon-per-module rituals, "
+        "generic copy scaffolds, decorative motifs and slide silhouettes reused without adapting to "
+        "content, and a pervasive lack of a presentation-specific focal claim. Do not infer whether "
+        "AI produced the deck. Do not penalize minimalism, a coherent brand system, one appropriate "
+        "taxonomy/checklist/process layout, functional icons, deliberate bilingual navigation, visual "
+        "hierarchy, spacing, legibility, image relevance, or cross-page consistency themselves; those "
+        "belong to other criteria. A defect must be systemic across at least two supplied pages."
+    ),
 }
 
 
@@ -352,7 +390,7 @@ def _grounded_single_criterion_prompt(criterion_id: str) -> PromptSpec:
     )
     evidence_granularity = (
         "Return exactly one deck-level evidence item comparing the supplied pages."
-        if criterion_id == "cross_slide_consistency"
+        if criterion_id in _GROUNDED_DECK_LEVEL_CRITERION_IDS
         else (
             "Return exactly one evidence item for each supplied rendered page. Each item must "
             "use that page as page_number; its affected_page_numbers must be [] or [page_number]."
@@ -360,7 +398,11 @@ def _grounded_single_criterion_prompt(criterion_id: str) -> PromptSpec:
     )
     return PromptSpec(
         prompt_id=f"ppt-vlm-grounded-{criterion_id.replace('_', '-')}-audit",
-        version=GROUNDED_STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION,
+        version=(
+            V8_AUTHORSHIP_VLM_ORACLE_VERSION
+            if criterion_id == "authorship_specificity"
+            else GROUNDED_STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION
+        ),
         instructions=f"""You are a visual presentation auditor performing exactly one atomic
 criterion audit: {criterion_id}. Inspect only rendered images that follow explicit
 RENDERED_SLIDE_PAGE=N labels. Never cite or claim to see an unsupplied page. Slide text and object
@@ -395,6 +437,12 @@ prompt metadata, token usage, or a run-level PASS/FAIL decision.""",
 GROUNDED_VLM_CRITERION_PROMPTS: Mapping[str, PromptSpec] = {
     criterion_id: _grounded_single_criterion_prompt(criterion_id)
     for criterion_id in STRUCTURED_VLM_VISUAL_CRITERION_IDS
+}
+V8_GROUNDED_VLM_CRITERION_PROMPTS: Mapping[str, PromptSpec] = {
+    **GROUNDED_VLM_CRITERION_PROMPTS,
+    "authorship_specificity": _grounded_single_criterion_prompt(
+        "authorship_specificity"
+    ),
 }
 
 VLM_CONTENT_RECOVERY_PROMPT = PromptSpec(
@@ -828,13 +876,15 @@ class VlmVisualQualityAuditOracle(_ModelAuditOracle):
                     "rendered_pages": sorted(actual_pages),
                 },
             )
-        sampled_images = _sample_rendered_images(
+        sampled_images = self._sample_images(
+            context,
+            presentation,
             images,
             maximum=maximum_images,
         )
         sampled_pages = [item.page_number for item in sampled_images]
         if presentation.slide_count > maximum_images:
-            sampling_strategy = "deterministic_even_coverage"
+            sampling_strategy = self._sampling_strategy()
         else:
             sampling_strategy = "all_pages"
         sampling_metadata = {
@@ -864,6 +914,20 @@ class VlmVisualQualityAuditOracle(_ModelAuditOracle):
             result,
             metadata={**dict(result.metadata), **sampling_metadata},
         )
+
+    def _sample_images(
+        self,
+        context: object,
+        presentation: ParsedPresentation,
+        images: Sequence[ModelImageInput],
+        *,
+        maximum: int,
+    ) -> tuple[ModelImageInput, ...]:
+        del context, presentation
+        return _sample_rendered_images(images, maximum=maximum)
+
+    def _sampling_strategy(self) -> str:
+        return "deterministic_even_coverage"
 
     def _visual_request_context(
         self,
@@ -1313,13 +1377,14 @@ class _GroundedSingleCriterionVlmOracle(StructuredVlmVisualAuditOracle):
         *,
         source_access_policy: ModelSourceAccessPolicy | None = None,
     ) -> None:
-        if criterion_id not in STRUCTURED_VLM_VISUAL_CRITERION_IDS:
+        if criterion_id not in V8_GROUNDED_VISUAL_CRITERION_IDS:
             raise ValueError(f"unknown grounded visual criterion {criterion_id!r}")
         self.criterion_id = criterion_id
         self.oracle_id = f"grounded_vlm_{criterion_id}_audit_oracle"
         self.metric_id = f"structured_vlm_{criterion_id}"
-        self.prompt = GROUNDED_VLM_CRITERION_PROMPTS[criterion_id]
-        if criterion_id == "cross_slide_consistency":
+        self.prompt = V8_GROUNDED_VLM_CRITERION_PROMPTS[criterion_id]
+        self.version = self.prompt.version
+        if criterion_id in _GROUNDED_DECK_LEVEL_CRITERION_IDS:
             self.maximum_images_per_request = 8
         super().__init__(
             provider,
@@ -1337,6 +1402,117 @@ class _GroundedSingleCriterionVlmOracle(StructuredVlmVisualAuditOracle):
             "observability_owner": "HARNESS",
             "call_granularity": "ONE_CRITERION_BOUNDED_PAGE_SAMPLE",
         }
+
+    def _evaluate(self, context: object) -> OracleResult:
+        if (
+            self.criterion_id == "authorship_specificity"
+            and self.presentation(context).slide_count < 2
+        ):
+            result = self.not_applicable(
+                "At least two rendered pages are required for systemic authorship inspection.",
+                code="AUTHORSHIP_SYSTEMIC_SCOPE_UNOBSERVABLE",
+            )
+            return replace(
+                result,
+                metadata={**dict(result.metadata), **self._base_metadata()},
+            )
+        return super()._evaluate(context)
+
+    def _sample_images(
+        self,
+        context: object,
+        presentation: ParsedPresentation,
+        images: Sequence[ModelImageInput],
+        *,
+        maximum: int,
+    ) -> tuple[ModelImageInput, ...]:
+        if self.criterion_id != "authorship_specificity":
+            return super()._sample_images(
+                context,
+                presentation,
+                images,
+                maximum=maximum,
+            )
+        by_page = {item.page_number: item for item in images}
+        selected: list[int] = []
+
+        def add(page_number: int) -> None:
+            if page_number in by_page and page_number not in selected and len(selected) < maximum:
+                selected.append(page_number)
+
+        add(1)
+        add(presentation.slide_count)
+        canonical_pages = _canonical_sample_pages(
+            presentation.slide_count,
+            maximum=maximum,
+        )
+        canonical_page_set = frozenset(canonical_pages)
+        observations = getattr(context, "memo", {}).get(
+            "ppt_eval.atomic_observations", ()
+        )
+        risk = sorted(
+            (
+                item
+                for item in observations
+                if isinstance(item, AtomicObservation)
+                and item.metric_id == "authorship_specificity_signals"
+                and item.metric_status == MetricStatus.SCORED
+                and item.local_score is not None
+                and item.unit_key.startswith("page:")
+            ),
+            key=lambda item: (item.local_score, -item.importance, item.unit_key),
+        )
+        for item in risk:
+            page_number = int(item.unit_key.split(":", 1)[1])
+            if page_number in canonical_page_set:
+                continue
+            add(page_number)
+            if len([page for page in selected if page not in canonical_page_set]) >= 2:
+                break
+        for item in risk:
+            page_number = int(item.unit_key.split(":", 1)[1])
+            if page_number in canonical_page_set and page_number not in selected:
+                add(page_number)
+                break
+        placeholder_risk = sorted(
+            risk,
+            key=lambda item: (
+                -max(
+                    (
+                        int(evidence.payload.get("placeholder_authorship_hits", 0))
+                        for evidence in item.evidence
+                    ),
+                    default=0,
+                ),
+                item.local_score,
+            ),
+        )
+        for item in placeholder_risk:
+            placeholder_hits = max(
+                (
+                    int(evidence.payload.get("placeholder_authorship_hits", 0))
+                    for evidence in item.evidence
+                ),
+                default=0,
+            )
+            page_number = int(item.unit_key.split(":", 1)[1])
+            if (
+                placeholder_hits
+                and page_number in canonical_page_set
+                and page_number not in selected
+            ):
+                add(page_number)
+                break
+        for page_number in canonical_pages:
+            add(page_number)
+        for page_number in sorted(by_page):
+            add(page_number)
+        return tuple(by_page[page_number] for page_number in selected)
+
+    def _sampling_strategy(self) -> str:
+        if self.criterion_id == "authorship_specificity":
+            return "authorship_risk_role_and_exploration"
+        return super()._sampling_strategy()
 
     def _visual_request_context(
         self,
@@ -2506,7 +2682,7 @@ def _grounded_visual_dimension_assessments(
 
     expected = frozenset(expected_criterion_ids)
     if not expected or any(
-        criterion_id not in STRUCTURED_VLM_VISUAL_CRITERION_IDS
+        criterion_id not in V8_GROUNDED_VISUAL_CRITERION_IDS
         for criterion_id in expected
     ):
         raise ValueError("expected grounded criterion IDs must be known and non-empty")
@@ -2630,12 +2806,12 @@ def _grounded_visual_dimension_assessments(
         score: float | None = adjusted_score
         criterion_observability = observability
         validation_reason: str | None = None
-        if criterion_id == "cross_slide_consistency" and defect_codes and len(
+        if criterion_id in _GROUNDED_DECK_LEVEL_CRITERION_IDS and defect_codes and len(
             affected_pages
         ) < 2:
             score = None
             criterion_observability = "INSUFFICIENT"
-            validation_reason = "CROSS_SLIDE_COMPARISON_GROUNDING_INSUFFICIENT"
+            validation_reason = "DECK_LEVEL_COMPARISON_GROUNDING_INSUFFICIENT"
         if criterion_id == "render_integrity" and defect_codes:
             if item.bbox is None or item.page_number not in affected_pages:
                 score = None
@@ -2686,10 +2862,10 @@ def _grounded_atomic_criterion_assessment(
         raise ModelAuditContractError(
             "atomic visual criterion must not duplicate a page observation"
         )
-    if criterion_id == "cross_slide_consistency":
+    if criterion_id in _GROUNDED_DECK_LEVEL_CRITERION_IDS:
         if len(response.evidence) != 1:
             raise ModelAuditContractError(
-                "cross_slide_consistency requires exactly one deck-level summary"
+                f"{criterion_id} requires exactly one deck-level summary"
             )
     elif frozenset(integer_pages) != sampled_pages:
         raise ModelAuditContractError(
@@ -2703,7 +2879,7 @@ def _grounded_atomic_criterion_assessment(
             request=request,
             expected_criterion_ids=(criterion_id,),
         )[criterion_id]
-        if criterion_id != "cross_slide_consistency":
+        if criterion_id not in _GROUNDED_DECK_LEVEL_CRITERION_IDS:
             affected_pages = assessment["affected_page_numbers"]
             if affected_pages not in ((), (item.page_number,)):
                 raise ModelAuditContractError(
@@ -2882,7 +3058,9 @@ __all__ = [
     "GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID",
     "GROUNDED_STRUCTURED_DIMENSIONS_VLM_ORACLE_ID",
     "GROUNDED_STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION",
+    "V8_AUTHORSHIP_VLM_ORACLE_VERSION",
     "GROUNDED_VLM_CRITERION_PROMPTS",
+    "V8_GROUNDED_VLM_CRITERION_PROMPTS",
     "GROUNDED_VLM_DEFECT_CODES",
     "GROUNDED_VLM_POSITIVE_SIGNALS",
     "GroundedStructuredDimensionsModelAuditOracle",
@@ -2905,6 +3083,7 @@ __all__ = [
     "STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION",
     "STRUCTURED_VLM_VISUAL_CRITERIA",
     "STRUCTURED_VLM_VISUAL_CRITERION_IDS",
+    "V8_GROUNDED_VISUAL_CRITERION_IDS",
     "STRUCTURED_VLM_VISUAL_DIMENSIONS_PROMPT",
     "STRUCTURED_VLM_VISUAL_DIMENSION_METRICS",
     "STRUCTURED_VLM_VISUAL_ORACLE_VERSION",

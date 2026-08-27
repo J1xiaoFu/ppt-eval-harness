@@ -36,7 +36,7 @@ from ppt_eval.scoring import (
 
 from .base import clamp, evidence, load_presentation, normalize_text, read_materials, text_tokens
 from .model_audits import (
-    STRUCTURED_VLM_VISUAL_CRITERION_IDS,
+    V8_GROUNDED_VISUAL_CRITERION_IDS,
     GroundedSingleCriterionVlmOracle,
 )
 from .scenarios import (
@@ -53,16 +53,18 @@ from .v8_atomic import (
 
 V8_OBSERVATION_COMPOSITE_ID = "v8.atomic_observations"
 V8_REDUCER_ORACLE_ID = "v8.quality_reducers"
-V8_QUALITY_VERSION = "8.1.0"
+V8_QUALITY_VERSION = "8.2.0"
+V8_VISUAL_CRITERION_IDS = V8_GROUNDED_VISUAL_CRITERION_IDS
 
 V8_BASE_ADDITIVE_METRICS = (
     "content_structure",
+    "language_consistency",
     "composition_craft",
     "typography_craft",
     "palette_craft",
     "visual_communication",
     "visual_system_sequence",
-    "authorship_specificity",
+    "authorship_specificity_v2",
 )
 V8_SCENE_METRICS: Mapping[SceneType, tuple[str, ...]] = {
     SceneType.READY_MADE: (),
@@ -100,7 +102,43 @@ _CRITERION_RULE_METRICS: Mapping[str, tuple[str, ...]] = {
     ),
     "cross_slide_consistency": ("transition_coherence_proxy", "duplicate_slide"),
     "render_integrity": ("render_availability_parity",),
+    "authorship_specificity": ("authorship_specificity_signals",),
 }
+
+_CONTESTABLE_GATE_MODEL_METRIC_IDS: Mapping[str, str] = {
+    "slide_geometry_integrity": "structured_vlm_composition_layout",
+    "slide_typography_functional": "structured_vlm_typography_legibility",
+    "slide_pixel_contrast": "structured_vlm_color_contrast",
+    "effective_image_resolution": "structured_vlm_imagery_data_visualization",
+}
+_GATE_RULE_KIND_TO_MODEL_DEFECT_CODES: Mapping[str, frozenset[str]] = {
+    "out_of_bounds": frozenset(
+        {"content_overflow_or_cutoff", "unbalanced_space_distribution"}
+    ),
+    "overlap": frozenset({"occluded_content", "content_alignment_issue"}),
+    "small_text": frozenset({"improper_font_sizing", "poor_text_hierarchy"}),
+    "pixel_contrast_proxy": frozenset({"insufficient_color_contrast"}),
+    "effective_image_resolution": frozenset(
+        {"poor_image_quality_or_editing", "improper_image_sizing"}
+    ),
+}
+_DIRECT_FUNCTIONAL_GATE_METRIC_IDS = frozenset(
+    {
+        "slide_content_presence",
+        "media_integrity",
+        "render_availability_parity",
+        "requirement_satisfaction",
+        "numeric_claim_alignment",
+        "asset_presence",
+        "chart_series_accuracy",
+    }
+)
+_FUNCTIONAL_GATE_METRIC_IDS = frozenset(
+    {
+        *_DIRECT_FUNCTIONAL_GATE_METRIC_IDS,
+        *_CONTESTABLE_GATE_MODEL_METRIC_IDS,
+    }
+)
 
 
 def _scene(context: EvaluationContext) -> SceneType:
@@ -427,7 +465,7 @@ class V8TieredVisualCriterionOracle:
         *,
         source_access_policy: Any = None,
     ) -> None:
-        if criterion_id not in STRUCTURED_VLM_VISUAL_CRITERION_IDS:
+        if criterion_id not in V8_VISUAL_CRITERION_IDS:
             raise ValueError(f"unknown v8 visual criterion {criterion_id!r}")
         self.criterion_id = criterion_id
         self.oracle_id = f"v8.visual.{criterion_id}"
@@ -476,20 +514,60 @@ class V8TieredVisualCriterionOracle:
             reason = "RULE_MODEL_DISAGREEMENT"
         chosen = flash
         tier = "FLASH"
+        selected_attempt_tier = "FLASH"
+        advanced_rule_disagreement = False
         if reason is not None and self._advanced is not None:
             advanced = self._advanced.evaluate(context)
             attempted.append(("ADVANCED", self._advanced, advanced))
-            if advanced.metric_status == MetricStatus.SCORED:
-                chosen = advanced
-                tier = "ADVANCED"
+            if (
+                advanced.metric_status == MetricStatus.SCORED
+                and advanced.confidence >= 0.60
+            ):
+                selected_attempt_tier = "ADVANCED"
+                advanced_rule_disagreement = (
+                    self.criterion_id == "authorship_specificity"
+                    and self._rule_disagreement(
+                        context,
+                        advanced,
+                    )
+                )
+                if advanced_rule_disagreement:
+                    chosen = replace(
+                        advanced,
+                        metric_status=MetricStatus.NA,
+                        raw_value=None,
+                        normalized_score=None,
+                        confidence=min(flash.confidence, advanced.confidence),
+                        severity=Severity.INFO,
+                    )
+                    tier = "ADVANCED_RULE_DISAGREEMENT_REVIEW"
+                else:
+                    chosen = advanced
+                    tier = "ADVANCED"
             else:
+                chosen = replace(
+                    flash,
+                    metric_status=MetricStatus.NA,
+                    raw_value=None,
+                    normalized_score=None,
+                    severity=Severity.INFO,
+                )
                 tier = "FLASH_UNRESOLVED_ADVANCED_FAILED"
+        elif reason is not None:
+            chosen = replace(
+                flash,
+                metric_status=MetricStatus.NA,
+                raw_value=None,
+                normalized_score=None,
+                severity=Severity.INFO,
+            )
+            tier = "FLASH_UNRESOLVED_ADVANCED_UNCONFIGURED"
         routing_attempts = [
             _model_routing_attempt(
                 attempt_tier,
                 oracle,
                 result,
-                selected=result is chosen,
+                selected=attempt_tier == selected_attempt_tier,
             )
             for attempt_tier, oracle, result in attempted
         ]
@@ -505,6 +583,7 @@ class V8TieredVisualCriterionOracle:
                 "routing_mode": "ATOMIC_FLASH_ADVANCED_HUMAN",
                 "selected_tier": tier,
                 "escalation_reason": reason,
+                "advanced_rule_disagreement": advanced_rule_disagreement,
                 "criterion_id": self.criterion_id,
                 "routing_attempts": routing_attempts,
                 "routing_usage": _model_routing_usage(routing_attempts),
@@ -514,17 +593,33 @@ class V8TieredVisualCriterionOracle:
     def _rule_disagreement(
         self, context: EvaluationContext, result: OracleResult
     ) -> bool:
-        if result.normalized_score is None or result.normalized_score <= 0.75:
+        if result.normalized_score is None:
             return False
         rule_metrics = set(_CRITERION_RULE_METRICS[self.criterion_id])
         observations = context.memo.get("ppt_eval.atomic_observations", ())
-        return any(
+        rule_scores = [
+            float(item.local_score)
+            for item in observations
+            if isinstance(item, AtomicObservation)
+            and item.metric_id in rule_metrics
+            and item.local_score is not None
+        ]
+        if not rule_scores:
+            return False
+        model_high_rule_low = result.normalized_score > 0.75 and any(
             isinstance(item, AtomicObservation)
             and item.metric_id in rule_metrics
             and item.local_score is not None
             and item.local_score < 0.50
             for item in observations
         )
+        rule_mean = sum(rule_scores) / len(rule_scores)
+        model_low_rule_high = (
+            self.criterion_id == "authorship_specificity"
+            and result.normalized_score < 0.50
+            and rule_mean > 0.75
+        )
+        return model_high_rule_low or model_low_rule_high
 
 
 def _model_routing_attempt(
@@ -649,6 +744,9 @@ class V8QualityReducerOracle:
         metrics.append(
             MetricDefinition("v8_functional_integrity", ScoreRole.BASE_MULTIPLIER)
         )
+        metrics.append(
+            MetricDefinition("authorship_specificity", ScoreRole.DIAGNOSTIC)
+        )
         for metric_ids in V8_SCENE_METRICS.values():
             metrics.extend(
                 MetricDefinition(metric_id, ScoreRole.SCENE_ADDITIVE)
@@ -684,6 +782,12 @@ class V8QualityReducerOracle:
             if item.metric_status == MetricStatus.SCORED
             and item.normalized_score is not None
         }
+        model_confidences = {
+            item.metric_id: item.confidence
+            for item in prior_results
+            if item.metric_status == MetricStatus.SCORED
+            and item.normalized_score is not None
+        }
         results: list[OracleResult] = [self._integrity_gate(observations, prior_results)]
 
         content = self._reduce(
@@ -692,6 +796,14 @@ class V8QualityReducerOracle:
             EvaluationScope.PAGE,
             PAGE_QUALITY,
             "content_structure",
+            ScoreRole.BASE_ADDITIVE,
+        )
+        language = self._reduce(
+            batch,
+            ("language_consistency",),
+            EvaluationScope.DECK,
+            IMPORTANCE_COVERAGE,
+            "language_consistency",
             ScoreRole.BASE_ADDITIVE,
         )
         composition_rule = self._reduce(
@@ -737,17 +849,33 @@ class V8QualityReducerOracle:
             ScoreRole.DIAGNOSTIC,
             required=False,
         )
-        authorship = self._reduce(
+        authorship_rule = self._reduce(
             batch,
             ("authorship_specificity_signals",),
             EvaluationScope.PAGE,
             PAGE_QUALITY,
-            "authorship_specificity",
-            ScoreRole.BASE_ADDITIVE,
+            "authorship_specificity_rule",
+            ScoreRole.DIAGNOSTIC,
+        )
+        authorship = self._fuse_authorship(
+            authorship_rule,
+            model_scores.get("structured_vlm_authorship_specificity"),
+            model_confidences.get("structured_vlm_authorship_specificity"),
+        )
+        authorship_alias = replace(
+            authorship,
+            metric_id="authorship_specificity",
+            score_role=ScoreRole.DIAGNOSTIC,
+            metadata={
+                **dict(authorship.metadata),
+                "compatibility_alias_for": "authorship_specificity_v2",
+                "score_affecting": False,
+            },
         )
         results.extend(
             (
                 content,
+                language,
                 self._fuse(
                     "composition_craft",
                     composition_rule,
@@ -774,6 +902,7 @@ class V8QualityReducerOracle:
                     model_scores.get("structured_vlm_cross_slide_consistency"),
                 ),
                 authorship,
+                authorship_alias,
             )
         )
         results.extend(self._scene_results(context, batch))
@@ -853,6 +982,53 @@ class V8QualityReducerOracle:
             metadata={"fusion_mode": "MODEL_POSITIVE_SIGNAL"},
         )
 
+    def _fuse_authorship(
+        self,
+        rule_result: OracleResult,
+        model_score: float | None,
+        model_confidence: float | None,
+    ) -> OracleResult:
+        rule_score = rule_result.normalized_score
+        if model_score is None:
+            return self._na(
+                "authorship_specificity_v2",
+                "MODEL_AUTHORSHIP_EVIDENCE_MISSING",
+            )
+        if rule_score is None:
+            score = model_score
+            mode = "MODEL_ONLY_AUTHORSHIP"
+            confidence = model_confidence if model_confidence is not None else 0.0
+        else:
+            score = 0.30 * rule_score + 0.70 * model_score
+            mode = "SINGLE_CONSTRUCT_RULE_MODEL_FUSION"
+            confidence = 0.30 * rule_result.confidence + 0.70 * (
+                model_confidence if model_confidence is not None else 0.0
+            )
+        return OracleResult(
+            oracle_id=self.oracle_id,
+            metric_id="authorship_specificity_v2",
+            execution_status=ExecutionStatus.SUCCESS,
+            metric_status=MetricStatus.SCORED,
+            score_role=ScoreRole.BASE_ADDITIVE,
+            raw_value=score,
+            normalized_score=score,
+            confidence=min(0.85, confidence),
+            severity=Severity.INFO if score >= 0.70 else Severity.MINOR,
+            version=self.version,
+            metadata={
+                "fusion_mode": mode,
+                "rule_score": rule_score,
+                "model_score": model_score,
+                "model_confidence": model_confidence,
+                "rule_confidence": rule_result.confidence,
+                "rule_weight": 0.30 if model_score is not None else 1.0,
+                "model_weight": 0.70 if model_score is not None else 0.0,
+                "primary_owner": "authorship_specificity_v2",
+                "score_affecting": True,
+                "excluded_from_functional_hard_gate": True,
+            },
+        )
+
     def _integrity_gate(
         self,
         observations: tuple[AtomicObservation, ...],
@@ -862,24 +1038,109 @@ class V8QualityReducerOracle:
             (item for item in results if item.metric_id == "file_deliverability"),
             None,
         )
-        critical = [
+        scored = [
             item
             for item in observations
-            if item.severity == Severity.CRITICAL and (item.critical or item.key_unit)
+            if item.metric_id in _FUNCTIONAL_GATE_METRIC_IDS
+            and item.metric_status == MetricStatus.SCORED
         ]
-        scored = [item for item in observations if item.metric_status == MetricStatus.SCORED]
-        major = [item for item in scored if item.severity == Severity.MAJOR]
+        by_metric = {
+            metric_id: tuple(item for item in scored if item.metric_id == metric_id)
+            for metric_id in sorted({item.metric_id for item in scored})
+        }
+        major_prevalence_by_metric = {
+            metric_id: sum(item.severity == Severity.MAJOR for item in items)
+            / len(items)
+            for metric_id, items in by_metric.items()
+            if items
+        }
+        gate_candidates: list[tuple[str, str, tuple[AtomicObservation, ...]]] = []
+        for metric_id, items in by_metric.items():
+            critical_items = tuple(
+                item
+                for item in items
+                if item.severity == Severity.CRITICAL
+                and (item.critical or item.key_unit)
+            )
+            major_items = tuple(item for item in items if item.severity == Severity.MAJOR)
+            key_major_count = sum(item.key_unit for item in major_items)
+            if critical_items:
+                gate_candidates.append((metric_id, "CRITICAL", critical_items))
+            elif (
+                major_prevalence_by_metric.get(metric_id, 0.0) >= 0.20
+                or key_major_count >= 2
+            ):
+                gate_candidates.append((metric_id, "MAJOR", major_items))
+
+        verdicts: list[Mapping[str, Any]] = []
+        confirmed: list[tuple[str, str, tuple[AtomicObservation, ...]]] = []
+        unresolved: list[tuple[str, str, tuple[AtomicObservation, ...]]] = []
+        for metric_id, severity, items in gate_candidates:
+            model_severity: str | None
+            if metric_id in _DIRECT_FUNCTIONAL_GATE_METRIC_IDS:
+                verdict = "CONFIRMED"
+                model_metric_id = None
+                model_severity = severity
+            else:
+                model_metric_id = _CONTESTABLE_GATE_MODEL_METRIC_IDS.get(metric_id)
+                verdict, model_severity = self._gate_model_verdict(
+                    model_metric_id,
+                    items,
+                    results,
+                )
+            verdicts.append(
+                {
+                    "metric_id": metric_id,
+                    "rule_severity": severity,
+                    "verdict": verdict,
+                    "model_metric_id": model_metric_id,
+                    "model_severity": model_severity,
+                    "observation_ids": [item.observation_id for item in items],
+                }
+            )
+            if verdict == "CONFIRMED":
+                confirmed.append((metric_id, model_severity or severity, items))
+            elif verdict == "UNRESOLVED":
+                unresolved.append((metric_id, severity, items))
+
         multiplier = 1.0
         reason = "PASS"
         if file_result is not None and file_result.multiplier == 0.0:
             multiplier = 0.0
             reason = "FILE_DELIVERABILITY_FAILED"
-        elif critical:
+        elif any(severity == "CRITICAL" for _, severity, _ in confirmed):
             multiplier = 0.0
-            reason = "KEY_UNIT_CRITICAL"
-        elif scored and len(major) / len(scored) >= 0.20:
+            reason = "VLM_CONFIRMED_KEY_UNIT_CRITICAL"
+        elif confirmed:
             multiplier = 0.5
-            reason = "MAJOR_DEFECT_PREVALENCE"
+            reason = "CONFIRMED_FUNCTIONAL_DEFECT_PREVALENCE"
+        elif unresolved:
+            unresolved_items = tuple(
+                item for _, _, items in unresolved for item in items
+            )
+            return OracleResult(
+                oracle_id=self.oracle_id,
+                metric_id="v8_functional_integrity",
+                execution_status=ExecutionStatus.SUCCESS,
+                metric_status=MetricStatus.NA,
+                score_role=ScoreRole.BASE_MULTIPLIER,
+                raw_value="GATE_AUDIT_UNRESOLVED",
+                confidence=0.0,
+                severity=Severity.INFO,
+                evidence=tuple(
+                    evidence_item
+                    for item in unresolved_items[:20]
+                    for evidence_item in item.evidence[:1]
+                ),
+                version=self.version,
+                metadata={
+                    "reason_code": "GATE_AUDIT_UNRESOLVED",
+                    "gate_verdicts": verdicts,
+                    "major_prevalence_by_metric": major_prevalence_by_metric,
+                    "gate_owner_policy": "SCOPED_OWNER_WITH_VLM_CONFIRMATION",
+                },
+            )
+        confirmed_items = tuple(item for _, _, items in confirmed for item in items)
         return OracleResult(
             oracle_id=self.oracle_id,
             metric_id="v8_functional_integrity",
@@ -892,16 +1153,82 @@ class V8QualityReducerOracle:
             severity=Severity.INFO if multiplier == 1.0 else Severity.CRITICAL,
             evidence=tuple(
                 evidence_item
-                for item in critical[:20]
+                for item in confirmed_items[:20]
                 for evidence_item in item.evidence[:1]
             ),
             version=self.version,
             metadata={
                 "reason_code": reason,
-                "critical_observation_ids": [item.observation_id for item in critical],
-                "major_prevalence": len(major) / max(1, len(scored)),
+                "critical_observation_ids": [
+                    item.observation_id
+                    for _, severity, items in confirmed
+                    if severity == "CRITICAL"
+                    for item in items
+                ],
+                "major_prevalence": max(
+                    major_prevalence_by_metric.values(),
+                    default=0.0,
+                ),
+                "major_prevalence_by_metric": major_prevalence_by_metric,
+                "gate_verdicts": verdicts,
+                "gate_eligible_metric_ids": sorted(_FUNCTIONAL_GATE_METRIC_IDS),
+                "gate_eligible_observation_count": len(scored),
+                "gate_owner_policy": "SCOPED_OWNER_WITH_VLM_CONFIRMATION",
             },
         )
+
+    @staticmethod
+    def _gate_model_verdict(
+        model_metric_id: str | None,
+        candidates: tuple[AtomicObservation, ...],
+        results: tuple[OracleResult, ...],
+    ) -> tuple[str, str | None]:
+        if not model_metric_id:
+            return "UNRESOLVED", None
+        model = next(
+            (item for item in results if item.metric_id == model_metric_id),
+            None,
+        )
+        if (
+            model is None
+            or model.metric_status != MetricStatus.SCORED
+            or model.confidence < 0.60
+        ):
+            return "UNRESOLVED", None
+        metadata = model.metadata
+        sampled_pages = {
+            int(item) for item in metadata.get("sampled_pages", ())
+        }
+        affected_pages = {
+            int(item) for item in metadata.get("affected_page_numbers", ())
+        }
+        candidate_pages = {
+            int(evidence_item.page_number)
+            for item in candidates
+            for evidence_item in item.evidence
+            if evidence_item.page_number is not None
+        }
+        model_severity = str(metadata.get("defect_severity") or "NONE")
+        expected_defect_codes = {
+            defect_code
+            for item in candidates
+            for evidence_item in item.evidence
+            for defect_code in _GATE_RULE_KIND_TO_MODEL_DEFECT_CODES.get(
+                evidence_item.kind,
+                (),
+            )
+        }
+        model_defect_codes = {
+            str(item) for item in metadata.get("defect_codes", ())
+        }
+        isomorphic_defect = bool(expected_defect_codes & model_defect_codes)
+        if model_severity in {"MAJOR", "CRITICAL"} and isomorphic_defect and (
+            not candidate_pages or bool(candidate_pages & affected_pages)
+        ):
+            return "CONFIRMED", model_severity
+        if candidate_pages and candidate_pages <= sampled_pages:
+            return "REJECTED", model_severity
+        return "UNRESOLVED", model_severity
 
     def _scene_results(
         self,
@@ -954,6 +1281,7 @@ __all__ = [
     "V8_BASE_ADDITIVE_METRICS",
     "V8_OBSERVATION_COMPOSITE_ID",
     "V8_QUALITY_VERSION",
+    "V8_VISUAL_CRITERION_IDS",
     "V8_REDUCER_ORACLE_ID",
     "V8_SCENE_METRICS",
 ]

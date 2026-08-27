@@ -19,7 +19,7 @@ def test_v8_is_default_for_all_four_scenes() -> None:
     for scene, profile_id in PROFILE_IDS.items():
         profile = default_profile(scene)
         assert profile.profile_id == profile_id
-        assert profile.version == "8.1"
+        assert profile.version == "8.2"
         assert profile.metadata["runtime_wired"] is True
         assert profile.metadata["model_audit_routing"] == (
             "ATOMIC_FLASH_ADVANCED_HUMAN"
@@ -32,6 +32,7 @@ def test_v8_is_default_for_all_four_scenes() -> None:
             "zhipu-bigmodel-openai-compatible"
         )
         assert profile.metadata["advanced_model"] == "glm-5.3-flash"
+        assert profile.metadata["vlm_dimension_min_confidence"] == 0.60
         assert math.isclose(sum(profile.base_weights.values()), 1.0)
         if profile.scene_weights:
             assert math.isclose(sum(profile.scene_weights.values()), 1.0)
@@ -51,6 +52,7 @@ def test_v8_pipeline_exposes_each_visual_criterion_as_its_own_dag_node() -> None
         "v8.visual.imagery_data_visualization",
         "v8.visual.cross_slide_consistency",
         "v8.visual.render_integrity",
+        "v8.visual.authorship_specificity",
     ]
     assert oracle_ids[-1] == "v8.quality_reducers"
     assert set(dag.nodes[-1].dependencies) == {
@@ -60,6 +62,7 @@ def test_v8_pipeline_exposes_each_visual_criterion_as_its_own_dag_node() -> None
         "audit:v8-imagery",
         "audit:v8-system",
         "audit:v8-render",
+        "audit:v8-authorship",
     }
 
 

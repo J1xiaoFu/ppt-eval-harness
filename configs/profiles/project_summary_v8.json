@@ -1,6 +1,6 @@
 {
   "profile_id": "project-summary-v8",
-  "version": "8.1",
+  "version": "8.2",
   "scenario": "PROJECT_SUMMARY",
   "lambda_base": 0.40,
   "base_multiplier_metric_ids": ["file_deliverability", "critical_content_visibility", "internal_data_consistency", "v8_functional_integrity"],
@@ -12,13 +12,14 @@
   "required_oracles": ["baseline_ppt_quality"],
   "optional_oracles": [],
   "base_weights": {
-    "content_structure": 0.25,
+    "content_structure": 0.21,
+    "language_consistency": 0.04,
     "composition_craft": 0.20,
     "typography_craft": 0.10,
     "palette_craft": 0.08,
     "visual_communication": 0.15,
     "visual_system_sequence": 0.10,
-    "authorship_specificity": 0.12
+    "authorship_specificity_v2": 0.12
   },
   "scene_weights": {
     "source_claim": 0.30,
@@ -29,12 +30,13 @@
   },
   "required_metric_ids": [
     "content_structure",
+    "language_consistency",
     "composition_craft",
     "typography_craft",
     "palette_craft",
     "visual_communication",
     "visual_system_sequence",
-    "authorship_specificity",
+    "authorship_specificity_v2",
     "source_claim",
     "key_point",
     "numeric",
@@ -50,7 +52,8 @@
     {"node_id": "audit:v8-imagery", "oracle_id": "v8.visual.imagery_data_visualization", "kind": "AUDIT", "dependencies": ["observe:v8"]},
     {"node_id": "audit:v8-system", "oracle_id": "v8.visual.cross_slide_consistency", "kind": "AUDIT", "dependencies": ["observe:v8"]},
     {"node_id": "audit:v8-render", "oracle_id": "v8.visual.render_integrity", "kind": "AUDIT", "dependencies": ["observe:v8"]},
-    {"node_id": "reduce:v8", "oracle_id": "v8.quality_reducers", "kind": "REDUCE", "dependencies": ["audit:v8-composition", "audit:v8-typography", "audit:v8-color", "audit:v8-imagery", "audit:v8-system", "audit:v8-render"]}
+    {"node_id": "audit:v8-authorship", "oracle_id": "v8.visual.authorship_specificity", "kind": "AUDIT", "dependencies": ["observe:v8"]},
+    {"node_id": "reduce:v8", "oracle_id": "v8.quality_reducers", "kind": "REDUCE", "dependencies": ["audit:v8-composition", "audit:v8-typography", "audit:v8-color", "audit:v8-imagery", "audit:v8-system", "audit:v8-render", "audit:v8-authorship"]}
   ],
   "metadata": {
     "lifecycle": "PRE_RESEARCH",
@@ -58,6 +61,7 @@
     "production_approved": true,
     "runtime_wired": true,
     "model_audit_routing": "ATOMIC_FLASH_ADVANCED_HUMAN",
+    "vlm_dimension_min_confidence": 0.60,
     "flash_provider": "qwen-dashscope-openai-compatible",
     "flash_model": "qwen3.8-flash",
     "advanced_provider": "zhipu-bigmodel-openai-compatible",

@@ -57,7 +57,7 @@ from .baseline import (
 )
 from .scenarios import _asset_hash, _fact_strings, _requirements
 
-V8_ATOMIC_VERSION = "2.0.0"
+V8_ATOMIC_VERSION = "2.1.0"
 _MEDIA_KINDS = frozenset({"picture", "linked_picture", "media"})
 _SEMANTIC_VISUAL_KINDS = frozenset({"chart", "table", *_MEDIA_KINDS})
 _CLOSING_RE = re.compile(
@@ -95,6 +95,45 @@ _GENERIC_PHRASES = (
     "our solution",
     "next steps",
     "best in class",
+    "key takeaways",
+    "the call to action is clear",
+    "win or learn",
+    "from insight to action",
+    "turning insights into action",
+)
+_FORMULAIC_COPY_PATTERNS = (
+    re.compile(r"\b(?:from|turn(?:ing)?)\s+[a-z][a-z -]{1,40}\s+(?:to|into)\s+[a-z]", re.IGNORECASE),
+    re.compile(r"\b(?:rapid[- ]fire|unlock(?:ing)?|decode your|your strategic radar)\b", re.IGNORECASE),
+    re.compile(r"(?:从.+到.+|赋能.+增长|方法论.+驱动.+结果)"),
+)
+_PLACEHOLDER_AUTHORSHIP_PATTERNS = (
+    re.compile(r"\b(?:competitor|rival|company|client|customer)\s+[A-Z]\b"),
+    re.compile(r"\?\s*/\s*10\b"),
+    re.compile(
+        r"\b(?:a|an)\s+(?:saas firm|consumer brand|industrial player|company|enterprise|client)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"\bthis slide is 100% editable\b", re.IGNORECASE),
+)
+_CJK_CHARACTER_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff]")
+_LATIN_WORD_RE = re.compile(r"[A-Za-z]+(?:[-'][A-Za-z]+)*")
+_LANGUAGE_NEUTRAL_LATIN_TOKENS = frozenset(
+    {
+        "ai",
+        "api",
+        "arr",
+        "crm",
+        "esg",
+        "kpi",
+        "mvp",
+        "ppt",
+        "pptx",
+        "roi",
+        "saas",
+        "sam",
+        "som",
+        "tam",
+    }
 )
 
 
@@ -1299,6 +1338,162 @@ class TransitionCoherenceProxyOracle(ScopedObservationOracle):
         return tuple(result)
 
 
+def _language_counts(text: str) -> tuple[int, int]:
+    latin_tokens = [
+        token
+        for token in _LATIN_WORD_RE.findall(text)
+        if token.casefold() not in _LANGUAGE_NEUTRAL_LATIN_TOKENS
+        and not (token.isupper() and len(token) <= 5)
+    ]
+    return len(_CJK_CHARACTER_RE.findall(text)), len(latin_tokens)
+
+
+def _language_label(text: str) -> str:
+    cjk_units, latin_units = _language_counts(text)
+    if cjk_units >= 2 and latin_units >= 3:
+        return "MIXED"
+    if cjk_units >= 2:
+        return "ZH"
+    if latin_units >= 3:
+        return "EN"
+    return "UNKNOWN"
+
+
+def _declared_language_policy(context: object) -> tuple[str, frozenset[str]]:
+    metadata = case_metadata(context)
+    raw_policy = str(metadata.get("language_policy") or "").strip().upper()
+    raw_allowed = metadata.get("allowed_languages", ())
+    if isinstance(raw_allowed, str):
+        values: Sequence[object] = (raw_allowed,)
+    elif isinstance(raw_allowed, Sequence):
+        values = raw_allowed
+    else:
+        values = ()
+    aliases = {
+        "CHINESE": "ZH",
+        "ZH-CN": "ZH",
+        "ZH_CN": "ZH",
+        "ENGLISH": "EN",
+        "EN-US": "EN",
+        "EN_US": "EN",
+    }
+    allowed = frozenset(
+        aliases.get(str(value).strip().upper(), str(value).strip().upper())
+        for value in values
+        if str(value).strip()
+    )
+    request = str(getattr(_case(context), "request", "") or "")
+    normalized_request = normalize_text(request)
+    if any(marker in normalized_request for marker in ("bilingual", "双语", "中英双语")):
+        raw_policy = "BILINGUAL"
+        allowed = frozenset(("EN", "ZH"))
+    return raw_policy, allowed
+
+
+class LanguageConsistencyOracle(ScopedObservationOracle):
+    """Detect undeclared deck-level language switching without judging content quality."""
+
+    oracle_id = "v8.language_consistency"
+    metric_id = "language_consistency"
+    expected_scope = EvaluationScope.DECK
+
+    def _observe(
+        self,
+        context: object,
+        presentation: ParsedPresentation,
+    ) -> tuple[AtomicObservation, ...]:
+        page_text = {
+            slide.page_number: slide.visible_text.strip()
+            for slide in presentation.slides
+            if _language_label(slide.visible_text) != "UNKNOWN"
+        }
+        if not page_text:
+            return (
+                _na_observation(
+                    presentation,
+                    oracle_id=self.oracle_id,
+                    metric_id=self.metric_id,
+                    scope=self.expected_scope,
+                    unit_key="deck",
+                    reason="No extractable text is available for language-consistency inspection.",
+                ),
+            )
+        cjk_units = sum(_language_counts(text)[0] for text in page_text.values())
+        latin_units = sum(_language_counts(text)[1] for text in page_text.values())
+        dominant = "ZH" if cjk_units > latin_units else "EN"
+        labels = {page: _language_label(text) for page, text in page_text.items()}
+        mixed_pages = tuple(page for page, label in labels.items() if label == "MIXED")
+        minority_pages = tuple(
+            page
+            for page, label in labels.items()
+            if label not in {"UNKNOWN", "MIXED", dominant}
+        )
+        policy, allowed = _declared_language_policy(context)
+        explicit_bilingual = policy == "BILINGUAL" or {"EN", "ZH"} <= allowed
+        systematic_bilingual = len(mixed_pages) / len(page_text) >= 0.75
+        affected_weight = len(mixed_pages) + 0.75 * len(minority_pages)
+        inconsistency_ratio = affected_weight / len(page_text)
+        score = (
+            1.0
+            if explicit_bilingual
+            else clamp(1.0 - 1.50 * inconsistency_ratio)
+        )
+        affected_pages = tuple(dict.fromkeys((*mixed_pages, *minority_pages)))
+        details = tuple(
+            evidence(
+                self.metric_id,
+                f"language-{page_number}",
+                "undeclared_mixed_language"
+                if page_number in mixed_pages
+                else "minority_language_page",
+                "Visible language use differs from the dominant undeclared deck language.",
+                page_number=page_number,
+                payload={
+                    "page_language": labels[page_number],
+                    "dominant_language": dominant,
+                },
+            )
+            for page_number in affected_pages[:20]
+        ) or (
+            evidence(
+                self.metric_id,
+                "language-summary",
+                "language_consistency_summary",
+                "Deck language use is internally consistent or explicitly bilingual.",
+                payload={"dominant_language": dominant},
+            ),
+        )
+        return (
+            _scored_observation(
+                presentation,
+                oracle_id=self.oracle_id,
+                metric_id=self.metric_id,
+                scope=self.expected_scope,
+                unit_key="deck",
+                score=score,
+                raw_value=inconsistency_ratio,
+                confidence=0.90,
+                severity=Severity.MINOR if score < 0.90 else Severity.INFO,
+                evidence_items=details,
+                metadata={
+                    "dominant_language": dominant,
+                    "cjk_units": cjk_units,
+                    "latin_units": latin_units,
+                    "mixed_pages": list(mixed_pages),
+                    "minority_language_pages": list(minority_pages),
+                    "text_pages": len(page_text),
+                    "inconsistency_ratio": inconsistency_ratio,
+                    "language_policy": policy or "UNDECLARED",
+                    "allowed_languages": sorted(allowed),
+                    "explicit_bilingual": explicit_bilingual,
+                    "systematic_bilingual": systematic_bilingual,
+                    "primary_owner": "language_consistency",
+                    "not_authorship_penalty": True,
+                },
+            ),
+        )
+
+
 class AuthorshipSpecificitySignalsOracle(ScopedObservationOracle):
     oracle_id = "v8.authorship_specificity_signals"
     metric_id = "authorship_specificity_signals"
@@ -1307,6 +1502,13 @@ class AuthorshipSpecificitySignalsOracle(ScopedObservationOracle):
     def _observe(self, context: object, presentation: ParsedPresentation) -> tuple[AtomicObservation, ...]:
         del context
         result = []
+        silhouettes: dict[tuple[tuple[str, ...], tuple[int, ...]], list[int]] = {}
+        slide_silhouettes: dict[int, tuple[tuple[str, ...], tuple[int, ...]]] = {}
+        for slide in presentation.slides:
+            _, kinds, geometry = _slide_signature(slide)
+            silhouette = (kinds, geometry)
+            slide_silhouettes[slide.page_number] = silhouette
+            silhouettes.setdefault(silhouette, []).append(slide.page_number)
         for slide in presentation.slides:
             text = slide.visible_text.strip()
             role = classify_slide_role(slide, presentation.slide_count)
@@ -1325,7 +1527,12 @@ class AuthorshipSpecificitySignalsOracle(ScopedObservationOracle):
                 continue
             residue_codes = _template_residue_reasons(text)
             normalized = normalize_text(text)
-            generic_hits = sum(normalize_text(phrase) in normalized for phrase in _GENERIC_PHRASES)
+            generic_hits = sum(
+                normalize_text(phrase) in normalized for phrase in _GENERIC_PHRASES
+            ) + sum(bool(pattern.search(text)) for pattern in _FORMULAIC_COPY_PATTERNS)
+            placeholder_hits = sum(
+                len(pattern.findall(text)) for pattern in _PLACEHOLDER_AUTHORSHIP_PATTERNS
+            )
             anchors = len(_CONCRETE_ANCHOR_RE.findall(text))
             tokens = text_tokens(text)
             lexical_signal = clamp(len(tokens) / 24.0)
@@ -1342,13 +1549,48 @@ class AuthorshipSpecificitySignalsOracle(ScopedObservationOracle):
                 repeated_components >= 4
                 and repeated_components / max(1, len(component_signatures)) >= 0.50
             )
+            icon_like = [
+                item
+                for item in slide.visible_objects
+                if item.kind in {"freeform", "picture", "linked_picture"}
+                and 0.001 <= item.bbox.area <= 0.04
+            ]
+            short_labels = [
+                item
+                for item in slide.visible_objects
+                if item.visible_text
+                and 1 <= len(normalize_text(item.visible_text)) <= 60
+            ]
+            icon_module_signal = (
+                len(icon_like) >= 3
+                and len(short_labels) >= 3
+                and (repeated_components >= 3 or len(icon_like) >= 6)
+            )
+            silhouette_pages = silhouettes[slide_silhouettes[slide.page_number]]
+            repeated_silhouette = (
+                len(silhouette_pages) >= 3
+                and len(silhouette_pages) / max(1, presentation.slide_count) >= 0.12
+            )
+            ai_style_signal_count = sum(
+                (
+                    bool(generic_hits),
+                    bool(placeholder_hits),
+                    bool(mechanical_grid),
+                    bool(icon_module_signal),
+                    bool(repeated_silhouette),
+                )
+            )
             score = clamp(
                 0.35
                 + 0.35 * lexical_signal
                 + 0.10 * min(2, anchors)
-                - 0.20 * generic_hits
+                - 0.15 * min(2, generic_hits)
                 - 0.55 * bool(residue_codes)
                 - 0.15 * mechanical_grid
+                - 0.16 * icon_module_signal
+                - 0.20 * repeated_silhouette
+                - 0.25 * min(2, placeholder_hits)
+                - 0.08 * (ai_style_signal_count >= 2)
             )
             result.append(
                 _scored_observation(
@@ -1360,21 +1602,29 @@ class AuthorshipSpecificitySignalsOracle(ScopedObservationOracle):
                     score=score,
                     raw_value=anchors,
                     confidence=0.45,
+                    severity=Severity.MINOR if score < 0.70 else Severity.INFO,
                     importance=_importance(role),
                     evidence_items=(
                         evidence(
                             self.metric_id,
                             f"specificity-{slide.page_number}",
                             "authorship_rule_signals",
-                            "Concrete anchors, lexical variety, repeated components, generic phrases and template residue were recorded.",
+                            "Text specificity, placeholder risk, repeated silhouettes, icon modules and template residue were recorded.",
                             page_number=slide.page_number,
                             payload={
                                 "concrete_anchors": anchors,
                                 "distinct_tokens": len(tokens),
                                 "generic_phrase_hits": generic_hits,
+                                "placeholder_authorship_hits": placeholder_hits,
                                 "template_residue_codes": residue_codes,
                                 "repeated_component_count": repeated_components,
                                 "mechanical_grid_signal": mechanical_grid,
+                                "icon_like_object_count": len(icon_like),
+                                "short_label_count": len(short_labels),
+                                "icon_module_signal": icon_module_signal,
+                                "repeated_silhouette_signal": repeated_silhouette,
+                                "repeated_silhouette_pages": silhouette_pages,
+                                "ai_style_signal_count": ai_style_signal_count,
                             },
                         ),
                     ),
@@ -1383,6 +1633,8 @@ class AuthorshipSpecificitySignalsOracle(ScopedObservationOracle):
                         "proxy_only": True,
                         "visual_and_text_signals": True,
                         "not_semantic_authorship_proof": True,
+                        "primary_owner": "authorship_specificity",
+                        "excluded_from_functional_hard_gate": True,
                     },
                 )
             )
@@ -2109,6 +2361,7 @@ V8_ATOMIC_ORACLE_TYPES = (
     TitleBodyAlignmentOracle,
     DuplicateSlideOracle,
     TransitionCoherenceProxyOracle,
+    LanguageConsistencyOracle,
     AuthorshipSpecificitySignalsOracle,
     ReadingOrderProxyOracle,
     RenderAvailabilityParityOracle,

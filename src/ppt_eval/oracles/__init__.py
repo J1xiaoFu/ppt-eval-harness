@@ -41,10 +41,13 @@ from .model_audits import (
     STRUCTURED_VLM_VISUAL_CRITERION_IDS,
     STRUCTURED_VLM_VISUAL_DIMENSION_METRICS,
     STRUCTURED_VLM_VISUAL_DIMENSIONS_PROMPT,
+    V8_GROUNDED_VISUAL_CRITERION_IDS,
+    V8_GROUNDED_VLM_CRITERION_PROMPTS,
     AdvancedLlmContentReviewOracle,
     AdvancedLlmScenarioReviewOracle,
     AdvancedModelReviewOracle,
     AdvancedVlmVisualReviewOracle,
+    GroundedSingleCriterionVlmOracle,
     GroundedStructuredDimensionsModelAuditOracle,
     GroundedStructuredVlmVisualDimensionsAuditOracle,
     HighCostModelAuditOracle,
@@ -80,6 +83,7 @@ from .scenarios import (
     TraceabilityOracle,
 )
 from .v8_composites import (
+    V8_VISUAL_CRITERION_IDS,
     V8AtomicObservationComposite,
     V8QualityReducerOracle,
     V8TieredVisualCriterionOracle,
@@ -141,7 +145,7 @@ def build_default_oracles(
                 adapter,
                 source_access_policy=model_source_access_policy,
             )
-            for criterion_id in STRUCTURED_VLM_VISUAL_CRITERION_IDS
+            for criterion_id in V8_VISUAL_CRITERION_IDS
         ),
         V8QualityReducerOracle(),
     )
@@ -198,6 +202,7 @@ __all__ = [
     "GROUNDED_VLM_DEFECT_CODES",
     "GROUNDED_VLM_POSITIVE_SIGNALS",
     "GroundedStructuredDimensionsModelAuditOracle",
+    "GroundedSingleCriterionVlmOracle",
     "GroundedStructuredVlmVisualDimensionsAuditOracle",
     "HighCostModelAuditOracle",
     "InstructionCoverageOracle",
@@ -236,6 +241,9 @@ __all__ = [
     "V8AtomicObservationComposite",
     "V8QualityReducerOracle",
     "V8TieredVisualCriterionOracle",
+    "V8_VISUAL_CRITERION_IDS",
+    "V8_GROUNDED_VISUAL_CRITERION_IDS",
+    "V8_GROUNDED_VLM_CRITERION_PROMPTS",
     "build_default_oracles",
     "build_default_registry",
 ]

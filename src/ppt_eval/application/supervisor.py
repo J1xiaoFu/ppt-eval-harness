@@ -25,7 +25,6 @@ from ppt_eval.domain import (
     SceneType,
     ScoreBreakdown,
     ScoreRole,
-    Severity,
     SupervisorState,
 )
 from ppt_eval.scoring import DecisionPolicy, PptPdmsAggregator
@@ -751,7 +750,7 @@ class RunSupervisor:
                 "palette_craft",
                 "visual_communication",
                 "visual_system_sequence",
-                "authorship_specificity",
+                "authorship_specificity_v2",
             )
         )
         layout_score = average(
@@ -761,6 +760,7 @@ class RunSupervisor:
             metric_id
             for metric_id in (
                 "content_structure",
+                "language_consistency",
                 "instruction",
                 "audience",
                 "fact_claim",
@@ -776,12 +776,50 @@ class RunSupervisor:
         )
         content_score = average(content_metric_ids)
         full_score = breakdown.full_score
-        critical_codes = tuple(
-            observation.metric_id
-            for observation in outcome.observations
-            if observation.severity == Severity.CRITICAL
-            and (observation.critical or observation.key_unit)
+        gate_result = next(
+            (
+                item
+                for item in outcome.results
+                if item.metric_id == "v8_functional_integrity"
+            ),
+            None,
         )
+        gate_verdicts = (
+            gate_result.metadata.get("gate_verdicts", ())
+            if gate_result is not None
+            else ()
+        )
+        critical_codes = tuple(
+            str(verdict.get("metric_id"))
+            for verdict in gate_verdicts
+            if isinstance(verdict, Mapping)
+            and verdict.get("verdict") == "CONFIRMED"
+            and str(
+                verdict.get("model_severity")
+                or verdict.get("rule_severity")
+                or ""
+            )
+            == "CRITICAL"
+        )
+        if (
+            gate_result is not None
+            and gate_result.multiplier == 0.0
+            and gate_result.metadata.get("reason_code")
+            == "FILE_DELIVERABILITY_FAILED"
+        ):
+            critical_codes = tuple(
+                dict.fromkeys((*critical_codes, "file_deliverability"))
+            )
+        gate_unresolved = (
+            gate_result is not None
+            and gate_result.metric_status == MetricStatus.NA
+            and gate_result.metadata.get("reason_code") == "GATE_AUDIT_UNRESOLVED"
+        )
+        if gate_unresolved:
+            visual_score = None
+            layout_score = None
+            content_score = None
+            full_score = None
         raster_only = any(
             observation.metric_id == "slide_editability"
             and observation.metadata.get("raster_only") is True

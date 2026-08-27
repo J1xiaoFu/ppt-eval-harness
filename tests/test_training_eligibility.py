@@ -15,13 +15,14 @@ from ppt_eval.training_eligibility import (
 )
 
 BASE_WEIGHTS = {
-    "content_structure": 0.25,
+    "content_structure": 0.21,
+    "language_consistency": 0.04,
     "composition_craft": 0.20,
     "typography_craft": 0.10,
     "palette_craft": 0.08,
     "visual_communication": 0.15,
     "visual_system_sequence": 0.10,
-    "authorship_specificity": 0.12,
+    "authorship_specificity_v2": 0.12,
 }
 
 PROFILE_CONTRACTS = {
@@ -147,7 +148,7 @@ def test_v8_profile_drafts_freeze_construct_and_scene_contracts() -> None:
         )
         expected_lambda, expected_scene_weights = expected
 
-        assert profile["version"] == "8.1"
+        assert profile["version"] == "8.2"
         assert profile["lambda_base"] == expected_lambda
         assert profile["base_weights"] == BASE_WEIGHTS
         assert profile["scene_weights"] == expected_scene_weights

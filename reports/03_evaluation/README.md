@@ -23,3 +23,7 @@ Oracle、v5 实验 Profile、标题空壳页诊断，以及 Skywork/Kimi 的真�
 `10_qwen38_glm53_route_smoke.md` 记录 v8.1 固定 Prompt 模型切换烟测：
 `qwen3.8-flash` 主线在一份真实 deck 上六维全合法，`glm-5.3-flash` 使用同一原子 Prompt
 完成独立多模态合同验证；该单例不用于相关性结论或参数拟合。
+
+`11_kimi_smart_authorship_language_iteration.md` 记录 v8.2 对 partial localization 与系统性
+卡片/图标/模板 formulaicity 的原子评测改造，以及 Kimi-Smart 的真实 Qwen3.8 重放；旧六维
+合同保持可回放，新 authorship 只进入公式一次。

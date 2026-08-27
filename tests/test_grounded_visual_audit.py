@@ -24,6 +24,9 @@ from ppt_eval.oracles import (
     GROUNDED_VLM_DEFECT_CODES,
     GROUNDED_VLM_POSITIVE_SIGNALS,
     STRUCTURED_VLM_VISUAL_CRITERION_IDS,
+    V8_GROUNDED_VISUAL_CRITERION_IDS,
+    V8_GROUNDED_VLM_CRITERION_PROMPTS,
+    GroundedSingleCriterionVlmOracle,
     GroundedStructuredDimensionsModelAuditOracle,
     GroundedStructuredVlmVisualDimensionsAuditOracle,
     build_default_registry,
@@ -55,7 +58,7 @@ def _grounded_response(request: ModelAuditRequest) -> dict[str, Any]:
     positive = sorted(GROUNDED_VLM_POSITIVE_SIGNALS[criterion_id])[:2]
     pages = (
         (request.images[0].page_number,)
-        if criterion_id == "cross_slide_consistency"
+        if criterion_id in {"cross_slide_consistency", "authorship_specificity"}
         else tuple(image.page_number for image in request.images)
     )
     evidence = [
@@ -211,6 +214,44 @@ def test_grounded_prompt_encodes_aesthetic_anti_bias_boundaries() -> None:
     assert "Absence of defects is acceptable hygiene, not automatic excellence" in instructions
     assert "Misspelled, nonsensical, or source-garbled text is a content issue" in instructions
     assert "Never cite or claim to see an unsupplied page" in instructions
+
+
+def test_v8_authorship_is_a_seventh_isomorphic_criterion_without_changing_v7() -> None:
+    assert len(STRUCTURED_VLM_VISUAL_CRITERION_IDS) == 6
+    assert V8_GROUNDED_VISUAL_CRITERION_IDS == (
+        *STRUCTURED_VLM_VISUAL_CRITERION_IDS,
+        "authorship_specificity",
+    )
+    assert set(GROUNDED_VLM_CRITERION_PROMPTS) == set(
+        STRUCTURED_VLM_VISUAL_CRITERION_IDS
+    )
+    prompt = V8_GROUNDED_VLM_CRITERION_PROMPTS["authorship_specificity"]
+
+    assert prompt.version == "2.1.0"
+    assert "Do not infer whether AI produced the deck" in prompt.instructions
+    assert "one appropriate taxonomy/checklist/process layout" in prompt.instructions
+    assert "systemic across at least two supplied pages" in prompt.instructions
+    assert "mechanical_cardization" in GROUNDED_VLM_DEFECT_CODES[
+        "authorship_specificity"
+    ]
+    assert "functional_visual_encoding" in GROUNDED_VLM_POSITIVE_SIGNALS[
+        "authorship_specificity"
+    ]
+
+
+def test_v8_authorship_abstains_on_a_single_slide_without_provider_cost(
+    tmp_path,
+) -> None:
+    provider = GroundedFakeProvider()
+    result = GroundedSingleCriterionVlmOracle(
+        "authorship_specificity",
+        provider,
+        PptxAdapter(backend="ooxml"),
+    ).evaluate(_context(tmp_path))
+
+    assert result.metric_status == MetricStatus.NA
+    assert result.metadata["reason_code"] == "AUTHORSHIP_SYSTEMIC_SCOPE_UNOBSERVABLE"
+    assert provider.requests == []
 
 
 def test_grounded_oracle_normalizes_redundant_vendor_kind_labels(tmp_path) -> None:

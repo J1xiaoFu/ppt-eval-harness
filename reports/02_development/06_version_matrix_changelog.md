@@ -7,7 +7,7 @@
 | Audit schema | 1.0 | 同主版本向后兼容；未知字段显式处理 |
 | Eval API | v1 | 新字段可选；删除/改义升 v2 |
 | Oracle protocol | 1.0 result / v8 AtomicObservation | 原子观察与Reducer结果分离；legacy结果继续兼容 |
-| PPT-PDMS Profile | v8.1 默认 / v7 原子视觉 / v6 六维视觉 / v5 汇总视觉 / v4.1 construct / v3.1及更早历史 | 新行为提升 Profile/Oracle 版本；完整历史回放同时固定 Git SHA |
+| PPT-PDMS Profile | v8.2 默认 / v7 原子视觉 / v6 六维视觉 / v5 汇总视觉 / v4.1 construct / v3.1及更早历史 | 新行为提升 Profile/Oracle 版本；完整历史回放同时固定 Git SHA |
 | Rubric | rubric-v1 | 报告携带版本 |
 | Dataset | local-synthetic-v1 / external starter manifests v1 | 每次切分固定 source revision、逐文件 hash、许可和用途分区 |
 | Runnable package | 0.1.0 | 领域契约同主版本兼容；行为变化发布新 Profile/Oracle 版本 |
@@ -16,6 +16,10 @@
 
 ### 2026-08-27
 
+- v8.2 新增 4% `language_consistency`（从 content structure 划转）和第七个 v8-only
+  authorship VLM 原子节点；`authorship_specificity_v2` 以规则 30% / 语义 VLM 70% 在同一
+  12% 构念内融合，旧字段只作不计分别名。新增跨页模板轮廓、机械卡片/图标、占位案例、
+  公式化文案和风险页采样；语言/authorship 明确排除在 functional gate 之外，防止双罚。
 - v8 成为四场景默认：新增九种 observation scope、完整 observation artifact、三类 Reducer、
   多阶段固定 DAG 和 visual/layout/content/full-deck 四轨训练准入。
 - 重写/去重 page/object/pair/claim/requirement/asset/chart-series 原子能力；critical requirement、

@@ -94,7 +94,7 @@ def test_v6_profile_loads_without_replacing_v3_or_v5() -> None:
     )
     assert V5_AGGREGATE_METRIC in v5.base_weights
     assert default.profile_id == "finished-deck-v8"
-    assert default.version == "8.1"
+    assert default.version == "8.2"
 
 
 def test_v6_uses_only_versioned_six_dimension_model_composite() -> None:
