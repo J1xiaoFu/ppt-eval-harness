@@ -83,7 +83,10 @@ class LocalArtifactStore:
         destination = self.root / digest[:2] / digest
         destination.parent.mkdir(parents=True, exist_ok=True)
         if not destination.exists():
-            temporary = destination.with_suffix(f".{uuid.uuid4().hex}.tmp")
+            # Keep the atomic sibling name short.  Appending a UUID to the
+            # 64-character digest can cross the legacy Windows MAX_PATH
+            # boundary even when the final content-addressed path is valid.
+            temporary = destination.parent / f".{uuid.uuid4().hex}.tmp"
             temporary.write_bytes(data)
             os.replace(temporary, destination)
         return {

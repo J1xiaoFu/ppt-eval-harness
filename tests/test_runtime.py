@@ -1,8 +1,29 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from ppt_eval.domain import EvalCase, EvalProfile, SceneType
+from ppt_eval.infrastructure import LocalArtifactStore
 from ppt_eval.runtime import LocalEvaluationRuntime
 from tests.fixtures.pptx_factory import build_pptx
+
+
+def test_local_artifact_store_uses_short_atomic_temp_name(tmp_path, monkeypatch) -> None:
+    written_names: list[str] = []
+    original_write_bytes = Path.write_bytes
+
+    def tracked_write_bytes(path: Path, data: bytes) -> int:
+        written_names.append(path.name)
+        return original_write_bytes(path, data)
+
+    monkeypatch.setattr(Path, "write_bytes", tracked_write_bytes)
+    artifact = LocalArtifactStore(tmp_path / ("nested-" * 12)).put_bytes(b"observation")
+
+    assert Path(artifact["uri"]).read_bytes() == b"observation"
+    assert len(written_names) == 1
+    assert written_names[0].startswith(".")
+    assert written_names[0].endswith(".tmp")
+    assert len(written_names[0]) <= 40
 
 
 def test_local_runtime_persists_report_manifest_and_valid_audit_chain(tmp_path) -> None:
