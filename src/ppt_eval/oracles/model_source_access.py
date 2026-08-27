@@ -58,6 +58,7 @@ _SENSITIVE_FILENAMES = frozenset(
         "id_ecdsa",
         "id_ed25519",
         "id_rsa",
+        "glm5.3_flash_api.txt",
         "qwen3.7_flash_api.txt",
         "secrets.json",
     }

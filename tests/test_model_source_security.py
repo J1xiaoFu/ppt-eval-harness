@@ -154,18 +154,20 @@ def test_sensitive_api_and_env_files_stay_blocked_inside_broad_root(tmp_path) ->
     api_dir.mkdir()
     api_key = api_dir / "qwen3.7_flash_api.txt"
     api_key.write_text("sk-sensitive-api-key-value", encoding="utf-8")
+    glm_api_key = api_dir / "glm5.3_flash_api.txt"
+    glm_api_key.write_text("sensitive-bigmodel-api-key-value", encoding="utf-8")
     env_file = tmp_path / ".env"
     env_file.write_text("DASHSCOPE_API_KEY=sk-sensitive", encoding="utf-8")
     policy = ModelSourceAccessPolicy(allowed_roots=(tmp_path,))
 
     prepared = policy.prepare(
-        (str(api_key), str(env_file)),
+        (str(api_key), str(glm_api_key), str(env_file)),
         maximum_bytes=100_000,
     )
 
     assert prepared.text == ""
     assert prepared.source_uris == ()
-    assert prepared.blocked_count == 2
+    assert prepared.blocked_count == 3
 
 
 def test_proc_self_environ_is_denied_even_with_filesystem_root_allowed() -> None:

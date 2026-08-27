@@ -28,10 +28,12 @@ from ppt_eval.flywheel import (
 )
 from ppt_eval.infrastructure import (
     DEFAULT_QWEN_KEY_FILE,
+    DEFAULT_ZHIPU_KEY_FILE,
     JsonlAuditLog,
     JsonRunRepository,
     LocalArtifactStore,
     QwenAuditSettings,
+    ZhipuAuditSettings,
     font_fingerprint,
     git_sha,
     to_primitive,
@@ -562,9 +564,10 @@ def build_runtime_from_environment(
 
     This is deliberately separate from ``LocalEvaluationRuntime.__init__`` so
     direct construction remains offline and deterministic.  Presence of
-    ``DASHSCOPE_API_KEY`` or the ignored local key file enables both Qwen
-    tiers: qwen3.7-flash baseline and qwen3.8-flash advanced review.  An
-    explicit ``PPT_EVAL_QWEN_AUDIT_ENABLED=false`` disables them.
+    ``DASHSCOPE_API_KEY`` or the ignored local key file enables the
+    qwen3.8-flash primary tier.  The independent ``ZAI_API_KEY`` (or ignored
+    local BigModel key file) enables glm-5.3-flash criterion-isomorphic
+    fallback.  Each provider has its own kill switch, endpoint and timeout.
     Local ``source_materials`` files remain unavailable to remote model audits
     unless their parent root is explicitly supplied through
     ``model_source_roots`` or ``PPT_EVAL_MODEL_SOURCE_ROOTS``.
@@ -572,11 +575,25 @@ def build_runtime_from_environment(
 
     env = dict(os.environ if environment is None else environment)
     project_root = _find_workspace_root(workspace_root)
-    settings = QwenAuditSettings.from_environment(
+    qwen_settings = QwenAuditSettings.from_environment(
         env,
         workspace_root=project_root,
     )
-    flash, advanced = settings.providers()
+    zhipu_settings = ZhipuAuditSettings.from_environment(
+        env,
+        workspace_root=project_root,
+    )
+    protected_model_credentials = tuple(
+        secret
+        for secret in (qwen_settings.api_key, zhipu_settings.api_key)
+        if secret
+    )
+    flash, _legacy_qwen_advanced = qwen_settings.providers(
+        protected_secrets=protected_model_credentials,
+    )
+    advanced = zhipu_settings.provider(
+        protected_secrets=protected_model_credentials,
+    )
     data_root = root if root is not None else env.get("PPT_EVAL_DATA_DIR", "var")
     source_roots = _configured_model_source_roots(
         model_source_roots,
@@ -589,6 +606,12 @@ def build_runtime_from_environment(
     key_file = Path(key_file_value)
     if not key_file.is_absolute():
         key_file = project_root / key_file
+    zhipu_key_file_value = str(
+        env.get("PPT_EVAL_ZHIPU_API_KEY_FILE") or DEFAULT_ZHIPU_KEY_FILE
+    ).strip()
+    zhipu_key_file = Path(zhipu_key_file_value)
+    if not zhipu_key_file.is_absolute():
+        zhipu_key_file = project_root / zhipu_key_file
     return LocalEvaluationRuntime(
         data_root,
         llm_provider=flash,
@@ -602,6 +625,7 @@ def build_runtime_from_environment(
             project_root / ".git",
             project_root / ".env",
             key_file,
+            zhipu_key_file,
         ),
     )
 

@@ -47,8 +47,13 @@ Profile 不再按 deterministic/VLM 分组，而按质量属性计分。确定�
 - visual system/sequence：10%
 - authorship specificity：12%
 
-六个视觉 criterion 是独立 DAG 节点。Flash 未解决、单维置信不足或同构念规则冲突时，
-只升级该 criterion 到 qwen3.8-flash。模型分不能高于确定性缺陷推导出的 cap。
+六个视觉 criterion 是独立 DAG 节点。v8.1 以 `qwen3.8-flash` 为主线；结果未解决、
+单维置信不足或同构念规则冲突时，只把该 criterion 升级到独立 BigModel Provider 的
+`glm-5.3-flash`。Prompt、权重和 Reducer 不因 Provider 切换而改变，模型分也不能高于
+确定性缺陷推导出的 cap。两次调用的模型身份、fingerprint、Evidence、token 和报告成本
+分别保留在 `routing_attempts`，总成本不会只计算最终被采用的结果。
+若厂商 usage 不含货币费用，attempt 标记 `cost_known=false`；数值 `0.0` 不解释为免费，
+也不能在尚无版本化价格表时宣称成本预算已经覆盖该调用。
 
 `authorship_specificity` 使用视觉与文案的低置信代理检查机械卡片化、组件重复、空泛标题和
 套路句式。它只能作为加分构念与 REVIEW 信号；极简、黑白、暗色和无装饰本身不扣分。

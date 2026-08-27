@@ -10,6 +10,7 @@ from ppt_eval.adapters.renderers import LibreOfficeRenderer, PowerPointRenderer
 
 _SECRET_ENVIRONMENT = {
     "DASHSCOPE_API_KEY": "sk-dashscope-must-not-leak",
+    "ZAI_API_KEY": "zhipu-api-key-must-not-leak",
     "OPENAI_API_KEY": "sk-openai-must-not-leak",
     "DATABASE_PASSWORD": "database-password-must-not-leak",
     "SERVICE_TOKEN": "service-token-must-not-leak",

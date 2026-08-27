@@ -6,6 +6,7 @@ import argparse
 import html
 import json
 import math
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -1022,6 +1023,52 @@ def model_routing_events(path: Path, run_id: str) -> list[dict[str, Any]]:
     return events
 
 
+def atomic_model_routing_events(
+    results: Mapping[str, Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    """Summarize v8 per-criterion provider attempts for JSON and HTML audit."""
+
+    events: list[dict[str, Any]] = []
+    for metric_id in STRUCTURED_VLM_DIMENSION_IDS:
+        result = results.get(metric_id)
+        if not isinstance(result, Mapping):
+            continue
+        metadata = result.get("metadata", {})
+        if not isinstance(metadata, Mapping):
+            continue
+        attempts = metadata.get("routing_attempts")
+        if not isinstance(attempts, Sequence) or isinstance(attempts, (str, bytes)):
+            continue
+        route_parts: list[str] = []
+        for attempt in attempts:
+            if not isinstance(attempt, Mapping):
+                continue
+            model = attempt.get("model")
+            actual_model = (
+                str(model.get("model_id") or "").strip()
+                if isinstance(model, Mapping)
+                else ""
+            )
+            configured_model = str(attempt.get("configured_model") or "").strip()
+            label = actual_model or configured_model or str(attempt.get("tier") or "model")
+            status = str(attempt.get("metric_status") or "UNKNOWN")
+            route_parts.append(f"{label}:{status}")
+        if not route_parts:
+            continue
+        reason = str(metadata.get("escalation_reason") or "").strip()
+        route = " -> ".join(route_parts)
+        if reason:
+            route += f" ({reason})"
+        events.append(
+            {
+                "stage": str(metadata.get("criterion_id") or metric_id),
+                "route": route,
+                "attempts": [dict(item) for item in attempts if isinstance(item, Mapping)],
+            }
+        )
+    return events
+
+
 def evaluate(
     dataset_root: Path,
     output: Path,
@@ -1110,6 +1157,11 @@ def evaluate(
         elif qwen_v3:
             runtime = build_runtime_from_environment(
                 output / "runtime" / case_id,
+                environment=(
+                    {**dict(os.environ), "PPT_EVAL_ZHIPU_AUDIT_ENABLED": "false"}
+                    if flash_only
+                    else None
+                ),
                 workspace_root=ROOT,
             )
             model_artifacts: Mapping[str, Any] | None = {
@@ -1204,15 +1256,18 @@ def evaluate(
                 "structured_visual_analysis": structured_visual_analysis,
                 "metrics": selected_metrics(results),
                 "model_audit_statuses": model_statuses,
-                "model_audit_routing": model_routing_events(
-                    audit_path,
-                    report["run_id"],
-                ),
+                "model_audit_routing": [
+                    *model_routing_events(audit_path, report["run_id"]),
+                    *atomic_model_routing_events(results),
+                ],
                 "review_reasons": list(report.get("review_reasons", ())),
                 "model_versions": dict(report["manifest"].get("model_versions", {})),
                 "prompt_versions": dict(report["manifest"].get("prompt_versions", {})),
                 "model_token_usage": {
-                    metric_id: results[metric_id].get("metadata", {}).get("usage", {})
+                    metric_id: (
+                        results[metric_id].get("metadata", {}).get("routing_usage")
+                        or results[metric_id].get("metadata", {}).get("usage", {})
+                    )
                     for metric_id in results
                     if results[metric_id].get("metadata", {}).get("audit_type") == "model"
                 },
@@ -1450,7 +1505,7 @@ def case_html(item: Mapping[str, Any], output: Path, dataset_root: Path) -> str:
     badge_class = "badge" if rank_eligible and agreement else "badge warn"
     explanation = comparison_explanation(item)
     route_summary = (
-        " -> ".join(f"{event['stage']}:{event['route']}" for event in item.get("model_audit_routing", ()))
+        " | ".join(f"{event['stage']}:{event['route']}" for event in item.get("model_audit_routing", ()))
         or "not enabled"
     )
     review_summary = ", ".join(item.get("review_reasons", ())) or "none"

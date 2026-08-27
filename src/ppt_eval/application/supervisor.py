@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Sequence
 from uuid import uuid4
 
 from ppt_eval.domain import (
@@ -655,23 +655,47 @@ class RunSupervisor:
 
         return {**cls._string_mapping(declared), **dict(actual)}
 
-    @staticmethod
+    @classmethod
     def _result_model_versions(
+        cls,
         outcome: SchedulerOutcome | None,
     ) -> Mapping[str, str]:
         versions: dict[str, str] = {}
         for result in outcome.results if outcome else ():
-            if result.metadata.get("response_schema_version") is None:
-                continue
-            model = result.metadata.get("model")
-            if not isinstance(model, Mapping):
-                continue
-            provider = str(model.get("provider") or "").strip()
-            model_id = str(model.get("model_id") or "").strip()
-            version = str(model.get("version") or "").strip()
-            if provider and model_id and version:
-                versions[result.metric_id] = f"{provider}/{model_id}@{version}"
+            if result.metadata.get("response_schema_version") is not None:
+                cls._record_model_version(
+                    versions,
+                    result.metric_id,
+                    result.metadata.get("model"),
+                )
+            attempts = result.metadata.get("routing_attempts")
+            if isinstance(attempts, Sequence) and not isinstance(
+                attempts, (str, bytes)
+            ):
+                for index, attempt in enumerate(attempts, start=1):
+                    if not isinstance(attempt, Mapping):
+                        continue
+                    tier = str(attempt.get("tier") or index).strip().lower()
+                    cls._record_model_version(
+                        versions,
+                        f"{result.metric_id}#{tier}",
+                        attempt.get("model"),
+                    )
         return versions
+
+    @staticmethod
+    def _record_model_version(
+        versions: dict[str, str],
+        key: str,
+        model: object,
+    ) -> None:
+        if not isinstance(model, Mapping):
+            return
+        provider = str(model.get("provider") or "").strip()
+        model_id = str(model.get("model_id") or "").strip()
+        version = str(model.get("version") or "").strip()
+        if provider and model_id and version:
+            versions[key] = f"{provider}/{model_id}@{version}"
 
     @staticmethod
     def _result_prompt_versions(

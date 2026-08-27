@@ -13,6 +13,7 @@ from scripts.benchmarks.evaluate_slides_align_sample import (
     STRUCTURED_VLM_DIMENSION_IDS,
     STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION,
     STRUCTURED_VLM_VISUAL_DIMENSIONS_PROMPT,
+    atomic_model_routing_events,
     average_ranks,
     case_html,
     pairwise_accuracy,
@@ -550,3 +551,46 @@ def test_selected_metrics_exports_all_six_v6_dimensions() -> None:
     assert tuple(selected) == STRUCTURED_VLM_DIMENSION_IDS
     assert all(item["metric_status"] == "SCORED" for item in selected.values())
     assert sum(float(item["cost"]) for item in selected.values()) == pytest.approx(1.0)
+
+
+def test_atomic_model_routing_events_exposes_cross_provider_attempts() -> None:
+    metric_id = STRUCTURED_VLM_DIMENSION_IDS[0]
+    results = {
+        metric_id: {
+            "metadata": {
+                "criterion_id": "composition_layout",
+                "escalation_reason": "FLASH_LOW_CONFIDENCE",
+                "routing_attempts": [
+                    {
+                        "tier": "FLASH",
+                        "configured_model": "qwen3.8-flash",
+                        "metric_status": "SCORED",
+                        "model": {
+                            "provider": "qwen-dashscope-openai-compatible",
+                            "model_id": "qwen3.8-flash",
+                            "version": "qwen3.8-flash",
+                        },
+                    },
+                    {
+                        "tier": "ADVANCED",
+                        "configured_model": "glm-5.3-flash",
+                        "metric_status": "SCORED",
+                        "model": {
+                            "provider": "zhipu-bigmodel-openai-compatible",
+                            "model_id": "glm-5.3-flash",
+                            "version": "glm-5.3-flash",
+                        },
+                    },
+                ],
+            }
+        }
+    }
+
+    events = atomic_model_routing_events(results)
+
+    assert len(events) == 1
+    assert events[0]["stage"] == "composition_layout"
+    assert events[0]["route"] == (
+        "qwen3.8-flash:SCORED -> glm-5.3-flash:SCORED "
+        "(FLASH_LOW_CONFIDENCE)"
+    )

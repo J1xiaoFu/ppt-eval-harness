@@ -57,8 +57,8 @@ cross-slide 使用最多 8 页。局部调用要求每个实际上传页一条 o
 [grounded_visual_oracle_method.md](grounded_visual_oracle_method.md)。
 
 v8 已成为四场景默认路径。六个视觉构念分别是独立 DAG 节点
-`v8.visual.<criterion_id>`：先调用 `qwen3.7-flash`，只有 Flash N/A/ERROR、单维低置信或
-同构念规则冲突时才调用 `qwen3.8-flash`。模型仍只提交页级或跨页原子判断；最终
+`v8.visual.<criterion_id>`：v8.1 先调用 `qwen3.8-flash`，只有主结果 N/A/ERROR、单维低置信或
+同构念规则冲突时才通过独立 BigModel Provider 调用 `glm-5.3-flash`。模型仍只提交页级或跨页原子判断；最终
 `composition_craft`、`typography_craft`、`palette_craft`、`visual_communication` 和
 `visual_system_sequence` 由确定性 Reducer 生成。规则提供缺陷 cap，模型提供正向视觉信号，
 两者不作为两个独立构念重复计权。
@@ -181,8 +181,7 @@ Provider 适配层必须返回且只返回下列顶层字段：
 import os
 
 from ppt_eval.infrastructure import (
-    QWEN_ADVANCED_MODEL,
-    QWEN_FLASH_MODEL,
+    QWEN_PRIMARY_MODEL,
     QwenOpenAICompatibleProvider,
 )
 
@@ -192,18 +191,12 @@ api_key = os.environ["DASHSCOPE_API_KEY"]
 baseline_provider = QwenOpenAICompatibleProvider(
     api_key,
     base_url,
-    QWEN_FLASH_MODEL,
-)
-escalation_provider = QwenOpenAICompatibleProvider(
-    api_key,
-    base_url,
-    QWEN_ADVANCED_MODEL,
+    QWEN_PRIMARY_MODEL,
 )
 ```
 
-`model` 同时是调用角色选择器：`qwen3.7-flash` 用于便宜基线，`qwen3.8-flash` 承担
-Advanced 角色。Provider 本身不做路由决策，因此两个实例可分别注入基线和 escalation 组合器。
-这是角色分配，不声称新模型已经大样本验证为更强或更贵。
+v8.1 将 `qwen3.8-flash` 注入主线。`QWEN_FLASH_MODEL=qwen3.7-flash` 只作为历史代码兼容
+符号保留；Provider 本身不做路由决策。
 
 线上请求具有以下约束：
 
@@ -226,15 +219,45 @@ Advanced 角色。Provider 本身不做路由决策，因此两个实例可分�
 - 若响应已通过通用 Provider Schema，但不满足六维 criterion 专用契约，结构化视觉 Oracle
   会以同一 request 再调用一次。它同样累计 usage/cost，并记录 `criterion_retry_count`、
   首次/最终 response fingerprint 和 usage 完整性；第二次仍不合法时继续 ERROR，不用第一次的部分维度凑分。
-- 保存 API 响应的实际 `model` 值和 prompt/completion token；当兼容接口不提供费用字段时，`cost` 暂记为 `0.0`，不把它解读为免费。
+- 保存 API 响应的实际 `model` 值和 prompt/completion token；当兼容接口不提供费用字段时，`cost` 暂记为 `0.0`，并以 `adapter_cost_known=false` / `routing_usage.cost_known=false` 标记，不把它解读为免费。
 - Provider 会校验响应的实际 model 与配置角色一致，不接受另一个已配置模型的 provenance。
-- `PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS` 配置 Flash HTTP 传输超时（默认 120 秒）；
-  `PPT_EVAL_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS` 单独配置 Advanced（默认 240 秒）。
+- `PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS` 配置 Qwen 主线 HTTP 传输超时（默认 120 秒）；
+  `PPT_EVAL_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS` 只保留给历史 Qwen-only composition root。
   `PPT_EVAL_QWEN_ADVANCED_MODEL` 默认为 `qwen3.8-flash`。旧 `PPT_EVAL_QWEN_PLUS_*`
   仅在新变量未设置时作兼容入口；新旧同时设置且冲突会 fail closed。这些都是传输上限，不表示 Profile 中的
   `oracle_timeout_seconds` 已被 Scheduler 强制执行。
 
 Provider 的 `repr` 不包含 API key。非本机 HTTP URL 会被拒绝，生产请求必须使用 HTTPS；`http://127.0.0.1` / `localhost` 仅用于本地 mock 测试。
+
+## Zhipu BigModel OpenAI-compatible 适配器
+
+`ZhipuOpenAICompatibleProvider` 使用独立的 endpoint、credential 和模型身份：
+
+```python
+import os
+
+from ppt_eval.infrastructure import ZhipuOpenAICompatibleProvider
+
+fallback_provider = ZhipuOpenAICompatibleProvider(
+    os.environ["ZAI_API_KEY"],
+    "https://open.bigmodel.cn/api/paas/v4",
+    "glm-5.3-flash",
+)
+```
+
+官方模型码是 `glm-5.3-flash`。请求使用 Bearer 鉴权、OpenAI-compatible
+`/chat/completions`、`response_format={"type":"json_object"}`、
+`thinking={"type":"enabled","clear_thinking":false}` 和
+`reasoning_effort=max`；GLM-5.3-Flash 不允许关闭 thinking。图片继续通过校验后的
+Base64 Data URL 发送，但按官方限制收紧为 PNG/JPEG 且单图小于 5 MB。默认传输超时为 300 秒，使用
+`PPT_EVAL_ZHIPU_HTTP_TIMEOUT_SECONDS` 调整。
+
+运行时优先读取官方环境变量 `ZAI_API_KEY`，也接受显式的
+`PPT_EVAL_ZHIPU_API_KEY`；本地开发可使用被忽略的
+`api/glm5.3_flash_api.txt`。多个环境变量别名若含不同密钥会 fail closed。GLM 响应仍经过
+同一 `ModelAuditResponse` 严格合同，`reasoning_content` 不进入报告或指纹。
+环境感知 Runtime 会把两套已配置凭据同时加入每个 Provider 的 outbound secret guard，
+防止 DashScope key 被发往 BigModel，或 BigModel key 被发往 DashScope。
 
 ### 本地来源文件边界
 
@@ -242,7 +265,7 @@ Provider 的 `repr` 不包含 API key。非本机 HTTP URL 会被拒绝，生产
 运行时只有在 `PPT_EVAL_MODEL_SOURCE_ROOTS`（Windows 用 `;`、Linux/macOS 用 `:`
 分隔）显式声明受控目录后，才会读取该目录内的普通文件。读取前会解析真实路径并校验
 根目录边界，因此 `..` 与符号链接不能越界；远端只收到不含本机目录结构的 opaque
-source ID。`.env`、`.git`、`api/`、密钥/证书文件、配置的 DashScope key 文件以及
+source ID。`.env`、`.git`、`api/`、密钥/证书文件、配置的 DashScope/BigModel key 文件以及
 `/proc`、`/sys`、`/dev` 等系统位置始终拒绝。任一文件型来源被拒绝时，该次 scenario
 模型 Oracle 返回 `MODEL_SOURCE_ACCESS_DENIED`，不发起远端请求；确定性本地 Oracle
 的来源读取语义不受影响。

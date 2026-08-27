@@ -68,7 +68,7 @@ DecisionPolicy   决定业务上怎样处置
 | CLI 与同步评测 | 已实现 | 使用本地 JSON/JSONL 持久化，可完整运行四场景 |
 | 强制 Baseline、DAG、状态机、PDMS | 已实现 | 当前核心控制链已经落地并有测试 |
 | 32 个确定性原子 Oracle | 已实现 | 均为 PPTX 对象树或词法启发式 |
-| 原子 Flash + Advanced 高级审计 | 已接线 | v8 按视觉构念调用 `qwen3.7-flash`，单维失败、低置信或规则冲突才调用 `qwen3.8-flash`；历史 v3.1 为整体模型路径 |
+| 原子主线 + Advanced 高级审计 | 已接线 | v8.1 按视觉构念调用 `qwen3.8-flash`，单维失败、低置信或规则冲突才通过独立 BigModel Provider 调用 `glm-5.3-flash`；历史 v3.1 为整体模型路径 |
 | FastAPI 同步接口 | 已实现 | 使用 `LocalEvaluationRuntime` |
 | FastAPI 异步接口 | 部分实现 | 使用进程内线程池，不是 Celery；服务重启后 Job 状态丢失 |
 | React 人工复核台 | 已实现 MVP | 支持列表、原子结果和 APPROVE/REJECT，无鉴权、分配和分页 |
@@ -429,6 +429,11 @@ model/prompt 版本、usage/cost 与 request/response 指纹。当总分处于 R
 `qwen3.8-flash` 承担的 Advanced 审计。Advanced 必须高置信且适用审计一致，否则转人工。
 这是调用角色迁移，尚不表示 qwen3.8 已被大样本证明更强；历史 v3.0/Plus 语义需通过
 历史 Git ref 或显式的 legacy 环境变量回放。
+
+当前默认 v8.1 不复用上述整体审计路由：六个视觉 criterion 各自先调用
+`qwen3.8-flash`，只将同一 criterion 升级到 `glm-5.3-flash`。两套 Provider 的 key、
+endpoint 与 timeout 独立；每次 attempt 的模型身份、Evidence、token、fingerprint 和成本
+均进入原子路由审计。
 
 模型模态不等于评测构念。内容 Oracle 平时消费可提取文本；当有文本页比例低于
 25% 且有页图时，会用多模态能力从像素恢复语义内容，但该分仍归入 content 构念，

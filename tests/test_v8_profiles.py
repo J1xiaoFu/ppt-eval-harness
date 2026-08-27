@@ -19,11 +19,19 @@ def test_v8_is_default_for_all_four_scenes() -> None:
     for scene, profile_id in PROFILE_IDS.items():
         profile = default_profile(scene)
         assert profile.profile_id == profile_id
-        assert profile.version == "8.0"
+        assert profile.version == "8.1"
         assert profile.metadata["runtime_wired"] is True
         assert profile.metadata["model_audit_routing"] == (
             "ATOMIC_FLASH_ADVANCED_HUMAN"
         )
+        assert profile.metadata["flash_provider"] == (
+            "qwen-dashscope-openai-compatible"
+        )
+        assert profile.metadata["flash_model"] == "qwen3.8-flash"
+        assert profile.metadata["advanced_provider"] == (
+            "zhipu-bigmodel-openai-compatible"
+        )
+        assert profile.metadata["advanced_model"] == "glm-5.3-flash"
         assert math.isclose(sum(profile.base_weights.values()), 1.0)
         if profile.scene_weights:
             assert math.isclose(sum(profile.scene_weights.values()), 1.0)

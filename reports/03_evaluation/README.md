@@ -19,3 +19,7 @@ Oracle、v5 实验 Profile、标题空壳页诊断，以及 Skywork/Kimi 的真�
 `09_v6_visual_dimensions_replay.md` 记录了 7/7 真实 deck 的 v6 六维重放：VLM 占 visual
 20% 的预注册主方案、10/15/25% 敏感性、可证伪的 VLM 误判、以及
 `qwen3.8-flash` Advanced 影子复核的契约阻塞。
+
+`10_qwen38_glm53_route_smoke.md` 记录 v8.1 固定 Prompt 模型切换烟测：
+`qwen3.8-flash` 主线在一份真实 deck 上六维全合法，`glm-5.3-flash` 使用同一原子 Prompt
+完成独立多模态合同验证；该单例不用于相关性结论或参数拟合。

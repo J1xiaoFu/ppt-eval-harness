@@ -19,6 +19,7 @@ from ppt_eval.oracles.v8_composites import (
     V8AtomicObservationComposite,
     V8QualityReducerOracle,
     V8TieredVisualCriterionOracle,
+    _model_routing_usage,
 )
 from tests.fixtures.pptx_factory import PNG_1X1, build_pptx
 from tests.test_grounded_visual_audit import GroundedFakeProvider
@@ -218,4 +219,36 @@ def test_visual_advanced_fallback_is_same_criterion_only(tmp_path: Path) -> None
     assert result.metric_id == "structured_vlm_composition_layout"
     assert result.metadata["selected_tier"] == "ADVANCED"
     assert result.metadata["escalation_reason"] == "RULE_MODEL_DISAGREEMENT"
+    assert result.cost == pytest.approx(0.008)
+    attempts = result.metadata["routing_attempts"]
+    assert [item["tier"] for item in attempts] == ["FLASH", "ADVANCED"]
+    assert [item["selected"] for item in attempts] == [False, True]
+    assert all(item["model"]["provider"] == "fake" for item in attempts)
+    assert all(item["evidence"] for item in attempts)
+    assert result.metadata["routing_usage"] == {
+        "input_tokens": 240,
+        "output_tokens": 160,
+        "total_tokens": 400,
+        "reported_cost": pytest.approx(0.008),
+        "cost_known": True,
+        "attempt_count": 2,
+        "usage_complete": True,
+    }
     assert advanced.requests[0].context["criterion_id"] == "composition_layout"
+
+
+def test_model_routing_usage_preserves_partial_usage_and_unknown_cost() -> None:
+    usage = _model_routing_usage(
+        (
+            {
+                "usage": {"input_tokens": 10, "output_tokens": 5},
+                "usage_complete": False,
+                "cost": 0.0,
+                "cost_known": False,
+            },
+        )
+    )
+
+    assert usage["total_tokens"] == 15
+    assert usage["usage_complete"] is False
+    assert usage["cost_known"] is False

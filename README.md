@@ -13,8 +13,9 @@ New maintainers should start with the Chinese [onboarding and handover guide](do
 - Deterministic `OBSERVE -> PLAN -> ACT -> VERIFY -> FINALIZE/REVIEW` supervisor.
 - PPT-PDMS aggregation, high-confidence hard multipliers, required/optional `NA`, and isolated runtime `ERROR`.
 - Strict vendor-neutral LLM/VLM contracts. The default v8 profiles run deterministic scoped
-  observations first, then criterion-specific `qwen3.7-flash` audits and same-criterion
-  `qwen3.8-flash` escalation only when Flash is unresolved, uncertain, or conflicts with rules.
+  observations first, then criterion-specific `qwen3.8-flash` audits and same-criterion
+  `glm-5.3-flash` escalation only when the primary result is unresolved, uncertain, or conflicts
+  with rules. The two providers use independent credentials, endpoints, and audit lineage.
   Historical v1-v7 Profiles remain explicitly loadable; bit-identical replay also requires the
   corresponding historical Git SHA or container image.
 - Optional construct-aware aggregation fixes content/visual/delivery/handoff budgets and reports
@@ -48,16 +49,16 @@ ppt-eval run examples/demo/case_text_to_ppt.json
 ppt-eval audit verify
 ```
 
-The environment-aware CLI/API runtime reads the DashScope key from
-`DASHSCOPE_API_KEY`, or from the ignored local file
-`api/qwen3.7_flash_api.txt`. The default endpoint is
-`https://dashscope.aliyuncs.com/compatible-mode/v1`; both Qwen roles run with
-thinking enabled. Do not put a real key in `.env.example` or commit the `api/`
-directory.
+The environment-aware CLI/API runtime reads the primary DashScope key from
+`DASHSCOPE_API_KEY`, or from the ignored local file `api/qwen3.7_flash_api.txt`.
+The independent fallback reads `ZAI_API_KEY`, or `api/glm5.3_flash_api.txt`.
+The endpoints are `https://dashscope.aliyuncs.com/compatible-mode/v1` and
+`https://open.bigmodel.cn/api/paas/v4`; both models run with thinking enabled.
+Do not put a real key in `.env.example` or commit the `api/` directory.
 
-HTTP ceilings default to 120 seconds for baseline and 240 seconds for Advanced
-(`PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS` and
-`PPT_EVAL_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS`). Legacy
+HTTP ceilings default to 120 seconds for the Qwen primary and 300 seconds for
+the GLM fallback (`PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS` and
+`PPT_EVAL_ZHIPU_HTTP_TIMEOUT_SECONDS`). Legacy
 `PPT_EVAL_QWEN_PLUS_*` names remain accepted when the new names are unset. These are transport limits; the
 Profile-level `oracle_timeout_seconds` is not yet enforced by the scheduler.
 

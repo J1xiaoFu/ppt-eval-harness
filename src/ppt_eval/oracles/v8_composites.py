@@ -53,7 +53,7 @@ from .v8_atomic import (
 
 V8_OBSERVATION_COMPOSITE_ID = "v8.atomic_observations"
 V8_REDUCER_ORACLE_ID = "v8.quality_reducers"
-V8_QUALITY_VERSION = "8.0.0"
+V8_QUALITY_VERSION = "8.1.0"
 
 V8_BASE_ADDITIVE_METRICS = (
     "content_structure",
@@ -464,6 +464,9 @@ class V8TieredVisualCriterionOracle:
 
     def evaluate(self, context: EvaluationContext) -> OracleResult:
         flash = self._flash.evaluate(context)
+        attempted: list[tuple[str, GroundedSingleCriterionVlmOracle, OracleResult]] = [
+            ("FLASH", self._flash, flash)
+        ]
         reason: str | None = None
         if flash.metric_status != MetricStatus.SCORED:
             reason = "FLASH_UNRESOLVED"
@@ -475,22 +478,36 @@ class V8TieredVisualCriterionOracle:
         tier = "FLASH"
         if reason is not None and self._advanced is not None:
             advanced = self._advanced.evaluate(context)
+            attempted.append(("ADVANCED", self._advanced, advanced))
             if advanced.metric_status == MetricStatus.SCORED:
                 chosen = advanced
                 tier = "ADVANCED"
             else:
                 tier = "FLASH_UNRESOLVED_ADVANCED_FAILED"
+        routing_attempts = [
+            _model_routing_attempt(
+                attempt_tier,
+                oracle,
+                result,
+                selected=result is chosen,
+            )
+            for attempt_tier, oracle, result in attempted
+        ]
         return replace(
             chosen,
             oracle_id=self.oracle_id,
             metric_id=self.metric_id,
             version=self.version,
+            duration_ms=sum(item.duration_ms for _, _, item in attempted),
+            cost=sum(item.cost for _, _, item in attempted),
             metadata={
                 **dict(chosen.metadata),
                 "routing_mode": "ATOMIC_FLASH_ADVANCED_HUMAN",
                 "selected_tier": tier,
                 "escalation_reason": reason,
                 "criterion_id": self.criterion_id,
+                "routing_attempts": routing_attempts,
+                "routing_usage": _model_routing_usage(routing_attempts),
             },
         )
 
@@ -508,6 +525,114 @@ class V8TieredVisualCriterionOracle:
             and item.local_score < 0.50
             for item in observations
         )
+
+
+def _model_routing_attempt(
+    tier: str,
+    oracle: GroundedSingleCriterionVlmOracle,
+    result: OracleResult,
+    *,
+    selected: bool,
+) -> Mapping[str, Any]:
+    metadata = dict(result.metadata)
+    actual_model = metadata.get("model")
+    usage = metadata.get("usage")
+    provider = oracle.provider
+    adapter_usage_complete = all(
+        item.payload.get("adapter_usage_complete") is not False
+        for item in result.evidence
+    )
+    provider_usage_complete = metadata.get("provider_usage_complete") is not False
+    criterion_usage_complete = (
+        metadata.get("criterion_retry_usage_complete") is not False
+    )
+    usage_complete = (
+        isinstance(usage, Mapping)
+        and adapter_usage_complete
+        and provider_usage_complete
+        and criterion_usage_complete
+    )
+    cost_markers = tuple(
+        item.payload.get("adapter_cost_known")
+        for item in result.evidence
+        if "adapter_cost_known" in item.payload
+    )
+    cost_known = (
+        all(marker is True for marker in cost_markers)
+        if cost_markers
+        else result.cost > 0.0
+    )
+    return {
+        "tier": tier,
+        "selected": selected,
+        "configured_provider": type(provider).__name__ if provider is not None else None,
+        "configured_model": (
+            str(getattr(provider, "model", "")).strip() or None
+            if provider is not None
+            else None
+        ),
+        "execution_status": result.execution_status.value,
+        "metric_status": result.metric_status.value,
+        "score": result.normalized_score,
+        "confidence": result.confidence,
+        "cost": result.cost,
+        "cost_known": cost_known,
+        "error_code": result.error_code,
+        "error_message": result.error_message,
+        "model": dict(actual_model) if isinstance(actual_model, Mapping) else None,
+        "usage": dict(usage) if isinstance(usage, Mapping) else None,
+        "usage_complete": usage_complete,
+        "adapter_usage_complete": adapter_usage_complete,
+        "provider_usage_complete": provider_usage_complete,
+        "criterion_retry_usage_complete": criterion_usage_complete,
+        "request_fingerprint": metadata.get("request_fingerprint"),
+        "response_fingerprint": metadata.get("response_fingerprint"),
+        "evidence": [_routing_evidence(item) for item in result.evidence],
+    }
+
+
+def _routing_evidence(item: Any) -> Mapping[str, Any]:
+    payload: dict[str, Any] = {
+        "evidence_id": item.evidence_id,
+        "kind": item.kind,
+        "message": item.message,
+        "payload": dict(item.payload),
+    }
+    for field in ("page_number", "object_id", "bbox", "source_uri"):
+        value = getattr(item, field)
+        if value is not None:
+            payload[field] = list(value) if field == "bbox" else value
+    return payload
+
+
+def _model_routing_usage(
+    attempts: Iterable[Mapping[str, Any]],
+) -> Mapping[str, Any]:
+    items = tuple(attempts)
+    usages = tuple(item.get("usage") for item in items)
+    complete = all(item.get("usage_complete") is True for item in items)
+    return {
+        "input_tokens": sum(
+            int(usage.get("input_tokens", 0))
+            for usage in usages
+            if isinstance(usage, Mapping)
+        ),
+        "output_tokens": sum(
+            int(usage.get("output_tokens", 0))
+            for usage in usages
+            if isinstance(usage, Mapping)
+        ),
+        "total_tokens": sum(
+            int(usage.get("input_tokens", 0))
+            + int(usage.get("output_tokens", 0))
+            for usage in usages
+            if isinstance(usage, Mapping)
+        ),
+        "reported_cost": sum(float(item.get("cost", 0.0)) for item in items),
+        "cost_known": all(item.get("cost_known") is True for item in items),
+        "attempt_count": len(items),
+        "usage_complete": complete,
+    }
 
 
 class V8QualityReducerOracle:

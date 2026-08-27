@@ -1,6 +1,6 @@
 {
   "profile_id": "text-generation-v8",
-  "version": "8.0",
+  "version": "8.1",
   "scenario": "TEXT_GENERATION",
   "lambda_base": 0.55,
   "base_multiplier_metric_ids": ["file_deliverability", "critical_content_visibility", "internal_data_consistency", "v8_functional_integrity"],
@@ -54,8 +54,10 @@
     "production_approved": true,
     "runtime_wired": true,
     "model_audit_routing": "ATOMIC_FLASH_ADVANCED_HUMAN",
-    "flash_model": "qwen3.7-flash",
-    "advanced_model": "qwen3.8-flash",
+    "flash_provider": "qwen-dashscope-openai-compatible",
+    "flash_model": "qwen3.8-flash",
+    "advanced_provider": "zhipu-bigmodel-openai-compatible",
+    "advanced_model": "glm-5.3-flash",
     "training_eligibility": {
       "schema_version": "1.0",
       "tracks": ["visual", "layout", "content", "full_deck"],

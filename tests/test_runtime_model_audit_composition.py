@@ -153,13 +153,17 @@ def test_grounded_visual_profile_enables_automatic_render_inputs(tmp_path) -> No
     assert runtime._should_render_model_inputs(profile, {}) is True
 
 
-def test_environment_factory_wires_flash_baseline_and_qwen38_advanced_review(
+def test_environment_factory_wires_qwen38_primary_and_glm53_fallback(
     tmp_path,
 ) -> None:
-    secret = "sk-runtime-factory-test-secret"
+    qwen_secret = "sk-runtime-factory-test-secret"
+    zhipu_secret = "zhipu-runtime-factory-test-secret"
     runtime = build_runtime_from_environment(
         tmp_path / "var",
-        environment={"DASHSCOPE_API_KEY": secret},
+        environment={
+            "DASHSCOPE_API_KEY": qwen_secret,
+            "ZAI_API_KEY": zhipu_secret,
+        },
         workspace_root=tmp_path,
     )
 
@@ -173,10 +177,12 @@ def test_environment_factory_wires_flash_baseline_and_qwen38_advanced_review(
         child.provider.model for child in advanced.children if child.provider is not None
     }
 
-    assert baseline_models == {"qwen3.7-flash"}
-    assert advanced_models == {"qwen3.8-flash"}
-    assert secret not in repr(runtime)
-    assert secret not in repr(baseline.children[0].provider)
+    assert baseline_models == {"qwen3.8-flash"}
+    assert advanced_models == {"glm-5.3-flash"}
+    assert qwen_secret not in repr(runtime)
+    assert zhipu_secret not in repr(runtime)
+    assert qwen_secret not in repr(baseline.children[0].provider)
+    assert zhipu_secret not in repr(advanced.children[0].provider)
 
 
 def test_automatic_vlm_render_uses_input_hash_cache(tmp_path) -> None:

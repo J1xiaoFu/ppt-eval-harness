@@ -86,7 +86,7 @@ def test_v5_remains_unvalidated_and_does_not_replace_default_v3() -> None:
     )
     assert candidate.metadata["diagnostic_metrics"] == ["body_completeness"]
     assert default.profile_id == "finished-deck-v8"
-    assert default.version == "8.0"
+    assert default.version == "8.1"
     assert default.aggregation_strategy != CONSTRUCT_WEIGHTED_MEAN
     assert LEGACY_VLM_METRIC not in default.base_weights
     assert "composition_craft" in default.base_weights

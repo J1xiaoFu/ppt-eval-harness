@@ -7,7 +7,7 @@
 | Audit schema | 1.0 | 同主版本向后兼容；未知字段显式处理 |
 | Eval API | v1 | 新字段可选；删除/改义升 v2 |
 | Oracle protocol | 1.0 result / v8 AtomicObservation | 原子观察与Reducer结果分离；legacy结果继续兼容 |
-| PPT-PDMS Profile | v8 默认 / v7 原子视觉 / v6 六维视觉 / v5 汇总视觉 / v4.1 construct / v3.1及更早历史 | 新行为提升 Profile/Oracle 版本；完整历史回放同时固定 Git SHA |
+| PPT-PDMS Profile | v8.1 默认 / v7 原子视觉 / v6 六维视觉 / v5 汇总视觉 / v4.1 construct / v3.1及更早历史 | 新行为提升 Profile/Oracle 版本；完整历史回放同时固定 Git SHA |
 | Rubric | rubric-v1 | 报告携带版本 |
 | Dataset | local-synthetic-v1 / external starter manifests v1 | 每次切分固定 source revision、逐文件 hash、许可和用途分区 |
 | Runnable package | 0.1.0 | 领域契约同主版本兼容；行为变化发布新 Profile/Oracle 版本 |
@@ -20,8 +20,9 @@
   多阶段固定 DAG 和 visual/layout/content/full-deck 四轨训练准入。
 - 重写/去重 page/object/pair/claim/requirement/asset/chart-series 原子能力；critical requirement、
   required asset 和 chart expectation 只观察一次，由 criticality 决定 gate 或 additive reducer。
-- 六个视觉维度成为独立 DAG 节点；qwen3.7-flash 未解决、低置信或与规则冲突时，只对同一
-  criterion 调用 qwen3.8-flash。v8 公式不包含任何整体 LLM/VLM Judge 分数。
+- 六个视觉维度成为独立 DAG 节点；v8.1 以 qwen3.8-flash 为主线，未解决、低置信或与
+  规则冲突时，只对同一 criterion 通过独立 BigModel Provider 调用 glm-5.3-flash。
+  两次 attempt 的身份、Evidence、usage/cost 均保留；v8 公式不包含整体 LLM/VLM Judge 分数。
 - v8 基础构念按质量属性而非传感器组织：content structure 25%、composition 20%、
   typography 10%、palette 8%、visual communication 15%、visual system 10%、
   authorship specificity 12%。规则提供cap，模型提供正向信号，避免重复计权。

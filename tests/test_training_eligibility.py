@@ -147,7 +147,7 @@ def test_v8_profile_drafts_freeze_construct_and_scene_contracts() -> None:
         )
         expected_lambda, expected_scene_weights = expected
 
-        assert profile["version"] == "8.0"
+        assert profile["version"] == "8.1"
         assert profile["lambda_base"] == expected_lambda
         assert profile["base_weights"] == BASE_WEIGHTS
         assert profile["scene_weights"] == expected_scene_weights
