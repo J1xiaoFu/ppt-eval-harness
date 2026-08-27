@@ -43,6 +43,7 @@ from ppt_eval.oracles import (
 )
 from ppt_eval.oracles.model_audits import (
     GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
+    GROUNDED_STRUCTURED_DIMENSIONS_VLM_ORACLE_ID,
     MODEL_AUDIT_COMPOSITE_ID,
     STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
     STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
@@ -126,6 +127,7 @@ class LocalEvaluationRuntime:
         self.registry = build_default_registry(
             llm_provider=llm_provider,
             vlm_provider=vlm_provider,
+            advanced_vlm_provider=advanced_vlm_provider,
             model_source_access_policy=self.model_source_access_policy,
         )
         self.advanced_model_review = (
@@ -277,12 +279,24 @@ class LocalEvaluationRuntime:
     ) -> bool:
         if not self._vlm_enabled:
             return False
+        pipeline_nodes = profile.metadata.get("pipeline_nodes", ())
+        pipeline_oracle_ids = {
+            str(item.get("oracle_id"))
+            for item in pipeline_nodes
+            if isinstance(item, Mapping) and item.get("oracle_id")
+        } if isinstance(pipeline_nodes, Sequence) and not isinstance(
+            pipeline_nodes, (str, bytes)
+        ) else set()
+        configured_oracle_ids = set(profile.enabled_oracle_ids) | pipeline_oracle_ids
         if not {
             MODEL_AUDIT_COMPOSITE_ID,
             GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
+            GROUNDED_STRUCTURED_DIMENSIONS_VLM_ORACLE_ID,
             STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
             STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
-        }.intersection(profile.enabled_oracle_ids):
+        }.intersection(configured_oracle_ids) and not any(
+            oracle_id.startswith("v8.visual.") for oracle_id in configured_oracle_ids
+        ):
             return False
         # Explicit caller-supplied rendering artifacts have authority, even if
         # they later fail validation in the Oracle contract.

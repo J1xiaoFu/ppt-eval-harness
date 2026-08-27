@@ -1512,6 +1512,11 @@ class _GroundedSingleCriterionVlmOracle(StructuredVlmVisualAuditOracle):
         return replace(result, cost=response.usage.cost)
 
 
+# Public construction surface for v8 criterion-isomorphic routing. Historical
+# class name remains untouched so v7 replay identities do not change.
+GroundedSingleCriterionVlmOracle = _GroundedSingleCriterionVlmOracle
+
+
 class StructuredVlmVisualDimensionsAuditOracle:
     """One VLM request projected into six independently scoreable metrics."""
 
@@ -2881,6 +2886,7 @@ __all__ = [
     "GROUNDED_VLM_DEFECT_CODES",
     "GROUNDED_VLM_POSITIVE_SIGNALS",
     "GroundedStructuredDimensionsModelAuditOracle",
+    "GroundedSingleCriterionVlmOracle",
     "GroundedStructuredVlmVisualDimensionsAuditOracle",
     "HighCostModelAuditOracle",
     "LLM_CONTENT_PROMPT",
