@@ -221,10 +221,25 @@ def _prepare_topic(
         ]
         slide_count = pptx_slide_count(topic_root / deck_local)
         if slide_count != len(render_records):
-            raise ValueError(
-                f"PPTX/render mismatch for {topic}/{product}: "
-                f"{slide_count} vs {len(render_records)}"
+            subset_rows.append(
+                {
+                    **row,
+                    "selected": False,
+                    "availability": "pptx_render_count_mismatch",
+                }
             )
+            unavailable.append(
+                {
+                    "product_label": product,
+                    "human_rank": rank,
+                    "source_directory": source_directory,
+                    "reason": "pptx_render_count_mismatch",
+                    "upstream_pptx_slide_count": slide_count,
+                    "upstream_slide_png_count": len(render_records),
+                    "downloaded_but_excluded": True,
+                }
+            )
+            continue
         files.append(dict(pptx_record))
         files.extend(dict(item) for item in render_records)
         artifact_bytes = int(pptx_record["bytes"]) + sum(
