@@ -963,7 +963,7 @@ def structured_visual_replay_analysis(
             "The 10%/15% down-weight and 25% up-weight rows are sensitivity analyses; none may be selected by rank fit.",
             "Overall human ranks are not gold labels for any of the six VLM dimensions.",
             "Slides-Align ranks visible preference; delivery and handoff constructs are not calibrated here.",
-            "This one-topic seven-deck slice is diagnostic, not production calibration evidence.",
+            f"This one-topic {expected_case_count}-deck slice is diagnostic, not production calibration evidence.",
         ],
     }
 
@@ -1443,7 +1443,7 @@ def v8_replay_analysis(
     return {
         "eligible": eligible,
         "eligibility_rule": (
-            "exact pinned seven-case identity, FULL coverage, exactly seven v8 model criteria "
+            "exact manifest-sized case identity, FULL coverage, exactly seven v8 model criteria "
             "SCORED, one selected routing attempt per criterion, and complete usage accounting"
         ),
         "expected_case_count": len(expected_cases),
@@ -1892,7 +1892,7 @@ details{{margin-top:12px}} details>summary{{cursor:pointer;font-weight:650}} .no
 @media(max-width:800px){{.summary,.two,.gallery{{grid-template-columns:1fr}}.case-head{{display:block}}}}
 </style></head><body><main>
 <h1>真实 PPT：人评排名 vs 当前 Harness</h1>
-<p class="lead">Slides-Align 固定 revision，同一 market_analysis 主题。{len(comparison["cases"])} 份 PPTX 通过当前
+<p class="lead">Slides-Align 固定 revision，同一 <b>{html.escape(str(comparison.get("topic") or "unknown"))}</b> 主题。{len(comparison["cases"])} 份 PPTX 通过当前
 <b>{html.escape(str(comparison["profile_id"]))}</b> 评测；人评 rank 越小越好，Harness 分越高越好。</p>
 <div class="summary"><div class="stat"><b>{_display_stat(statistics["spearman_base_vs_human"])}</b>总分 Spearman</div>
 <div class="stat"><b>{_display_stat(statistics["spearman_deterministic_visual_proxy_vs_human"])}</b>确定性视觉代理 Spearman</div>
