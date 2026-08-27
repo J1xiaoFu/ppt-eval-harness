@@ -2254,14 +2254,14 @@ def case_html(item: Mapping[str, Any], output: Path, dataset_root: Path) -> str:
 
 
 def comparison_explanation(item: Mapping[str, Any]) -> str:
-    if not item.get("rank_comparison_eligible", True):
-        return (
-            "该 deck 或同切片其他 deck 未通过 FULL、模型 criterion 完整性、当前 "
-            "Profile/Prompt 与原子路由契约检查，因此不解释其相对排序。"
-        )
     metrics = item["metrics"]
     order_note = (
         f"当前样本集中人评顺序为 {item['selected_human_order']}，Harness 顺序为 {item['baseline_order']}"
+        if item.get("rank_comparison_eligible", True)
+        else (
+            "当前切片未通过完整重放资格，正式 Spearman、系统顺序与排名偏差均已抑制；"
+            "以下只解释该 deck 自身的可观察证据"
+        )
     )
     llm = _metric_percent(metrics, "llm_content_quality_audit")
     vlm = _metric_percent(metrics, "vlm_visual_quality_audit")
