@@ -68,7 +68,7 @@ DecisionPolicy   决定业务上怎样处置
 | CLI 与同步评测 | 已实现 | 使用本地 JSON/JSONL 持久化，可完整运行四场景 |
 | 强制 Baseline、DAG、状态机、PDMS | 已实现 | 当前核心控制链已经落地并有测试 |
 | 版本化确定性原子 Oracle | 已实现 | 覆盖 PPTX 对象树、词法、页面、对象、页对和 deck 级观察 |
-| 原子主线 + Advanced 高级审计 | 已接线 | v8.2 按六个历史视觉构念和一个 authorship 构念调用 `qwen3.8-flash`，单维失败、低置信或规则冲突才通过独立 BigModel Provider 调用 `glm-5.3-flash`；历史 v3.1 为整体模型路径 |
+| 原子主线 + Advanced 高级审计 | 已接线 | v8.3 按六个历史视觉构念和一个 authorship 构念调用 `qwen3.8-flash`，并只为全栅格 deck 增加两个文字观察节点；单维失败、低置信或规则冲突才通过独立 BigModel Provider 调用 `glm-5.3-flash`；历史 v3.1 为整体模型路径 |
 | FastAPI 同步接口 | 已实现 | 使用 `LocalEvaluationRuntime` |
 | FastAPI 异步接口 | 部分实现 | 使用进程内线程池，不是 Celery；服务重启后 Job 状态丢失 |
 | React 人工复核台 | 已实现 MVP | 支持列表、原子结果和 APPROVE/REJECT，无鉴权、分配和分页 |
@@ -328,7 +328,7 @@ supports()   当前 Case 是否适用
 evaluate()   返回一个或多个 OracleResult
 ```
 
-v8.2 默认 DAG 将 observation、六个历史视觉 criterion、一个 authorship criterion 和
+v8.3 默认 DAG 将 observation、六个历史视觉 criterion、一个 authorship criterion、两个按需 raster-text criterion 和
 reducer 分成独立节点。每个模型节点
 内部只拥有一个 criterion 的 Flash/Advanced 路由，因此预算、失败和重试不会扩散到其他维度。
 legacy Profile 仍保留原 Composite 执行方式以支持回放。
@@ -431,7 +431,7 @@ model/prompt 版本、usage/cost 与 request/response 指纹。当总分处于 R
 这是调用角色迁移，尚不表示 qwen3.8 已被大样本证明更强；历史 v3.0/Plus 语义需通过
 历史 Git ref 或显式的 legacy 环境变量回放。
 
-当前默认 v8.2 不复用上述整体审计路由：六个历史视觉 criterion 加一个 authorship
+当前默认 v8.3 不复用上述整体审计路由：六个历史视觉 criterion 加一个 authorship
 criterion 各自先调用
 `qwen3.8-flash`，只将同一 criterion 升级到 `glm-5.3-flash`。两套 Provider 的 key、
 endpoint 与 timeout 独立；每次 attempt 的模型身份、Evidence、token、fingerprint 和成本
