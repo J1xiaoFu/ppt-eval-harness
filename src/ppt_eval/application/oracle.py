@@ -18,10 +18,12 @@ from typing import (
 )
 
 from ppt_eval.domain import (
+    AtomicObservation,
     EvalCase,
     EvalProfile,
     ExecutionStatus,
     MetricStatus,
+    ObservationBatch,
     OracleResult,
     ScoreRole,
 )
@@ -57,7 +59,20 @@ class EvaluationContext:
 ExecutionContext = EvaluationContext
 
 
-OracleOutput = OracleResult | Sequence[OracleResult]
+@dataclass(frozen=True, slots=True)
+class OracleExecutionOutput:
+    """Normalized split between score results and atomic observations."""
+
+    results: tuple[OracleResult, ...] = ()
+    observations: tuple[AtomicObservation, ...] = ()
+
+
+OracleOutput = (
+    OracleResult
+    | ObservationBatch
+    | OracleExecutionOutput
+    | Sequence[OracleResult | AtomicObservation | ObservationBatch]
+)
 
 
 @runtime_checkable
@@ -75,14 +90,37 @@ class Oracle(Protocol):
 
 
 def normalize_oracle_output(output: OracleOutput) -> tuple[OracleResult, ...]:
+    """Legacy result-only normalization used by historical model routing."""
+
+    normalized = normalize_oracle_execution_output(output)
+    if normalized.observations:
+        raise TypeError("Oracle output contains atomic observations where results are required")
+    return normalized.results
+
+
+def normalize_oracle_execution_output(output: OracleOutput) -> OracleExecutionOutput:
+    """Normalize legacy and v8 Oracle outputs without making observations scoreable."""
+
+    if isinstance(output, OracleExecutionOutput):
+        return output
     if isinstance(output, OracleResult):
-        return (output,)
+        return OracleExecutionOutput(results=(output,))
+    if isinstance(output, ObservationBatch):
+        return OracleExecutionOutput(observations=output.observations)
     if isinstance(output, (str, bytes)):
-        raise TypeError("Oracle output must be OracleResult, not text")
-    normalized = tuple(output)
-    if any(not isinstance(item, OracleResult) for item in normalized):
-        raise TypeError("Oracle output contains a non-OracleResult item")
-    return normalized
+        raise TypeError("Oracle output must be a result or observation, not text")
+    results: list[OracleResult] = []
+    observations: list[AtomicObservation] = []
+    for item in tuple(output):
+        if isinstance(item, OracleResult):
+            results.append(item)
+        elif isinstance(item, AtomicObservation):
+            observations.append(item)
+        elif isinstance(item, ObservationBatch):
+            observations.extend(item.observations)
+        else:
+            raise TypeError("Oracle output contains an unsupported item")
+    return OracleExecutionOutput(tuple(results), tuple(observations))
 
 
 def coerce_descriptor(
@@ -183,17 +221,22 @@ class CompositeOracle:
             child.supports(context) for child in self._children
         )
 
-    def evaluate(self, context: EvaluationContext) -> tuple[OracleResult, ...]:
+    def evaluate(self, context: EvaluationContext) -> OracleOutput:
         results: list[OracleResult] = []
+        observations: list[AtomicObservation] = []
         for child in self._children:
             descriptor = coerce_descriptor(child.describe())
             if not child.supports(context):
                 results.extend(self._unsupported_results(descriptor))
                 continue
             try:
-                results.extend(normalize_oracle_output(child.evaluate(context)))
+                normalized = normalize_oracle_execution_output(child.evaluate(context))
+                results.extend(normalized.results)
+                observations.extend(normalized.observations)
             except Exception as exc:  # isolation is a Composite responsibility
                 results.extend(self._exception_results(descriptor, exc))
+        if observations:
+            return OracleExecutionOutput(tuple(results), tuple(observations))
         return tuple(results)
 
     @staticmethod

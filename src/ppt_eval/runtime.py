@@ -19,7 +19,7 @@ from ppt_eval.adapters import (
 )
 from ppt_eval.application import DagScheduler, EvaluationService, RunSupervisor
 from ppt_eval.config import default_profile
-from ppt_eval.domain import EvalCase, EvalProfile
+from ppt_eval.domain import AtomicObservation, EvalCase, EvalProfile
 from ppt_eval.flywheel import (
     ActiveSampler,
     JsonlRecordStore,
@@ -185,7 +185,35 @@ class LocalEvaluationRuntime:
             artifacts=prepared_artifacts,
             run_id=run_id,
         )
+        observation_artifact: Mapping[str, Any] | None = None
+        if outcome.observations:
+            observation_bytes = json.dumps(
+                to_primitive(outcome.observations),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            observation_artifact = self.artifacts.put_bytes(
+                observation_bytes,
+                media_type="application/vnd.ppt-eval.observations+json",
+                original_name=f"{outcome.report.run_id}.observations.json",
+            )
+            outcome = replace(
+                outcome,
+                manifest=replace(
+                    outcome.manifest,
+                    artifact_hashes={
+                        **dict(outcome.manifest.artifact_hashes),
+                        "atomic_observations": str(observation_artifact["sha256"]),
+                    },
+                ),
+            )
         payload = normalized_report_payload(outcome)
+        if observation_artifact is not None:
+            payload["observation_artifact"] = dict(observation_artifact)
+            payload["observation_summary"] = _observation_summary(
+                outcome.observations
+            )
         with self._lock:
             self.repository.save(payload)
         return payload
@@ -595,6 +623,26 @@ def _find_workspace_root(value: str | Path | None) -> Path:
         ).is_dir():
             return candidate
     return start
+
+
+def _observation_summary(
+    observations: Sequence[AtomicObservation],
+) -> Mapping[str, Any]:
+    by_scope: dict[str, int] = {}
+    by_status: dict[str, int] = {}
+    metric_ids: set[str] = set()
+    for observation in observations:
+        scope = observation.scope.value
+        status = observation.metric_status.value
+        by_scope[scope] = by_scope.get(scope, 0) + 1
+        by_status[status] = by_status.get(status, 0) + 1
+        metric_ids.add(observation.metric_id)
+    return {
+        "count": len(observations),
+        "metric_ids": sorted(metric_ids),
+        "by_scope": dict(sorted(by_scope.items())),
+        "by_status": dict(sorted(by_status.items())),
+    }
 
 
 _runtime: LocalEvaluationRuntime | None = None

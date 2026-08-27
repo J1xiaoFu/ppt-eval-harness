@@ -12,6 +12,7 @@ from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from ppt_eval.domain import (
+    AtomicObservation,
     CoverageStatus,
     EvalCase,
     EvalProfile,
@@ -46,6 +47,7 @@ class SupervisionOutcome:
     report: EvalReport
     manifest: RunManifest
     score: ScoreBreakdown | None
+    observations: tuple[AtomicObservation, ...] = ()
 
 
 class RunSupervisor:
@@ -292,7 +294,12 @@ class RunSupervisor:
                 },
                 completed_at,
             )
-            return SupervisionOutcome(report, manifest, breakdown)
+            return SupervisionOutcome(
+                report,
+                manifest,
+                breakdown,
+                scheduler_outcome.observations,
+            )
         except Exception as exc:
             return self._failed_outcome(
                 case=case,
@@ -378,7 +385,12 @@ class RunSupervisor:
             {"error": message, "result_hash": manifest.result_hash},
             completed_at,
         )
-        return SupervisionOutcome(report, manifest, None)
+        return SupervisionOutcome(
+            report,
+            manifest,
+            None,
+            scheduler_outcome.observations if scheduler_outcome else (),
+        )
 
     @classmethod
     def _tiered_model_audit_enabled(cls, profile: EvalProfile) -> bool:
@@ -465,6 +477,7 @@ class RunSupervisor:
 
         enriched = SchedulerOutcome(
             results=scheduler_outcome.results + results,
+            observations=scheduler_outcome.observations,
             attempts={
                 **dict(scheduler_outcome.attempts),
                 attempt_key: attempts,

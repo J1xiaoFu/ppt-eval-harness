@@ -18,6 +18,20 @@ class SceneType(str, Enum):
     READY_MADE = "ready_made"
 
 
+class EvaluationScope(str, Enum):
+    """Granularity of one atomic evaluation observation."""
+
+    PACKAGE = "PACKAGE"
+    OBJECT = "OBJECT"
+    PAGE = "PAGE"
+    SLIDE_PAIR = "SLIDE_PAIR"
+    CLAIM = "CLAIM"
+    REQUIREMENT = "REQUIREMENT"
+    ASSET = "ASSET"
+    CHART_SERIES = "CHART_SERIES"
+    DECK = "DECK"
+
+
 class ExecutionStatus(str, Enum):
     """Whether an Oracle invocation itself completed successfully."""
 
@@ -79,6 +93,12 @@ class SupervisorState(str, Enum):
 
 
 class DagNodeKind(str, Enum):
+    ACQUIRE = "ACQUIRE"
+    OBSERVE = "OBSERVE"
+    SELECT = "SELECT"
+    AUDIT = "AUDIT"
+    FUSE = "FUSE"
+    REDUCE = "REDUCE"
+    SCORE = "SCORE"
     BASELINE = "BASELINE"
     SCENE = "SCENE"
-

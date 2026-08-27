@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Mapping
 
 from ppt_eval.domain import (
+    AtomicObservation,
     DagNode,
     EvalProfile,
     EvaluationDag,
@@ -18,16 +19,19 @@ from ppt_eval.domain import (
 from .oracle import (
     EvaluationContext,
     MetricDefinition,
+    Oracle,
     OracleDescriptor,
+    OracleExecutionOutput,
     OracleRegistry,
     coerce_descriptor,
-    normalize_oracle_output,
+    normalize_oracle_execution_output,
 )
 
 
 @dataclass(frozen=True, slots=True)
 class SchedulerOutcome:
     results: tuple[OracleResult, ...]
+    observations: tuple[AtomicObservation, ...]
     attempts: Mapping[str, int]
     oracle_versions: Mapping[str, str]
     total_cost: float
@@ -47,11 +51,13 @@ class DagScheduler:
     ) -> SchedulerOutcome:
         ordered_nodes = self._topological_order(dag)
         results: list[OracleResult] = []
+        observations: list[AtomicObservation] = []
         attempts: dict[str, int] = {}
         versions: dict[str, str] = {}
         total_cost = 0.0
 
         for node in ordered_nodes:
+            node_observations: tuple[AtomicObservation, ...] = ()
             if (
                 not node.mandatory
                 and profile.cost_budget is not None
@@ -94,36 +100,61 @@ class DagScheduler:
                 # Keep model/network Oracles at-most-once at this layer;
                 # deterministic Oracles retain the Profile retry policy.
                 max_retries = profile.max_retries if descriptor.deterministic else 0
-                node_results, used_attempts = self._execute_with_retries(
+                node_output, used_attempts = self._execute_with_retries(
                     oracle, descriptor, context, max_retries
                 )
+                node_results = node_output.results
+                node_observations = node_output.observations
                 attempts[node.node_id] = used_attempts
+                observations.extend(node_observations)
+                store = context.memo.setdefault("ppt_eval.atomic_observations", [])
+                if not isinstance(store, list):
+                    raise TypeError("atomic observation memo store must be a list")
+                store.extend(node_observations)
             results.extend(node_results)
-            total_cost += sum(result.cost for result in node_results)
+            result_store = context.memo.setdefault("ppt_eval.oracle_results", [])
+            if not isinstance(result_store, list):
+                raise TypeError("oracle result memo store must be a list")
+            result_store.extend(node_results)
+            total_cost += sum(result.cost for result in node_results) + sum(
+                observation.cost for observation in node_observations
+            )
 
         return SchedulerOutcome(
             results=tuple(results),
+            observations=tuple(observations),
             attempts=attempts,
             oracle_versions=versions,
             total_cost=round(total_cost, 6),
         )
 
     @staticmethod
-    def _execute_with_retries(oracle, descriptor, context, max_retries):
-        last_results: tuple[OracleResult, ...] = ()
+    def _execute_with_retries(
+        oracle: Oracle,
+        descriptor: OracleDescriptor,
+        context: EvaluationContext,
+        max_retries: int,
+    ) -> tuple[OracleExecutionOutput, int]:
+        last_output = OracleExecutionOutput()
         for attempt in range(1, max_retries + 2):
             try:
-                last_results = normalize_oracle_output(oracle.evaluate(context))
-                if not last_results:
-                    raise ValueError("Oracle returned no results")
+                last_output = normalize_oracle_execution_output(oracle.evaluate(context))
+                if not last_output.results and not last_output.observations:
+                    raise ValueError("Oracle returned no results or observations")
             except Exception as exc:
-                last_results = DagScheduler._exception_results(descriptor, exc)
-            if not any(
+                last_output = OracleExecutionOutput(
+                    results=DagScheduler._exception_results(descriptor, exc)
+                )
+            has_error = any(
                 result.execution_status == ExecutionStatus.ERROR
-                for result in last_results
-            ):
-                return last_results, attempt
-        return last_results, max_retries + 1
+                for result in last_output.results
+            ) or any(
+                observation.execution_status == ExecutionStatus.ERROR
+                for observation in last_output.observations
+            )
+            if not has_error:
+                return last_output, attempt
+        return last_output, max_retries + 1
 
     @staticmethod
     def _unsupported_results(

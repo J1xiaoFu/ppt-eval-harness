@@ -14,6 +14,7 @@ from .oracle import (
     MetricDefinition,
     Oracle,
     OracleDescriptor,
+    OracleExecutionOutput,
     OracleRegistry,
 )
 from .profile import ProfileCompiler
@@ -35,6 +36,7 @@ __all__ = [
     "ModelEscalationOutcome",
     "Oracle",
     "OracleDescriptor",
+    "OracleExecutionOutput",
     "OracleRegistry",
     "ProfileCompiler",
     "RunSupervisor",

@@ -15,6 +15,7 @@ from .enums import (
     CoverageStatus,
     DagNodeKind,
     EvaluationDecision,
+    EvaluationScope,
     ExecutionStatus,
     MetricStatus,
     SceneType,
@@ -46,6 +47,143 @@ class Evidence:
             raise ValueError("page_number must be one-based")
         if self.bbox is not None and len(self.bbox) != 4:
             raise ValueError("bbox must contain exactly four coordinates")
+
+
+@dataclass(frozen=True, slots=True)
+class AtomicObservation:
+    """One independently auditable measurement at a declared evaluation scope."""
+
+    observation_id: str
+    oracle_id: str
+    metric_id: str
+    scope: EvaluationScope
+    unit_key: str
+    execution_status: ExecutionStatus = ExecutionStatus.SUCCESS
+    metric_status: MetricStatus = MetricStatus.SCORED
+    raw_value: float | str | bool | None = None
+    local_score: float | None = None
+    confidence: float = 1.0
+    severity: Severity = Severity.INFO
+    importance: float = 1.0
+    key_unit: bool = False
+    critical: bool = False
+    evidence: tuple[Evidence, ...] = ()
+    version: str = "1.0"
+    cost: float = 0.0
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        for attribute, enum_type in (
+            ("scope", EvaluationScope),
+            ("execution_status", ExecutionStatus),
+            ("metric_status", MetricStatus),
+            ("severity", Severity),
+        ):
+            value = getattr(self, attribute)
+            if not isinstance(value, enum_type):
+                object.__setattr__(self, attribute, enum_type(value))
+        object.__setattr__(self, "evidence", tuple(self.evidence))
+        for attribute in ("observation_id", "oracle_id", "metric_id", "unit_key", "version"):
+            value = getattr(self, attribute)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{attribute} must not be blank")
+        if self.local_score is not None and not 0.0 <= self.local_score <= 1.0:
+            raise ValueError("local_score must be between zero and one")
+        if self.metric_status == MetricStatus.SCORED and self.local_score is None:
+            raise ValueError("SCORED observations require local_score")
+        if self.metric_status in (MetricStatus.NA, MetricStatus.ERROR) and self.local_score is not None:
+            raise ValueError("NA and ERROR observations cannot contain local_score")
+        if not 0.0 <= self.confidence <= 1.0:
+            raise ValueError("confidence must be between zero and one")
+        if self.importance < 0:
+            raise ValueError("importance cannot be negative")
+        if self.cost < 0:
+            raise ValueError("cost cannot be negative")
+        execution_failed = self.execution_status == ExecutionStatus.ERROR
+        metric_failed = self.metric_status == MetricStatus.ERROR
+        if execution_failed != metric_failed:
+            raise ValueError(
+                "execution ERROR and metric ERROR must be set together; "
+                "quality FAIL is not an execution error"
+            )
+        if (
+            self.execution_status == ExecutionStatus.SKIPPED
+            and self.metric_status != MetricStatus.NA
+        ):
+            raise ValueError("SKIPPED observations must have metric status NA")
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationBatch:
+    """Atomic observations emitted by one Oracle invocation."""
+
+    oracle_id: str
+    observations: tuple[AtomicObservation, ...]
+    version: str = "1.0"
+    duration_ms: int = 0
+    cost: float = 0.0
+    metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "observations", tuple(self.observations))
+        if not self.oracle_id.strip() or not self.version.strip():
+            raise ValueError("oracle_id and version must not be blank")
+        observation_ids = [item.observation_id for item in self.observations]
+        if len(observation_ids) != len(set(observation_ids)):
+            raise ValueError("observation_id values must be unique within a batch")
+        if self.duration_ms < 0 or self.cost < 0:
+            raise ValueError("duration_ms and cost cannot be negative")
+
+
+@dataclass(frozen=True, slots=True)
+class ReducerSpec:
+    """Versioned contract for reducing atomic observations into one metric."""
+
+    reducer_id: str
+    version: str
+    input_metric_ids: tuple[str, ...]
+    expected_scope: EvaluationScope
+    reducer_kind: str
+    output_oracle_id: str
+    output_metric_id: str
+    output_score_role: ScoreRole
+    critical_cap: float = 0.34
+    minimum_observability: float = 0.60
+    required: bool = True
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.expected_scope, EvaluationScope):
+            object.__setattr__(
+                self, "expected_scope", EvaluationScope(self.expected_scope)
+            )
+        if not isinstance(self.output_score_role, ScoreRole):
+            object.__setattr__(
+                self, "output_score_role", ScoreRole(self.output_score_role)
+            )
+        object.__setattr__(
+            self,
+            "input_metric_ids",
+            tuple(str(metric_id).strip() for metric_id in self.input_metric_ids),
+        )
+        object.__setattr__(self, "reducer_kind", self.reducer_kind.strip().upper())
+        for attribute in (
+            "reducer_id",
+            "version",
+            "reducer_kind",
+            "output_oracle_id",
+            "output_metric_id",
+        ):
+            value = getattr(self, attribute)
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{attribute} must not be blank")
+        if not self.input_metric_ids or any(not item for item in self.input_metric_ids):
+            raise ValueError("input_metric_ids must contain non-blank metric ids")
+        if len(self.input_metric_ids) != len(set(self.input_metric_ids)):
+            raise ValueError("input_metric_ids must be unique")
+        if not 0.0 <= self.critical_cap <= 1.0:
+            raise ValueError("critical_cap must be between zero and one")
+        if not 0.0 <= self.minimum_observability <= 1.0:
+            raise ValueError("minimum_observability must be between zero and one")
 
 
 @dataclass(frozen=True, slots=True)
