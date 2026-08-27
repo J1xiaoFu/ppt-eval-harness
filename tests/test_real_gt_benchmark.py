@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from copy import deepcopy
 from dataclasses import replace
 from pathlib import Path
@@ -14,14 +16,19 @@ from scripts.benchmarks.evaluate_slides_align_sample import (
     STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION,
     STRUCTURED_VLM_VISUAL_DIMENSIONS_PROMPT,
     atomic_model_routing_events,
+    audit_case_payload,
     average_ranks,
+    build_html,
     case_html,
     pairwise_accuracy,
+    replay_rank_statistics_eligible,
     selected_metrics,
     spearman,
     structured_visual_case_analysis,
     structured_visual_replay_analysis,
     structured_visual_sensitivity_scores,
+    v8_model_case_analysis,
+    v8_replay_analysis,
     visual_proxy,
 )
 
@@ -541,6 +548,279 @@ def test_ineligible_v6_case_html_hides_order_and_rank_delta() -> None:
     assert "排名统计已抑制" in document
     assert "系统顺序与排名偏差不予展示" in document
     assert "#None" not in document
+
+
+def test_case_html_exposes_every_slide_and_evidence_page_jump() -> None:
+    item = {
+        "case_id": "case-a",
+        "product": "Deck A",
+        "human_rank": 1,
+        "pptx": {"local_path": "decks/example.pptx"},
+        "renders": {
+            "files": [
+                {"local_path": f"renders/slide-{index}.png"}
+                for index in range(1, 9)
+            ]
+        },
+        "run_id": "run-test",
+        "profile_version": "8.2",
+        "decision": "REVIEW",
+        "coverage": "FULL",
+        "base_score": 76.0,
+        "reference_v2_score": None,
+        "deterministic_visual_proxy": 80.0,
+        "metrics": {},
+        "model_audit_routing": [],
+        "review_reasons": ["score:review_band"],
+        "model_token_usage": {},
+        "model_usage_summary": {
+            "total_tokens": 100,
+            "usage_complete": True,
+            "cost_known": False,
+            "reported_cost": 0.0,
+        },
+        "result_status_counts": {"SCORED": 9, "PASS": 1},
+        "audit_chain": {"valid": True, "broken_event": None},
+        "v8_model_analysis": {
+            "metric_statuses": {
+                metric_id: "SCORED"
+                for metric_id in (*STRUCTURED_VLM_DIMENSION_IDS, "structured_vlm_authorship_specificity")
+            }
+        },
+        "audit": {
+            "training_eligibility": {
+                "decisions": [
+                    {
+                        "track": "visual",
+                        "status": "REVIEW",
+                        "score": 76.0,
+                        "reason_codes": ["score:review_band"],
+                    }
+                ]
+            },
+            "gate_verdicts": [
+                {
+                    "metric_id": "v8_functional_integrity",
+                    "verdict": "PASS",
+                    "reason_code": "PASS",
+                    "critical_observation_count": 0,
+                    "major_prevalence": 0.0,
+                }
+            ],
+            "reducers": {
+                "authorship_specificity_v2": {
+                    "score_role": "BASE_ADDITIVE",
+                    "score": 0.4,
+                    "metric_status": "SCORED",
+                    "observability": 1.0,
+                    "rule_score": 0.5,
+                    "model_score": 0.35,
+                    "critical_cap_applied": False,
+                    "lineage": {
+                        "applicable_observation_count": 2,
+                        "observation_count": 2,
+                        "input_metric_ids": ["authorship_specificity_signals"],
+                    },
+                }
+            },
+            "observation_summary": {
+                "count": 2,
+                "metric_ids": ["authorship_specificity_signals"],
+                "by_scope": {"PAGE": 2},
+                "by_status": {"SCORED": 2},
+            },
+            "observation_artifact": {
+                "href": "artifacts/case-a.observations.json",
+                "sha256": "a" * 64,
+                "hash_valid": True,
+            },
+            "findings": {
+                "total_actionable": 1,
+                "displayed": 1,
+                "truncated": False,
+                "items": [
+                    {
+                        "page_number": 8,
+                        "severity": "MAJOR",
+                        "metric_id": "authorship_specificity_signals",
+                        "message": "Repeated mechanical cards.",
+                        "score": 0.4,
+                        "confidence": 0.8,
+                        "kind": "formulaicity",
+                        "unit_key": "page:8",
+                    }
+                ],
+            },
+            "errors": [],
+            "degradation_reasons": [],
+        },
+        "report_href": "case-a.report.json",
+        "rank_comparison_eligible": False,
+        "selected_human_order": None,
+        "baseline_order": None,
+        "visual_proxy_order": None,
+        "baseline_rank_delta": None,
+        "visual_rank_delta": None,
+    }
+
+    document = case_html(item, Path("."), Path("."))
+
+    assert document.count('class="slide-thumb"') == 8
+    assert 'id="case-a-slide-8"' in document
+    assert 'data-open-slide="case-a-slide-8"' in document
+    assert "人工审计证据（可跳转幻灯片）" in document
+    assert "规则 / VLM" in document
+    assert "cost=未知" in document
+    assert "下载完整原子观察 JSON" in document
+
+
+def test_build_html_includes_keyboard_modal_viewer() -> None:
+    comparison = {
+        "statistics": {
+            "spearman_base_vs_human": None,
+            "spearman_deterministic_visual_proxy_vs_human": None,
+            "pairwise_base_accuracy": None,
+            "pairwise_deterministic_visual_proxy_accuracy": None,
+            "comparable_pairs": 0,
+        },
+        "reference_v2_statistics": None,
+        "structured_visual_replay": None,
+        "v8_replay": {"eligible": False, "valid_case_count": 0, "expected_case_count": 7, "case_failures": {}},
+        "cases": [],
+        "limitations": [],
+        "profile_id": "finished-deck-v8",
+    }
+
+    document = build_html(comparison, Path("."), Path("."))
+
+    assert 'id="slide-modal"' in document
+    assert 'class="modal-prev"' in document
+    assert "ArrowRight" in document
+    assert "排名统计已抑制" in document
+
+
+def test_audit_case_payload_verifies_and_exports_full_observation_artifact(
+    tmp_path: Path,
+) -> None:
+    observations = [
+        {
+            "observation_id": "obs-1",
+            "oracle_id": "v8.test",
+            "metric_id": "slide_geometry_integrity",
+            "scope": "PAGE",
+            "unit_key": "page:2",
+            "metric_status": "SCORED",
+            "local_score": 0.4,
+            "confidence": 1.0,
+            "severity": "MAJOR",
+            "evidence": [
+                {
+                    "kind": "clipping",
+                    "message": "Text is clipped.",
+                    "page_number": 2,
+                }
+            ],
+        }
+    ]
+    source = tmp_path / "source.observations.json"
+    source.write_text(json.dumps(observations), encoding="utf-8")
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    report = {
+        "results": [
+            {
+                "oracle_id": "v8.quality_reducers",
+                "metric_id": "v8_functional_integrity",
+                "metric_status": "FAIL",
+                "score_role": "BASE_MULTIPLIER",
+                "normalized_score": None,
+                "confidence": 1.0,
+                "severity": "CRITICAL",
+                "metadata": {
+                    "reason_code": "CRITICAL_OBSERVATION",
+                    "critical_observation_ids": ["obs-1"],
+                },
+            }
+        ],
+        "manifest": {"artifact_hashes": {"atomic_observations": digest}},
+        "observation_artifact": {
+            "uri": str(source),
+            "sha256": digest,
+            "size_bytes": source.stat().st_size,
+            "media_type": "application/vnd.ppt-eval.observations+json",
+        },
+        "training_eligibility": {"decisions": []},
+        "observation_summary": {"count": 1},
+    }
+
+    payload = audit_case_payload(report, tmp_path / "report", "case-a")
+
+    artifact = payload["observation_artifact"]
+    assert artifact["hash_valid"] is True
+    assert artifact["target_sha256"] == digest
+    assert artifact["target_size_bytes"] == source.stat().st_size
+    assert artifact["available"] is True
+    assert (tmp_path / "report" / artifact["href"]).read_bytes() == source.read_bytes()
+    assert payload["gate_verdicts"][0]["verdict"] == "FAIL"
+    assert payload["findings"]["items"][0]["page_number"] == 2
+
+
+def test_v8_replay_fails_closed_on_any_model_na_or_error() -> None:
+    required = (*STRUCTURED_VLM_DIMENSION_IDS, "structured_vlm_authorship_specificity")
+
+    def report(case_id: str) -> dict[str, object]:
+        return {
+            "case_id": case_id,
+            "coverage": "FULL",
+            "manifest": {"case_id": case_id},
+            "results": [
+                {
+                    "metric_id": metric_id,
+                    "metric_status": "SCORED",
+                    "normalized_score": 0.8,
+                    "metadata": {
+                        "routing_attempts": [
+                            {
+                                "tier": "FLASH",
+                                "selected": True,
+                                "metric_status": "SCORED",
+                            }
+                        ],
+                        "routing_usage": {"usage_complete": True},
+                    },
+                }
+                for metric_id in required
+            ],
+        }
+
+    cases = []
+    expected = []
+    for index in range(7):
+        case_id = f"case-{index}"
+        analysis = v8_model_case_analysis(report(case_id), expected_case_id=case_id)
+        cases.append(
+            {
+                "case_id": case_id,
+                "product": f"product-{index}",
+                "human_rank": index + 1,
+                "v8_model_analysis": analysis,
+            }
+        )
+        expected.append((case_id, f"product-{index}", index + 1))
+    valid = v8_replay_analysis(cases, expected_cases=expected)
+    assert valid["eligible"] is True
+    assert replay_rank_statistics_eligible(None, valid) is True
+
+    broken_report = report("case-0")
+    broken_report["results"][0]["metric_status"] = "ERROR"
+    broken_report["results"][0]["normalized_score"] = None
+    cases[0]["v8_model_analysis"] = v8_model_case_analysis(
+        broken_report, expected_case_id="case-0"
+    )
+    broken = v8_replay_analysis(cases, expected_cases=expected)
+
+    assert broken["eligible"] is False
+    assert "metric_not_scored" in " ".join(broken["case_failures"]["case-0"])
+    assert replay_rank_statistics_eligible(None, broken) is False
 
 
 def test_selected_metrics_exports_all_six_v6_dimensions() -> None:

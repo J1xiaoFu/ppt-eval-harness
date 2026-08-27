@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import html
 import json
 import math
 import os
+import shutil
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -20,6 +22,7 @@ for entry in (str(ROOT), str(SRC)):
 
 from ppt_eval.config import load_profile  # noqa: E402
 from ppt_eval.domain import EvalCase, EvalProfile, SceneType  # noqa: E402
+from ppt_eval.infrastructure import JsonlAuditLog  # noqa: E402
 from ppt_eval.oracles.model_audits import (  # noqa: E402
     GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
     GROUNDED_STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION,
@@ -963,6 +966,15 @@ def structured_visual_replay_analysis(
 
 def selected_metrics(results: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]:
     ids = (
+        "v8_functional_integrity",
+        "content_structure",
+        "language_consistency",
+        "composition_craft",
+        "typography_craft",
+        "palette_craft",
+        "visual_communication",
+        "visual_system_sequence",
+        "authorship_specificity_v2",
         "content_clarity",
         "narrative",
         "visual_hierarchy",
@@ -996,6 +1008,280 @@ def selected_metrics(results: Mapping[str, Mapping[str, Any]]) -> dict[str, Any]
         }
         for metric_id in ids
         if metric_id in results
+    }
+
+
+def _file_sha256_and_size(path: Path) -> tuple[str, int]:
+    digest = hashlib.sha256()
+    size = 0
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+            size += len(chunk)
+    return digest.hexdigest(), size
+
+
+def _copy_observation_artifact(
+    report: Mapping[str, Any], output: Path, case_id: str
+) -> dict[str, Any]:
+    """Expose the immutable full observation artifact beside the HTML report."""
+
+    reference = report.get("observation_artifact")
+    if not isinstance(reference, Mapping):
+        return {}
+    exported = {
+        key: reference.get(key)
+        for key in ("sha256", "size_bytes", "media_type", "original_name")
+        if reference.get(key) is not None
+    }
+    source_value = reference.get("uri")
+    if not isinstance(source_value, str) or not source_value:
+        return exported
+    source = Path(source_value)
+    if not source.is_file():
+        exported["available"] = False
+        exported["hash_valid"] = False
+        return exported
+    source_sha256, source_size = _file_sha256_and_size(source)
+    manifest = report.get("manifest")
+    manifest = manifest if isinstance(manifest, Mapping) else {}
+    artifact_hashes = manifest.get("artifact_hashes")
+    artifact_hashes = artifact_hashes if isinstance(artifact_hashes, Mapping) else {}
+    manifest_sha256 = artifact_hashes.get("atomic_observations")
+    reference_sha256 = reference.get("sha256")
+    reference_size = reference.get("size_bytes")
+    hash_valid = (
+        isinstance(reference_sha256, str)
+        and isinstance(manifest_sha256, str)
+        and source_sha256 == reference_sha256 == manifest_sha256
+        and (
+            reference_size is None
+            or (
+                isinstance(reference_size, int)
+                and not isinstance(reference_size, bool)
+                and source_size == reference_size
+            )
+        )
+    )
+    exported.update(
+        {
+            "source_sha256": source_sha256,
+            "manifest_sha256": manifest_sha256,
+            "source_size_bytes": source_size,
+            "source_hash_valid": hash_valid,
+        }
+    )
+    if not hash_valid:
+        exported["available"] = False
+        exported["hash_valid"] = False
+        return exported
+    target = output / "artifacts" / f"{case_id}.observations.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if source.resolve() != target.resolve():
+        shutil.copyfile(source, target)
+    target_sha256, target_size = _file_sha256_and_size(target)
+    target_hash_valid = (
+        hash_valid
+        and target_sha256 == reference_sha256 == manifest_sha256
+        and target_size == source_size
+    )
+    exported.update(
+        {
+            "target_sha256": target_sha256,
+            "target_size_bytes": target_size,
+            "hash_valid": target_hash_valid,
+        }
+    )
+    if not target_hash_valid:
+        exported["available"] = False
+        return exported
+    exported.update(
+        {
+            "available": True,
+            "href": target.relative_to(output).as_posix(),
+        }
+    )
+    return exported
+
+
+def _observation_findings(
+    report: Mapping[str, Any], *, display_limit: int = 180
+) -> dict[str, Any]:
+    """Return a bounded reviewer view while preserving the full artifact separately."""
+
+    findings: list[dict[str, Any]] = []
+    for result in report.get("results", ()):
+        if not isinstance(result, Mapping):
+            continue
+        metadata = result.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        if metadata.get("audit_type") != "model":
+            continue
+        for evidence in result.get("evidence", ()):
+            if not isinstance(evidence, Mapping):
+                continue
+            findings.append(
+                {
+                    "observation_id": evidence.get("evidence_id"),
+                    "metric_id": result.get("metric_id"),
+                    "scope": "MODEL_AUDIT",
+                    "unit_key": None,
+                    "metric_status": result.get("metric_status"),
+                    "severity": result.get("severity") or metadata.get("defect_severity") or "INFO",
+                    "score": result.get("normalized_score"),
+                    "confidence": result.get("confidence"),
+                    "kind": evidence.get("kind"),
+                    "message": evidence.get("message"),
+                    "page_number": evidence.get("page_number"),
+                    "object_id": evidence.get("object_id"),
+                    "bbox": evidence.get("bbox"),
+                }
+            )
+    reference = report.get("observation_artifact")
+    source_value = reference.get("uri") if isinstance(reference, Mapping) else None
+    payload: list[Any] = []
+    if isinstance(source_value, str) and Path(source_value).is_file():
+        candidate = json.loads(Path(source_value).read_text(encoding="utf-8"))
+        if isinstance(candidate, list):
+            payload = candidate
+
+    severity_order = {"CRITICAL": 0, "MAJOR": 1, "MINOR": 2, "INFO": 3}
+    for observation in payload:
+        if not isinstance(observation, Mapping):
+            continue
+        severity = str(observation.get("severity") or "INFO")
+        status = str(observation.get("metric_status") or "")
+        local_score = observation.get("local_score")
+        actionable = (
+            severity in {"CRITICAL", "MAJOR", "MINOR"}
+            or status in {"ERROR", "FAIL"}
+            or (
+                isinstance(local_score, (int, float))
+                and not isinstance(local_score, bool)
+                and float(local_score) < 0.80
+            )
+        )
+        if not actionable:
+            continue
+        evidence_items = observation.get("evidence")
+        if not isinstance(evidence_items, list) or not evidence_items:
+            evidence_items = [{}]
+        for evidence in evidence_items:
+            if not isinstance(evidence, Mapping):
+                continue
+            findings.append(
+                {
+                    "observation_id": observation.get("observation_id"),
+                    "metric_id": observation.get("metric_id"),
+                    "scope": observation.get("scope"),
+                    "unit_key": observation.get("unit_key"),
+                    "metric_status": status,
+                    "severity": severity,
+                    "score": local_score,
+                    "confidence": observation.get("confidence"),
+                    "kind": evidence.get("kind"),
+                    "message": evidence.get("message"),
+                    "page_number": evidence.get("page_number"),
+                    "object_id": evidence.get("object_id"),
+                    "bbox": evidence.get("bbox"),
+                }
+            )
+    findings.sort(
+        key=lambda item: (
+            severity_order.get(str(item["severity"]), 4),
+            2.0 if item["score"] is None else float(item["score"]),
+            int(item["page_number"] or 10**9),
+            str(item["metric_id"] or ""),
+        )
+    )
+    shown = findings[:display_limit]
+    return {
+        "total_actionable": len(findings),
+        "displayed": len(shown),
+        "truncated": len(findings) > len(shown),
+        "items": shown,
+    }
+
+
+def audit_case_payload(
+    report: Mapping[str, Any], output: Path, case_id: str
+) -> dict[str, Any]:
+    """Build the backwards-compatible reviewer-facing v8 audit extension."""
+
+    reducers: dict[str, Any] = {}
+    gates: list[dict[str, Any]] = []
+    for result in report.get("results", ()):
+        if not isinstance(result, Mapping):
+            continue
+        metadata = result.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        if result.get("oracle_id") != "v8.quality_reducers" and not metadata.get(
+            "reducer_id"
+        ):
+            continue
+        metric_id = str(result.get("metric_id") or "")
+        lineage = metadata.get("lineage")
+        lineage = lineage if isinstance(lineage, Mapping) else {}
+        reducers[metric_id] = {
+            "metric_status": result.get("metric_status"),
+            "score_role": result.get("score_role"),
+            "score": result.get("normalized_score"),
+            "confidence": result.get("confidence"),
+            "severity": result.get("severity"),
+            "reducer_id": metadata.get("reducer_id"),
+            "reducer_version": metadata.get("reducer_version"),
+            "reducer_kind": metadata.get("reducer_kind"),
+            "observability": metadata.get("observability"),
+            "coverage": metadata.get("coverage"),
+            "reason_code": metadata.get("reason_code"),
+            "components": metadata.get("components", {}),
+            "fusion_mode": metadata.get("fusion_mode"),
+            "rule_score": metadata.get("rule_score"),
+            "model_score": metadata.get("model_score"),
+            "critical_cap_applied": metadata.get("critical_cap_applied"),
+            "critical_observation_count": len(
+                metadata.get("critical_observation_ids", ())
+            ),
+            "uncapped_score": metadata.get("uncapped_score"),
+            "lineage": {
+                "input_metric_ids": list(lineage.get("input_metric_ids", ())),
+                "observation_count": len(lineage.get("observation_ids", ())),
+                "applicable_observation_count": len(
+                    lineage.get("applicable_observation_ids", ())
+                ),
+                "unavailable_observation_count": len(
+                    lineage.get("unavailable_observation_ids", ())
+                ),
+                "error_observation_count": len(
+                    lineage.get("error_observation_ids", ())
+                ),
+            },
+        }
+        if str(result.get("score_role") or "").endswith("MULTIPLIER") or metric_id.endswith(
+            "integrity"
+        ):
+            gates.append(
+                {
+                    "metric_id": metric_id,
+                    "verdict": result.get("metric_status"),
+                    "reason_code": metadata.get("reason_code"),
+                    "severity": result.get("severity"),
+                    "critical_observation_count": len(
+                        metadata.get("critical_observation_ids", ())
+                    ),
+                    "major_prevalence": metadata.get("major_prevalence"),
+                }
+            )
+    return {
+        "training_eligibility": report.get("training_eligibility", {}),
+        "score_breakdown": report.get("score_breakdown", {}),
+        "observation_summary": report.get("observation_summary", {}),
+        "observation_artifact": _copy_observation_artifact(report, output, case_id),
+        "reducers": reducers,
+        "gate_verdicts": gates,
+        "findings": _observation_findings(report),
+        "errors": list(report.get("errors", ())),
+        "degradation_reasons": list(report.get("degradation_reasons", ())),
     }
 
 
@@ -1074,6 +1360,124 @@ def atomic_model_routing_events(
     return events
 
 
+def v8_model_case_analysis(
+    report: Mapping[str, Any], *, expected_case_id: str
+) -> dict[str, Any]:
+    """Validate that one v8 case is safe to include in rank statistics."""
+
+    required_metric_ids = (*STRUCTURED_VLM_DIMENSION_IDS, *V8_ADDITIONAL_MODEL_METRIC_IDS)
+    results = [item for item in report.get("results", ()) if isinstance(item, Mapping)]
+    failures: list[str] = []
+    status_by_metric: dict[str, str] = {}
+    route_by_metric: dict[str, str] = {}
+    for metric_id in required_metric_ids:
+        matching = [item for item in results if item.get("metric_id") == metric_id]
+        if len(matching) != 1:
+            failures.append(f"metric_count:{metric_id}:{len(matching)}")
+            continue
+        result = matching[0]
+        status = str(result.get("metric_status") or "UNKNOWN")
+        status_by_metric[metric_id] = status
+        if status != "SCORED" or result.get("normalized_score") is None:
+            failures.append(f"metric_not_scored:{metric_id}:{status}")
+        metadata = result.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        attempts = [
+            attempt
+            for attempt in metadata.get("routing_attempts", ())
+            if isinstance(attempt, Mapping)
+        ]
+        selected = [attempt for attempt in attempts if attempt.get("selected") is True]
+        if not attempts or len(selected) != 1:
+            failures.append(f"route_contract:{metric_id}")
+        route_by_metric[metric_id] = "->".join(
+            f"{attempt.get('tier', 'MODEL')}:{attempt.get('metric_status', 'UNKNOWN')}"
+            for attempt in attempts
+        )
+        usage = metadata.get("routing_usage")
+        if not isinstance(usage, Mapping) or usage.get("usage_complete") is not True:
+            failures.append(f"usage_incomplete:{metric_id}")
+    manifest = report.get("manifest")
+    manifest = manifest if isinstance(manifest, Mapping) else {}
+    if report.get("case_id") != expected_case_id or manifest.get("case_id") != expected_case_id:
+        failures.append("case_identity")
+    if str(report.get("coverage") or "") != "FULL":
+        failures.append(f"coverage:{report.get('coverage')}")
+    return {
+        "eligible": not failures,
+        "required_metric_ids": list(required_metric_ids),
+        "metric_statuses": status_by_metric,
+        "routes": route_by_metric,
+        "failures": failures,
+    }
+
+
+def v8_replay_analysis(
+    cases: Sequence[Mapping[str, Any]],
+    *,
+    expected_cases: Sequence[tuple[str, str, int]],
+) -> dict[str, Any]:
+    expected = set(expected_cases)
+    observed = {
+        (str(item["case_id"]), str(item["product"]), int(item["human_rank"]))
+        for item in cases
+    }
+    unique = (
+        len(cases) == len({str(item["case_id"]) for item in cases})
+        == len({str(item["product"]) for item in cases})
+        == len({int(item["human_rank"]) for item in cases})
+    )
+    identity_match = len(cases) == len(expected_cases) and observed == expected and unique
+    case_failures = {
+        str(item["case_id"]): list(item.get("v8_model_analysis", {}).get("failures", ()))
+        for item in cases
+        if not item.get("v8_model_analysis", {}).get("eligible", False)
+    }
+    eligible = identity_match and not case_failures
+    return {
+        "eligible": eligible,
+        "eligibility_rule": (
+            "exact pinned seven-case identity, FULL coverage, exactly seven v8 model criteria "
+            "SCORED, one selected routing attempt per criterion, and complete usage accounting"
+        ),
+        "expected_case_count": len(expected_cases),
+        "observed_case_count": len(cases),
+        "identity_match": identity_match,
+        "case_failures": case_failures,
+        "valid_case_count": sum(
+            bool(item.get("v8_model_analysis", {}).get("eligible", False)) for item in cases
+        ),
+    }
+
+
+def replay_rank_statistics_eligible(
+    structured_visual_replay: Mapping[str, Any] | None,
+    v8_replay: Mapping[str, Any] | None,
+) -> bool:
+    """Centralize the fail-closed rank-statistics gate for every replay generation."""
+
+    if structured_visual_replay is not None:
+        return bool(structured_visual_replay.get("eligible"))
+    if v8_replay is not None:
+        return bool(v8_replay.get("eligible"))
+    return True
+
+
+def verify_run_audit_chain(path: Path, run_id: str) -> tuple[bool, str | None]:
+    if not path.is_file():
+        return False, "missing_audit_log"
+    audit_log = JsonlAuditLog(path)
+    valid, broken_event = audit_log.verify()
+    if not valid:
+        return False, broken_event
+    run_events = [event for event in audit_log.read() if event.get("run_id") == run_id]
+    if not run_events:
+        return False, "missing_run_events"
+    if not any(event.get("event_type") in {"RUN_COMPLETED", "RUN_FAILED"} for event in run_events):
+        return False, "missing_terminal_event"
+    return True, None
+
+
 def evaluate(
     dataset_root: Path,
     output: Path,
@@ -1093,6 +1497,7 @@ def evaluate(
         profile_path = ROOT / "configs" / "profiles" / profile_name
     profile = load_profile(profile_path)
     structured_dimensions_enabled = _structured_dimension_contract_spec(profile) is not None
+    v8_model_enabled = str(profile.version).split(".", 1)[0] == "8"
     if structured_dimensions_enabled and not qwen_v3:
         raise ValueError(
             "the structured visual model-audit profile requires --qwen-v3 so the "
@@ -1237,6 +1642,27 @@ def evaluate(
             if structured_dimensions_enabled
             else None
         )
+        v8_analysis = (
+            v8_model_case_analysis(report, expected_case_id=case_id)
+            if v8_model_enabled
+            else None
+        )
+        result_status_counts: dict[str, int] = {}
+        for result in report.get("results", ()):
+            status = str(result.get("metric_status") or "UNKNOWN")
+            result_status_counts[status] = result_status_counts.get(status, 0) + 1
+        model_token_usage = {
+            metric_id: (
+                results[metric_id].get("metadata", {}).get("routing_usage")
+                or results[metric_id].get("metadata", {}).get("usage", {})
+            )
+            for metric_id in results
+            if results[metric_id].get("metadata", {}).get("audit_type") == "model"
+        }
+        usage_records = [value for value in model_token_usage.values() if isinstance(value, Mapping)]
+        audit_chain_valid, broken_audit_event = verify_run_audit_chain(
+            audit_path, str(report["run_id"])
+        )
         cases.append(
             {
                 "case_id": case_id,
@@ -1260,7 +1686,15 @@ def evaluate(
                 "deterministic_visual_proxy": deterministic_visual_proxy(results),
                 "visual_proxy": deterministic_visual_proxy(results),
                 "structured_visual_analysis": structured_visual_analysis,
+                "v8_model_analysis": v8_analysis,
                 "metrics": selected_metrics(results),
+                "audit": audit_case_payload(report, output, case_id),
+                "report_href": report_path.relative_to(output).as_posix(),
+                "result_status_counts": result_status_counts,
+                "audit_chain": {
+                    "valid": audit_chain_valid,
+                    "broken_event": broken_audit_event,
+                },
                 "model_audit_statuses": model_statuses,
                 "model_audit_routing": [
                     *model_routing_events(audit_path, report["run_id"]),
@@ -1269,13 +1703,19 @@ def evaluate(
                 "review_reasons": list(report.get("review_reasons", ())),
                 "model_versions": dict(report["manifest"].get("model_versions", {})),
                 "prompt_versions": dict(report["manifest"].get("prompt_versions", {})),
-                "model_token_usage": {
-                    metric_id: (
-                        results[metric_id].get("metadata", {}).get("routing_usage")
-                        or results[metric_id].get("metadata", {}).get("usage", {})
-                    )
-                    for metric_id in results
-                    if results[metric_id].get("metadata", {}).get("audit_type") == "model"
+                "model_token_usage": model_token_usage,
+                "model_usage_summary": {
+                    "total_tokens": sum(
+                        int(value.get("total_tokens", 0) or 0) for value in usage_records
+                    ),
+                    "usage_complete": bool(usage_records)
+                    and all(value.get("usage_complete", True) is True for value in usage_records),
+                    "cost_known": bool(usage_records)
+                    and all(value.get("cost_known") is True for value in usage_records),
+                    "reported_cost": sum(
+                        float(value.get("reported_cost", value.get("cost", 0.0)) or 0.0)
+                        for value in usage_records
+                    ),
                 },
             }
         )
@@ -1293,7 +1733,15 @@ def evaluate(
         profile,
         expected_cases=expected_cases,
     )
-    rank_statistics_eligible = structured_visual_replay is None or structured_visual_replay["eligible"]
+    v8_replay = (
+        v8_replay_analysis(cases, expected_cases=expected_cases)
+        if v8_model_enabled
+        else None
+    )
+    rank_statistics_eligible = replay_rank_statistics_eligible(
+        structured_visual_replay,
+        v8_replay,
+    )
     human_order = rank_order(cases, lambda item: -float(item["human_rank"]))
     baseline_order = rank_order(cases, lambda item: float(item["base_score"]))
     visual_order = rank_order(
@@ -1318,7 +1766,7 @@ def evaluate(
     visual_scores = [float(item["deterministic_visual_proxy"]) for item in cases]
     comparable_pairs = len(cases) * (len(cases) - 1) // 2 if rank_statistics_eligible else 0
     comparison: dict[str, Any] = {
-        "schema_version": "1.2",
+        "schema_version": "1.3",
         "dataset_id": manifest["dataset_id"],
         "dataset_revision": manifest["source"]["revision"],
         "topic": manifest["selection"]["topic"],
@@ -1358,6 +1806,7 @@ def evaluate(
             "comparable_pairs": comparable_pairs,
         },
         "structured_visual_replay": structured_visual_replay,
+        "v8_replay": v8_replay,
         "reference_v2_report_dir": str(reference_dir),
         "reference_v2_statistics": _reference_v2_statistics(reference_dir),
         "cases": sorted(cases, key=lambda item: item["human_rank"]),
@@ -1404,6 +1853,7 @@ def build_html(comparison: Mapping[str, Any], output: Path, dataset_root: Path) 
         )
     )
     structured_visual_section = _structured_visual_replay_html(comparison.get("structured_visual_replay"))
+    v8_replay_section = _v8_replay_html(comparison.get("v8_replay"))
     case_sections = "".join(case_html(item, output, dataset_root) for item in comparison["cases"])
     limitations = "".join(f"<li>{html.escape(item)}</li>" for item in comparison["limitations"])
     return f"""<!doctype html>
@@ -1416,11 +1866,22 @@ h2{{font:700 28px/1.2 Georgia,serif}} h3{{margin:0 0 6px}} .lead{{font-size:18px
 .summary{{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:28px 0}} .stat,.case{{background:white;border:1px solid var(--line);border-radius:12px}}
 .stat{{padding:18px}} .stat b{{display:block;font-size:26px;color:var(--accent)}} .case{{padding:24px;margin:28px 0}}
 .case-head{{display:flex;justify-content:space-between;gap:20px;align-items:flex-start}} .badge{{display:inline-block;padding:4px 9px;border-radius:999px;background:#e6f1ee;color:var(--accent);font-weight:700;margin-right:5px}}
-.warn{{background:#fae9e2;color:#8b341e}} .gallery{{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:18px 0}}
-.gallery img{{width:100%;aspect-ratio:16/9;object-fit:contain;background:#111;border-radius:7px;border:1px solid #ccd4da}}
+.warn{{background:#fae9e2;color:#8b341e}} .gallery{{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:18px 0}}
+.slide-thumb{{display:block;width:100%;padding:0;border:1px solid #ccd4da;border-radius:8px;background:#111;overflow:hidden;cursor:zoom-in;text-align:left;color:inherit}}
+.slide-thumb img{{display:block;width:100%;aspect-ratio:16/9;object-fit:contain;background:#111}}
+.slide-thumb span{{display:block;padding:6px 9px;background:#fff;font-size:12px;color:var(--muted)}}
 table{{border-collapse:collapse;width:100%;margin:16px 0}} th,td{{border-bottom:1px solid var(--line);padding:8px;text-align:left}} th{{color:var(--muted);font-weight:600}}
 .two{{display:grid;grid-template-columns:1.1fr .9fr;gap:22px}} code{{font-family:Consolas,monospace;font-size:12px}}
-details{{margin-top:12px}} .note{{border-left:4px solid var(--warm);padding:10px 14px;background:#fff3ed}}
+details{{margin-top:12px}} details>summary{{cursor:pointer;font-weight:650}} .note{{border-left:4px solid var(--warm);padding:10px 14px;background:#fff3ed}}
+.audit-grid{{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0}} .audit-card{{padding:12px;border:1px solid var(--line);border-radius:9px;background:#fbfcfc}}
+.audit-card b{{display:block;font-size:18px}} .status-TRAIN,.status-PASS{{color:#126b5d}} .status-REVIEW,.status-NA{{color:#9a5b18}} .status-REJECT,.status-FAIL,.status-ERROR{{color:#9b2f20}}
+.evidence-list{{list-style:none;padding:0;margin:12px 0}} .evidence-list li{{padding:10px 0;border-bottom:1px solid var(--line)}} .evidence-meta{{color:var(--muted);font-size:12px}}
+.page-link{{display:inline-block;padding:1px 7px;border-radius:999px;background:#e6f1ee;color:var(--accent);font-weight:650;text-decoration:none}}
+.route{{padding:9px 0;border-bottom:1px solid var(--line)}} .lineage{{color:var(--muted);font-size:12px}}
+.modal{{position:fixed;inset:0;z-index:50;background:rgba(5,10,15,.93);display:none;align-items:center;justify-content:center;padding:60px 72px}}
+.modal.open{{display:flex}} .modal img{{max-width:100%;max-height:calc(100vh - 120px);object-fit:contain;box-shadow:0 10px 50px #000}}
+.modal button{{position:absolute;border:1px solid #71808d;background:#18232d;color:white;border-radius:8px;padding:10px 14px;cursor:pointer}}
+.modal-close{{right:20px;top:18px}} .modal-prev{{left:18px;top:50%}} .modal-next{{right:18px;top:50%}} .modal-caption{{position:absolute;left:20px;bottom:15px;color:white}}
 @media(max-width:800px){{.summary,.two,.gallery{{grid-template-columns:1fr}}.case-head{{display:block}}}}
 </style></head><body><main>
 <h1>真实 PPT：人评排名 vs 当前 Harness</h1>
@@ -1432,10 +1893,50 @@ details{{margin-top:12px}} .note{{border-left:4px solid var(--warm);padding:10px
 <div class="stat"><b>{_display_stat(statistics["pairwise_deterministic_visual_proxy_accuracy"], percent=True)}</b>确定性视觉代理两两一致</div></div>
 {reference_note}
 <p class="note"><b>范围限制：</b>这只是 1 个 topic、{len(comparison["cases"])} 份可配对 deck 的诊断切片，不是跨 topic 相关性结论。</p>
+{v8_replay_section}
 {structured_visual_section}
 {case_sections}
 <section><h2>限制与下一步</h2><ul>{limitations}</ul></section>
-</main></body></html>"""
+</main><div class="modal" id="slide-modal" role="dialog" aria-modal="true" aria-label="幻灯片查看器">
+<button class="modal-close" type="button">关闭 ×</button><button class="modal-prev" type="button">← 上一页</button>
+<img alt="放大的幻灯片"><button class="modal-next" type="button">下一页 →</button><div class="modal-caption"></div></div>
+<script>
+(()=>{{
+  const modal=document.getElementById('slide-modal'), image=modal.querySelector('img'), caption=modal.querySelector('.modal-caption');
+  let slides=[], index=0;
+  const render=()=>{{const item=slides[index]; if(!item)return; image.src=item.dataset.slideSrc; image.alt=item.dataset.slideLabel; caption.textContent=`${{item.dataset.slideLabel}} · ${{index+1}}/${{slides.length}}`;}};
+  const open=(button)=>{{const caseId=button.dataset.caseId; slides=[...document.querySelectorAll(`.slide-thumb[data-case-id="${{CSS.escape(caseId)}}"]`)]; index=Math.max(0,slides.indexOf(button)); render(); modal.classList.add('open'); document.body.style.overflow='hidden';}};
+  const close=()=>{{modal.classList.remove('open');document.body.style.overflow='';image.removeAttribute('src');}};
+  document.addEventListener('click',(event)=>{{const button=event.target.closest('.slide-thumb');if(button)open(button);const jump=event.target.closest('[data-open-slide]');if(jump){{event.preventDefault();const target=document.getElementById(jump.dataset.openSlide);if(target){{target.scrollIntoView({{behavior:'smooth',block:'center'}});open(target);}}}}}});
+  modal.querySelector('.modal-close').onclick=close; modal.querySelector('.modal-prev').onclick=()=>{{index=(index-1+slides.length)%slides.length;render();}}; modal.querySelector('.modal-next').onclick=()=>{{index=(index+1)%slides.length;render();}};
+  modal.addEventListener('click',(event)=>{{if(event.target===modal)close();}}); document.addEventListener('keydown',(event)=>{{if(!modal.classList.contains('open'))return;if(event.key==='Escape')close();if(event.key==='ArrowLeft')modal.querySelector('.modal-prev').click();if(event.key==='ArrowRight')modal.querySelector('.modal-next').click();}});
+}})();
+</script></body></html>"""
+
+
+def _v8_replay_html(replay: object) -> str:
+    if not isinstance(replay, Mapping):
+        return ""
+    if replay.get("eligible"):
+        return (
+            '<section><h2>v8 重放资格</h2><p class="note"><b>排名统计已启用：</b>'
+            f"{int(replay.get('valid_case_count', 0))}/{int(replay.get('expected_case_count', 0))} "
+            "份均为 FULL，七个原子模型 criterion 均为合法 SCORED 响应，且路由与 usage 合同完整。</p></section>"
+        )
+    failures = replay.get("case_failures")
+    failure_text = (
+        "；".join(
+            f"{case_id}: {', '.join(str(value) for value in values)}"
+            for case_id, values in failures.items()
+        )
+        if isinstance(failures, Mapping)
+        else ""
+    )
+    return (
+        '<section><h2>v8 重放资格</h2><p class="note"><b>排名统计已抑制：</b>'
+        f"仅 {int(replay.get('valid_case_count', 0))}/{int(replay.get('expected_case_count', 0))} "
+        f"份通过完整性合同。{html.escape(failure_text)}</p></section>"
+    )
 
 
 def _structured_visual_replay_html(replay: object) -> str:
@@ -1484,15 +1985,178 @@ def _display_share_range(value: object) -> str:
     return f"{float(value[0]):.0%}–{float(value[1]):.0%}"
 
 
-def case_html(item: Mapping[str, Any], output: Path, dataset_root: Path) -> str:
-    render_files = item["renders"]["files"]
-    images = "".join(
-        f'<img loading="lazy" src="{html.escape(Path("..", record["local_path"]).as_posix())}" '
-        f'alt="{html.escape(item["product"])} slide {index}">'
-        for index, record in enumerate(render_files[:6], start=1)
+def _dom_token(value: object) -> str:
+    return "".join(character if character.isalnum() else "-" for character in str(value))
+
+
+def _score_cell(value: object) -> str:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return "—"
+    return f"{100.0 * float(value):.1f}"
+
+
+def _audit_details_html(item: Mapping[str, Any], slide_ids: Mapping[int, str]) -> str:
+    audit = item.get("audit")
+    if not isinstance(audit, Mapping) or not audit:
+        return '<p class="note">该历史报告没有 v8 原子审计扩展；旧字段仍可正常查看。</p>'
+
+    training = audit.get("training_eligibility")
+    training = training if isinstance(training, Mapping) else {}
+    training_cards = "".join(
+        '<div class="audit-card"><span>{track}</span><b class="status-{status}">{status}</b>'
+        '<small>{score}</small><div class="lineage">{reasons}</div></div>'.format(
+            track=html.escape(str(decision.get("track") or "unknown")),
+            status=html.escape(str(decision.get("status") or "N/A")),
+            score=(
+                "score —"
+                if decision.get("score") is None
+                else f"score {float(decision['score']):.1f}"
+            ),
+            reasons=html.escape(", ".join(str(code) for code in decision.get("reason_codes", ()))),
+        )
+        for decision in training.get("decisions", ())
+        if isinstance(decision, Mapping)
     )
-    all_images = "".join(
-        f'<a href="{html.escape(Path("..", record["local_path"]).as_posix())}">slide {index}</a> '
+    gate_rows = "".join(
+        "<tr>"
+        f"<td><code>{html.escape(str(gate.get('metric_id') or ''))}</code></td>"
+        f"<td class=\"status-{html.escape(str(gate.get('verdict') or 'N/A'))}\">{html.escape(str(gate.get('verdict') or 'N/A'))}</td>"
+        f"<td>{html.escape(str(gate.get('reason_code') or '—'))}</td>"
+        f"<td>{int(gate.get('critical_observation_count') or 0)}</td>"
+        f"<td>{_display_stat(gate.get('major_prevalence'), percent=True)}</td></tr>"
+        for gate in audit.get("gate_verdicts", ())
+        if isinstance(gate, Mapping)
+    )
+    reducers = audit.get("reducers")
+    reducers = reducers if isinstance(reducers, Mapping) else {}
+    reducer_rows = "".join(
+        "<tr>"
+        f"<td><code>{html.escape(str(metric_id))}</code></td>"
+        f"<td>{_score_cell(reducer.get('score'))}</td>"
+        f"<td>{html.escape(str(reducer.get('metric_status') or ''))}</td>"
+        f"<td>{_display_stat(reducer.get('observability'), percent=True)}</td>"
+        f"<td>{_score_cell(reducer.get('rule_score'))} / {_score_cell(reducer.get('model_score'))}</td>"
+        f"<td>{'CRITICAL CAP' if reducer.get('critical_cap_applied') else '—'}</td>"
+        f"<td>{int(reducer.get('lineage', {}).get('applicable_observation_count', 0))}/"
+        f"{int(reducer.get('lineage', {}).get('observation_count', 0))}</td>"
+        f"<td class=\"lineage\">{html.escape(', '.join(str(value) for value in reducer.get('lineage', {}).get('input_metric_ids', ())) or str(reducer.get('fusion_mode') or '—'))}</td></tr>"
+        for metric_id, reducer in reducers.items()
+        if isinstance(reducer, Mapping) and reducer.get("score_role") != "DIAGNOSTIC"
+    )
+    summary = audit.get("observation_summary")
+    summary = summary if isinstance(summary, Mapping) else {}
+    summary_cards = "".join(
+        f'<div class="audit-card"><span>{html.escape(label)}</span><b>{html.escape(value)}</b></div>'
+        for label, value in (
+            ("原子观察", str(summary.get("count", 0))),
+            ("作用域", ", ".join(f"{key}:{value}" for key, value in summary.get("by_scope", {}).items())),
+            ("状态", ", ".join(f"{key}:{value}" for key, value in summary.get("by_status", {}).items())),
+            ("指标数", str(len(summary.get("metric_ids", ())))),
+        )
+    )
+    findings = audit.get("findings")
+    findings = findings if isinstance(findings, Mapping) else {}
+    finding_rows = "".join(
+        _finding_html(finding, slide_ids)
+        for finding in findings.get("items", ())
+        if isinstance(finding, Mapping)
+    )
+    artifact = audit.get("observation_artifact")
+    artifact = artifact if isinstance(artifact, Mapping) else {}
+    artifact_link = (
+        f'<a href="{html.escape(str(artifact["href"]))}">下载完整原子观察 JSON</a> · hash 已三方校验 · '
+        if artifact.get("href")
+        else (
+            "完整原子观察 artifact hash 校验失败，不提供下载 · "
+            if artifact.get("hash_valid") is False
+            else "完整原子观察 artifact 当前不可下载 · "
+        )
+    )
+    finding_note = (
+        f"显示 {int(findings.get('displayed', 0))}/{int(findings.get('total_actionable', 0))} 条；"
+        "其余请查看完整 artifact。"
+        if findings.get("truncated")
+        else f"共 {int(findings.get('total_actionable', 0))} 条。"
+    )
+    errors = [*audit.get("errors", ()), *audit.get("degradation_reasons", ())]
+    error_note = (
+        '<p class="note"><b>运行异常/降级：</b>'
+        + html.escape(" | ".join(str(value) for value in errors))
+        + "</p>"
+        if errors
+        else ""
+    )
+    return f"""<h3>训练准入</h3><div class="audit-grid">{training_cards or '<div class="audit-card">未提供训练准入</div>'}</div>
+{error_note}<details open><summary>硬门判定</summary><table><thead><tr><th>Gate</th><th>判定</th><th>原因</th><th>Critical</th><th>Major 占比</th></tr></thead><tbody>{gate_rows or '<tr><td colspan="5">无 v8 硬门记录</td></tr>'}</tbody></table></details>
+<details open><summary>Composite / Reducer 结果与 lineage</summary><table><thead><tr><th>构念</th><th>融合分</th><th>状态</th><th>可观察度</th><th>规则 / VLM</th><th>Cap</th><th>输入观察</th><th>输入 Metric / 融合</th></tr></thead><tbody>{reducer_rows or '<tr><td colspan="8">无 v8 Reducer 记录</td></tr>'}</tbody></table></details>
+<details><summary>原子观察摘要</summary><div class="audit-grid">{summary_cards}</div><p>{artifact_link}<code>sha256:{html.escape(str(artifact.get('sha256') or 'N/A'))}</code></p></details>
+<details><summary>人工审计证据（可跳转幻灯片）</summary><p>{html.escape(finding_note)}</p><ul class="evidence-list">{finding_rows or '<li>没有可展示的异常或模型证据。</li>'}</ul></details>"""
+
+
+def _finding_html(finding: Mapping[str, Any], slide_ids: Mapping[int, str]) -> str:
+    page_value = finding.get("page_number")
+    page_number = int(page_value) if isinstance(page_value, (int, float)) else None
+    page_html = ""
+    if page_number in slide_ids:
+        page_html = (
+            f'<a class="page-link" href="#{slide_ids[page_number]}" '
+            f'data-open-slide="{slide_ids[page_number]}">第 {page_number} 页</a> '
+        )
+    elif page_number is not None:
+        page_html = f"第 {page_number} 页 · "
+    score = _score_cell(finding.get("score"))
+    message = str(finding.get("message") or "未提供文字说明")
+    return (
+        "<li>"
+        f"{page_html}<b>{html.escape(str(finding.get('severity') or 'INFO'))}</b> "
+        f"<code>{html.escape(str(finding.get('metric_id') or 'unknown'))}</code> · {html.escape(message)}"
+        f"<div class=\"evidence-meta\">score {score} · confidence {_display_stat(finding.get('confidence'), percent=True)} · "
+        f"{html.escape(str(finding.get('kind') or 'evidence'))} · {html.escape(str(finding.get('object_id') or finding.get('unit_key') or 'deck'))}</div></li>"
+    )
+
+
+def _routing_html(item: Mapping[str, Any]) -> str:
+    rows = "".join(
+        '<div class="route"><b>{stage}</b><br><code>{route}</code>{attempts}</div>'.format(
+            stage=html.escape(str(event.get("stage") or "model")),
+            route=html.escape(str(event.get("route") or "not enabled")),
+            attempts=(
+                '<div class="lineage">'
+                + " · ".join(
+                    html.escape(
+                        f"{attempt.get('tier', 'model')} "
+                        f"{attempt.get('metric_status', 'UNKNOWN')} "
+                        f"tokens={(attempt.get('usage') if isinstance(attempt.get('usage'), Mapping) else {}).get('total_tokens', 0)} "
+                        f"cost_known={attempt.get('cost_known', False)}"
+                    )
+                    for attempt in event.get("attempts", ())
+                    if isinstance(attempt, Mapping)
+                )
+                + "</div>"
+                if event.get("attempts")
+                else ""
+            ),
+        )
+        for event in item.get("model_audit_routing", ())
+        if isinstance(event, Mapping)
+    )
+    return rows or '<div class="route">未启用模型审计</div>'
+
+
+def case_html(item: Mapping[str, Any], output: Path, dataset_root: Path) -> str:
+    del output, dataset_root
+    render_files = item["renders"]["files"]
+    case_token = _dom_token(item["case_id"])
+    slide_ids = {
+        index: f"{case_token}-slide-{index}"
+        for index, _record in enumerate(render_files, start=1)
+    }
+    images = "".join(
+        f'<button type="button" class="slide-thumb" id="{slide_ids[index]}" data-case-id="{case_token}" '
+        f'data-slide-src="{html.escape(Path("..", record["local_path"]).as_posix())}" '
+        f'data-slide-label="{html.escape(str(item["product"]))} · 第 {index} 页">'
+        f'<img loading="lazy" src="{html.escape(Path("..", record["local_path"]).as_posix())}" '
+        f'alt="{html.escape(str(item["product"]))} slide {index}"><span>第 {index} 页 · 点击放大</span></button>'
         for index, record in enumerate(render_files, start=1)
     )
     metric_rows = "".join(
@@ -1510,10 +2174,6 @@ def case_html(item: Mapping[str, Any], output: Path, dataset_root: Path) -> str:
     )
     badge_class = "badge" if rank_eligible and agreement else "badge warn"
     explanation = comparison_explanation(item)
-    route_summary = (
-        " | ".join(f"{event['stage']}:{event['route']}" for event in item.get("model_audit_routing", ()))
-        or "not enabled"
-    )
     review_summary = ", ".join(item.get("review_reasons", ())) or "none"
     total_model_tokens = sum(
         int(usage.get("total_tokens", 0) or 0) for usage in item.get("model_token_usage", {}).values()
@@ -1545,25 +2205,54 @@ def case_html(item: Mapping[str, Any], output: Path, dataset_root: Path) -> str:
         if rank_eligible
         else "当前运行未满足完整重放资格，逐例系统顺序与排名偏差不予展示。"
     )
+    audit_html = _audit_details_html(item, slide_ids)
+    routing_html = _routing_html(item)
+    status_counts = ", ".join(
+        f"{key}:{value}" for key, value in item.get("result_status_counts", {}).items()
+    ) or "N/A"
+    audit_chain = item.get("audit_chain", {})
+    chain_valid = bool(audit_chain.get("valid")) if isinstance(audit_chain, Mapping) else False
+    usage_summary = item.get("model_usage_summary", {})
+    usage_summary = usage_summary if isinstance(usage_summary, Mapping) else {}
+    known_cost = usage_summary.get("reported_cost") if usage_summary.get("cost_known") else None
+    cost_label = "未知" if known_cost is None else f"{float(known_cost):.6f}"
+    criterion_statuses = item.get("v8_model_analysis", {})
+    criterion_statuses = (
+        criterion_statuses.get("metric_statuses", {})
+        if isinstance(criterion_statuses, Mapping)
+        else {}
+    )
+    criterion_status_text = ", ".join(
+        f"{metric_id.removeprefix('structured_vlm_')}:{status}"
+        for metric_id, status in criterion_statuses.items()
+    ) or "N/A"
+    report_link = (
+        f'<a href="{html.escape(str(item["report_href"]))}">打开完整 EvaluationReport JSON</a> · '
+        if item.get("report_href")
+        else ""
+    )
     return f"""<section class="case"><div class="case-head"><div><h2>{html.escape(item["product"])}</h2>
 <span class="{badge_class}">{badge}</span><span class="badge">人评 #{item["human_rank"]}</span>
 {reference_badge}<span class="badge">{current_label} {item["base_score"]:.2f}</span><span class="badge">确定性视觉代理 {item["deterministic_visual_proxy"]:.2f}</span>{structured_badges}</div>
 <div><b>{item["decision"]} / {item["coverage"]}</b><br><code>{html.escape(item["run_id"])}</code></div></div>
-<div class="gallery">{images}</div><details><summary>打开全部 {len(render_files)} 页</summary>{all_images}</details>
+<details open><summary>查看全部 {len(render_files)} 页幻灯片（点击放大，支持方向键）</summary><div class="gallery">{images}</div></details>
 <div class="two"><div><h3>关键 Metric</h3><table><thead><tr><th>Metric</th><th>分数</th><th>证据数</th><th>证据类型</th></tr></thead>
 <tbody>{metric_rows}</tbody></table></div><div><h3>对照解释</h3><p>{html.escape(explanation)}</p>
 <p>{html.escape(rank_summary)}</p>
-<p><b>模型路由：</b>{html.escape(route_summary)}<br>
-<b>处置原因：</b>{html.escape(review_summary)}<br>
-<b>模型 token：</b>{total_model_tokens}</p>
-<p><a href="{html.escape(pptx_link)}">打开原始 PPTX</a></p></div></div></section>"""
+<p><b>处置原因：</b>{html.escape(review_summary)}<br><b>模型 token：</b>{total_model_tokens}</p>
+<p>{report_link}<a href="{html.escape(pptx_link)}">打开原始 PPTX</a></p></div></div>
+<div class="audit-grid"><div class="audit-card"><span>OracleResult 状态</span><b>{html.escape(status_counts)}</b></div>
+<div class="audit-card"><span>审计链</span><b class="status-{'PASS' if chain_valid else 'ERROR'}">{'VALID' if chain_valid else 'INVALID'}</b><small>{html.escape(str(audit_chain.get('broken_event') or 'hash chain complete')) if isinstance(audit_chain, Mapping) else ''}</small></div>
+<div class="audit-card"><span>模型 usage</span><b>{int(usage_summary.get('total_tokens', 0) or 0)} tokens</b><small>usage_complete={html.escape(str(usage_summary.get('usage_complete', False)).lower())} · cost={cost_label} · cost_known={html.escape(str(usage_summary.get('cost_known', False)).lower())}</small></div>
+<div class="audit-card"><span>7 个模型 criterion</span><b>{'VALID' if all(value == 'SCORED' for value in criterion_statuses.values()) and len(criterion_statuses) == 7 else 'INCOMPLETE'}</b><small>{html.escape(criterion_status_text)}</small></div></div>
+<h3>模型路由与 usage</h3>{routing_html}{audit_html}</section>"""
 
 
 def comparison_explanation(item: Mapping[str, Any]) -> str:
     if not item.get("rank_comparison_eligible", True):
         return (
-            "该 deck 或同切片其他 deck 未通过 FULL、六维完整性、当前 Profile/Prompt "
-            "与单调用投影契约检查，因此不解释其相对排序。"
+            "该 deck 或同切片其他 deck 未通过 FULL、模型 criterion 完整性、当前 "
+            "Profile/Prompt 与原子路由契约检查，因此不解释其相对排序。"
         )
     metrics = item["metrics"]
     order_note = (
