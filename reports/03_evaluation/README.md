@@ -30,3 +30,6 @@ Oracle、v5 实验 Profile、标题空壳页诊断，以及 Skywork/Kimi 的真�
 
 `12_v83_gate_raster_validation.md` 记录 v8.3 对硬门候选页定向采样、同页同缺陷确认、
 栅格文字原子观察和训练准入优先级的真实双例验证。
+
+`13_v83_three_topic_replay.md` 记录 3 个 topic-introduction 主题、22 份 PPTX、420 页的
+完整真实回放、主题内偏好相关性、训练准入、产品稳定性与审计/成本信息。

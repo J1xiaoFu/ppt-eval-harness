@@ -17,7 +17,11 @@ for entry in (str(ROOT), str(SRC)):
     if entry not in sys.path:
         sys.path.insert(0, entry)
 
-from scripts.benchmarks.evaluate_slides_align_sample import evaluate  # noqa: E402
+from scripts.benchmarks.evaluate_slides_align_sample import (  # noqa: E402
+    evaluate,
+    pairwise_accuracy,
+    spearman,
+)
 
 
 def _counter_add(target: Counter[str], values: Mapping[str, Any]) -> None:
@@ -30,6 +34,33 @@ def _counter_status_values(
 ) -> None:
     for value in values.values():
         target[str(value)] += 1
+
+
+def _exploratory_topic_statistics(
+    cases: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    def calculate(items: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+        ranks = [int(item["human_rank"]) for item in items]
+        scores = [float(item["base_score"]) for item in items]
+        return {
+            "case_count": len(items),
+            "spearman_base_vs_human": (
+                spearman(scores, [-float(rank) for rank in ranks])
+                if len(items) > 1
+                else None
+            ),
+            "pairwise_base_accuracy": (
+                pairwise_accuracy(ranks, scores) if len(items) > 1 else None
+            ),
+            "comparable_pairs": len(items) * (len(items) - 1) // 2,
+        }
+
+    full = [item for item in cases if item.get("coverage") == "FULL"]
+    return {
+        "status": "EXPLORATORY_UNQUALIFIED_NOT_FOR_GATING_OR_WEIGHT_FIT",
+        "all_cases": calculate(cases),
+        "full_cases_only": calculate(full),
+    }
 
 
 def aggregate_suite(
@@ -139,6 +170,7 @@ def aggregate_suite(
                 "report_href": topic_report_hrefs[topic_name],
                 "rank_statistics_eligible": replay.get("eligible") is True,
                 "statistics": dict(statistics),
+                "exploratory_statistics": _exploratory_topic_statistics(cases),
                 "v8_replay": dict(replay),
                 "cases": sorted(
                     case_summaries,
@@ -187,6 +219,64 @@ def aggregate_suite(
         if all_topics_eligible and total_pairs
         else None
     )
+    exploratory_macro_spearman = sum(
+        float(
+            item["exploratory_statistics"]["all_cases"][
+                "spearman_base_vs_human"
+            ]
+        )
+        for item in topics
+    ) / len(topics)
+    exploratory_pair_count = sum(
+        int(
+            item["exploratory_statistics"]["all_cases"][
+                "comparable_pairs"
+            ]
+        )
+        for item in topics
+    )
+    exploratory_micro_pairwise = sum(
+        float(
+            item["exploratory_statistics"]["all_cases"][
+                "pairwise_base_accuracy"
+            ]
+        )
+        * int(
+            item["exploratory_statistics"]["all_cases"][
+                "comparable_pairs"
+            ]
+        )
+        for item in topics
+    ) / exploratory_pair_count
+    exploratory_full_macro_spearman = sum(
+        float(
+            item["exploratory_statistics"]["full_cases_only"][
+                "spearman_base_vs_human"
+            ]
+        )
+        for item in topics
+    ) / len(topics)
+    exploratory_full_pair_count = sum(
+        int(
+            item["exploratory_statistics"]["full_cases_only"][
+                "comparable_pairs"
+            ]
+        )
+        for item in topics
+    )
+    exploratory_full_micro_pairwise = sum(
+        float(
+            item["exploratory_statistics"]["full_cases_only"][
+                "pairwise_base_accuracy"
+            ]
+        )
+        * int(
+            item["exploratory_statistics"]["full_cases_only"][
+                "comparable_pairs"
+            ]
+        )
+        for item in topics
+    ) / exploratory_full_pair_count
     return {
         "schema_version": "1.0",
         "dataset_id": suite_manifest.get("dataset_id"),
@@ -215,6 +305,21 @@ def aggregate_suite(
             "model_tokens": total_tokens,
             "cost_known_all": cost_known_all,
             "reported_cost": round(reported_cost, 6) if cost_known_all else None,
+            "exploratory_unqualified": {
+                "status": "NOT_FOR_GATING_OR_WEIGHT_FIT",
+                "macro_spearman_base_vs_human": exploratory_macro_spearman,
+                "micro_pairwise_within_topics": exploratory_micro_pairwise,
+                "within_topic_comparable_pairs": exploratory_pair_count,
+                "full_cases_only": {
+                    "macro_spearman_base_vs_human": (
+                        exploratory_full_macro_spearman
+                    ),
+                    "micro_pairwise_within_topics": (
+                        exploratory_full_micro_pairwise
+                    ),
+                    "within_topic_comparable_pairs": exploratory_full_pair_count,
+                },
+            },
         },
         "methodology": {
             "global_rank_statistics_prohibited": True,
@@ -237,6 +342,7 @@ def build_suite_html(payload: Mapping[str, Any]) -> str:
     topic_sections = []
     for topic in payload["topics"]:
         stats = topic["statistics"]
+        exploratory = topic["exploratory_statistics"]["all_cases"]
         rows = "".join(
             "<tr>"
             f"<td>{int(case['human_rank'])}</td>"
@@ -253,6 +359,7 @@ def build_suite_html(payload: Mapping[str, Any]) -> str:
 <span class="badge">{topic['case_count']} decks</span>
 <span class="badge">Spearman {_stat(stats.get('spearman_base_vs_human'))}</span>
 <span class="badge">Pairwise {_stat(stats.get('pairwise_base_accuracy'), percent=True)}</span></div>
+<span class="badge">诊断 Spearman {_stat(exploratory.get('spearman_base_vs_human'))}</span>
 <a class="open" href="{html.escape(topic['report_href'])}">打开完整幻灯片与审计 →</a></div>
 <table><thead><tr><th>人评</th><th>产品</th><th>分数</th><th>Decision</th><th>Coverage</th><th>训练轨</th></tr></thead>
 <tbody>{rows}</tbody></table></section>"""
@@ -272,10 +379,10 @@ main{{max-width:1280px;margin:auto;padding:42px 28px 80px}}h1{{font:700 40px/1.1
 <p class="lead">固定 revision <code>{html.escape(str(payload['dataset_revision']))}</code>；{payload['topic_count']} 个 topic-introduction 主题，
 共 {payload['case_count']} 份 PPTX / {payload['rendered_slide_count']} 页。排名统计只在主题内计算。</p>
 <div class="summary"><div class="stat"><b>{_stat(aggregate['macro_spearman_base_vs_human'])}</b>Macro Spearman</div>
-<div class="stat"><b>{_stat(aggregate['micro_pairwise_within_topics'], percent=True)}</b>主题内 Micro Pairwise</div>
+<div class="stat"><b>{_stat(aggregate['exploratory_unqualified']['macro_spearman_base_vs_human'])}</b>未设门诊断 Macro</div>
 <div class="stat"><b>{aggregate['audit_chain_valid_count']}/{payload['case_count']}</b>审计链有效</div>
 <div class="stat"><b>{aggregate['observation_artifact_hash_valid_count']}/{payload['case_count']}</b>Observation hash</div></div>
-<p class="note"><b>禁止跨主题混排：</b>没有 global Spearman、global pairwise 或跨主题总顺序。Macro 只在三个主题都通过完整性合同时展示。</p>
+<p class="note"><b>禁止跨主题混排：</b>没有 global Spearman、global pairwise 或跨主题总顺序。正式 Macro 只在三个主题都通过完整性合同时展示；“诊断”统计包含 DEGRADED case，只用于发现偏差，不得门禁或拟合。</p>
 {sections}</main></body></html>"""
 
 

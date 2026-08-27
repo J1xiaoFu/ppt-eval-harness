@@ -123,9 +123,19 @@ def test_suite_aggregation_keeps_rank_statistics_within_topics_only() -> None:
     assert payload["aggregate"]["observation_artifact_hash_valid_count"] == 6
     assert payload["aggregate"]["model_tokens"] == 600
     assert payload["aggregate"]["reported_cost"] is None
+    assert payload["aggregate"]["exploratory_unqualified"][
+        "macro_spearman_base_vs_human"
+    ] == pytest.approx(1.0)
+    assert payload["aggregate"]["exploratory_unqualified"][
+        "micro_pairwise_within_topics"
+    ] == 1.0
+    assert payload["aggregate"]["exploratory_unqualified"]["full_cases_only"][
+        "macro_spearman_base_vs_human"
+    ] == pytest.approx(1.0)
     assert payload["methodology"]["global_rank_statistics_prohibited"] is True
     assert "global_spearman" not in payload["aggregate"]
 
     document = build_suite_html(payload)
     assert "禁止跨主题混排" in document
+    assert "未设门诊断 Macro" in document
     assert document.count("打开完整幻灯片与审计") == 3
