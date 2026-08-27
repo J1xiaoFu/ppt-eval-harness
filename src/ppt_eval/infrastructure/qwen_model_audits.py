@@ -418,7 +418,10 @@ def _translate_response(
             "output_tokens": output_tokens,
             "cost": cost,
         },
-        "evidence": _sanitize_optional_qwen_localization(result["evidence"]),
+        "evidence": _sanitize_optional_qwen_localization(
+            result["evidence"],
+            request=request,
+        ),
     }
 
 
@@ -429,7 +432,11 @@ def _usage_int(usage: Mapping[str, Any], key: str, *, fallback: str) -> int:
     return value
 
 
-def _sanitize_optional_qwen_localization(value: object) -> object:
+def _sanitize_optional_qwen_localization(
+    value: object,
+    *,
+    request: ModelAuditRequest,
+) -> object:
     """Drop safely repairable invalid optional localization fields.
 
     Qwen occasionally returns pixel coordinates even after being instructed to
@@ -442,6 +449,15 @@ def _sanitize_optional_qwen_localization(value: object) -> object:
 
     if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
         return value
+    known_objects = {
+        int(slide["page_number"]): frozenset(
+            str(item["object_id"])
+            for item in slide.get("objects", ())
+            if isinstance(item, Mapping) and item.get("object_id")
+        )
+        for slide in request.slides
+    }
+    known_pages = frozenset(known_objects)
     sanitized: list[object] = []
     for item in value:
         if not isinstance(item, Mapping):
@@ -449,6 +465,26 @@ def _sanitize_optional_qwen_localization(value: object) -> object:
             continue
         replacement = dict(item)
         sanitized_fields: list[str] = []
+        payload = replacement.get("payload")
+        if payload is None:
+            payload = {}
+        if (
+            "related_page_numbers" in replacement
+            and isinstance(payload, Mapping)
+            and "related_page_numbers" not in payload
+            and _is_known_page_list(
+                replacement.get("related_page_numbers"),
+                known_pages=known_pages,
+            )
+        ):
+            payload = {
+                **dict(payload),
+                "related_page_numbers": replacement.pop(
+                    "related_page_numbers"
+                ),
+            }
+            replacement["payload"] = payload
+            sanitized_fields.append("related_page_numbers->payload")
         if "bbox" in replacement and not _is_normalized_bbox(
             replacement.get("bbox")
         ):
@@ -462,6 +498,18 @@ def _sanitize_optional_qwen_localization(value: object) -> object:
             ):
                 replacement.pop(field_name, None)
                 sanitized_fields.append(field_name)
+        object_id = replacement.get("object_id")
+        page_number = replacement.get("page_number")
+        if (
+            isinstance(object_id, str)
+            and object_id.strip()
+            and isinstance(page_number, int)
+            and not isinstance(page_number, bool)
+            and page_number in known_pages
+            and object_id not in known_objects.get(page_number, frozenset())
+        ):
+            replacement.pop("object_id", None)
+            sanitized_fields.append("object_id")
         if not sanitized_fields:
             sanitized.append(item)
             continue
@@ -486,6 +534,25 @@ def _sanitize_optional_qwen_localization(value: object) -> object:
             }
         sanitized.append(replacement)
     return sanitized
+
+
+def _is_known_page_list(
+    value: object,
+    *,
+    known_pages: frozenset[int],
+) -> bool:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        return False
+    pages: list[int] = []
+    for page_number in value:
+        if (
+            isinstance(page_number, bool)
+            or not isinstance(page_number, int)
+            or page_number not in known_pages
+        ):
+            return False
+        pages.append(page_number)
+    return bool(pages) and len(pages) == len(set(pages))
 
 
 def _is_normalized_bbox(value: object) -> bool:

@@ -196,9 +196,10 @@ Advanced 角色。Provider 本身不做路由决策，因此两个实例可分�
 - 发送 `response_format={"type":"json_object"}` 和 wire-level `enable_thinking=true`。
 - 显式发送 `temperature=0`、`seed=0` 和 `max_tokens=4096`，与 Manifest 的默认随机种子对齐并限制单次输出成本。
 - 模型只输出 `score` / `confidence` / `evidence`；Provider 负责补齐实际 model ID、Prompt 引用和 usage，之后仍由 `ModelAuditResponse` 作最终严格校验。
-- Qwen 偶尔会把像素 bbox 误当成归一化坐标，或对可选 `object_id/source_uri`
-  返回 null/空串。适配器只删除这些无效可选值，并在 evidence payload 的
-  `adapter_sanitized_fields` 记录字段名；页码、必填字段和非空定位仍严格校验。
+- Qwen 偶尔会把像素 bbox 误当成归一化坐标、产生无法在请求对象树核对的
+  可选 `object_id`，或对 `object_id/source_uri` 返回 null/空串。适配器只删除这些
+  无效可选值；若模型把合法 `related_page_numbers` 放在 evidence 顶层，则迁移至 payload。
+  所有修复都在 `adapter_sanitized_fields` 记录；页码、必填字段和非空定位仍严格校验。
 - VLM 请求在本地重算图片 SHA-256，仅在与 `ModelImageInput` 一致时转换为 `data:image/...;base64,...`；本地路径不进入请求体。
 - 兼容 Qwen 的 `reasoning_content`，但主动丢弃该字段，不进入 Report、指纹或错误信息。
 - HTTP/JSON 异常只暴露分类和 HTTP 状态码，不回显 Authorization、原始响应体或模型原文。

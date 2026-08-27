@@ -256,6 +256,58 @@ def test_qwen_adapter_drops_null_or_blank_optional_ids_with_audit_marker() -> No
     ]
 
 
+def test_qwen_adapter_drops_unverifiable_optional_object_id() -> None:
+    vendor = json.loads(json.dumps(_vendor_response()))
+    content = json.loads(vendor["choices"][0]["message"]["content"])
+    content["evidence"][0]["object_id"] = "14"
+    vendor["choices"][0]["message"]["content"] = json.dumps(content)
+
+    def fake_urlopen(http_request, *, timeout):
+        del http_request, timeout
+        return _FakeHttpResponse(vendor)
+
+    request = _request()
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+    )
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        payload = provider.audit(request)
+    response = ModelAuditResponse.from_mapping(payload, request=request)
+
+    assert response.evidence[0].object_id is None
+    assert response.evidence[0].payload["adapter_sanitized_fields"] == [
+        "object_id"
+    ]
+
+
+def test_qwen_adapter_moves_related_pages_into_evidence_payload() -> None:
+    vendor = json.loads(json.dumps(_vendor_response()))
+    content = json.loads(vendor["choices"][0]["message"]["content"])
+    content["evidence"][0]["related_page_numbers"] = [1]
+    vendor["choices"][0]["message"]["content"] = json.dumps(content)
+
+    def fake_urlopen(http_request, *, timeout):
+        del http_request, timeout
+        return _FakeHttpResponse(vendor)
+
+    request = _request()
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+    )
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        payload = provider.audit(request)
+    response = ModelAuditResponse.from_mapping(payload, request=request)
+
+    assert response.evidence[0].payload["related_page_numbers"] == [1]
+    assert response.evidence[0].payload["adapter_sanitized_fields"] == [
+        "related_page_numbers->payload"
+    ]
+
+
 def test_provider_rejects_actual_model_from_another_configured_tier() -> None:
     def fake_urlopen(http_request, *, timeout):
         del http_request, timeout
