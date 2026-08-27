@@ -186,11 +186,11 @@ def test_raster_text_model_emits_atomic_fallback_without_double_scoring(
                     "h": 6_858_000,
                 },
             )
-            for _ in range(2)
+            for _ in range(10)
         ),
     )
     images = []
-    for page_number in (1, 2):
+    for page_number in range(1, 11):
         image = tmp_path / f"raster-slide-{page_number}.png"
         image.write_bytes(PNG_1X1)
         images.append(image)
@@ -236,7 +236,19 @@ def test_raster_text_model_emits_atomic_fallback_without_double_scoring(
         "raster_content_structure_vlm",
         "raster_language_consistency_vlm",
     }
-    assert len(recovered_observations) == 4
+    assert len(recovered_observations) == 20
+    content_observations = tuple(
+        item
+        for item in recovered_observations
+        if item.metric_id == "raster_content_structure_vlm"
+    )
+    language_observations = tuple(
+        item
+        for item in recovered_observations
+        if item.metric_id == "raster_language_consistency_vlm"
+    )
+    assert sum(item.metric_status == MetricStatus.SCORED for item in content_observations) == 4
+    assert sum(item.metric_status == MetricStatus.SCORED for item in language_observations) == 8
     assert all(
         item.scope == EvaluationScope.PAGE for item in recovered_observations
     )
@@ -259,6 +271,9 @@ def test_raster_text_model_emits_atomic_fallback_without_double_scoring(
     assert indexed["content_structure"].metadata["fusion_mode"] == (
         "RASTER_VLM_ATOMIC_FALLBACK"
     )
+    assert 0.4 <= indexed["content_structure"].metadata["observability"] < 0.5
+    assert indexed["content_structure"].metadata["minimum_observability"] == pytest.approx(0.4)
+    assert indexed["content_structure"].metadata["deck_page_coverage"] == pytest.approx(0.4)
     assert indexed["language_consistency"].metadata["no_double_score"] is True
 
 
@@ -284,6 +299,68 @@ def test_editable_deck_skips_raster_text_model_calls(tmp_path: Path) -> None:
     assert output.results[0].metric_status == MetricStatus.NA
     assert output.results[0].metadata["reason_code"] == (
         "RASTER_TEXT_RECOVERY_NOT_REQUIRED"
+    )
+
+
+def test_raster_text_double_provider_failure_returns_legal_na(tmp_path: Path) -> None:
+    class FailingProvider:
+        def audit(self, request):
+            del request
+            raise RuntimeError("provider unavailable")
+
+    deck = build_pptx(
+        tmp_path / "raster-failure.pptx",
+        (
+            (
+                {
+                    "kind": "image",
+                    "x": 0,
+                    "y": 0,
+                    "w": 12_192_000,
+                    "h": 6_858_000,
+                },
+            ),
+        ),
+    )
+    image = tmp_path / "raster-failure.png"
+    image.write_bytes(PNG_1X1)
+    context = EvaluationContext(
+        case=EvalCase(
+            case_id="raster-provider-failure",
+            scene=SceneType.READY_MADE,
+            pptx_path=str(deck),
+        ),
+        profile=default_profile(SceneType.READY_MADE),
+        artifacts={"slide_images": (image,)},
+        memo={},
+    )
+    deterministic = V8AtomicObservationComposite(
+        PptxAdapter(backend="ooxml")
+    ).evaluate(context)
+    context.memo["ppt_eval.atomic_observations"] = list(
+        deterministic.observations
+    )
+
+    output = V8RasterTextObservationOracle(
+        "raster_content_structure",
+        FailingProvider(),
+        FailingProvider(),
+        PptxAdapter(backend="ooxml"),
+    ).evaluate(context)
+
+    result = output.results[0]
+    assert result.execution_status == ExecutionStatus.SUCCESS
+    assert result.metric_status == MetricStatus.NA
+    assert output.observations == ()
+    assert result.metadata["selected_tier"] == (
+        "FLASH_UNRESOLVED_ADVANCED_FAILED"
+    )
+    assert [item["metric_status"] for item in result.metadata["routing_attempts"]] == [
+        "ERROR",
+        "ERROR",
+    ]
+    assert not any(
+        item["selected"] for item in result.metadata["routing_attempts"]
     )
 
 
@@ -500,8 +577,22 @@ def test_contestable_functional_gate_requires_isomorphic_vlm_confirmation() -> N
     unresolved = reducer._integrity_gate((observation,), ())
     rejected_model = replace(
         _vlm_result("structured_vlm_composition_layout", 0.90),
+        evidence=(
+            Evidence(
+                evidence_id="model-unrelated",
+                kind="criterion_summary",
+                message="Model saw an unrelated hierarchy issue.",
+                page_number=1,
+                payload={
+                    "defect_codes": ["poor_visual_hierarchy"],
+                    "affected_page_numbers": [1],
+                    "severity": "MAJOR",
+                },
+            ),
+        ),
         metadata={
             "sampled_pages": [1],
+            "total_pages": 1,
             "affected_page_numbers": [1],
             "defect_severity": "MAJOR",
             "defect_codes": ["poor_visual_hierarchy"],
@@ -512,8 +603,22 @@ def test_contestable_functional_gate_requires_isomorphic_vlm_confirmation() -> N
         rejected_model,
         normalized_score=0.45,
         raw_value=0.45,
+        evidence=(
+            Evidence(
+                evidence_id="model-isomorphic",
+                kind="criterion_summary",
+                message="Model confirmed visible overflow on the candidate page.",
+                page_number=1,
+                payload={
+                    "defect_codes": ["content_overflow_or_cutoff"],
+                    "affected_page_numbers": [1],
+                    "severity": "MAJOR",
+                },
+            ),
+        ),
         metadata={
             "sampled_pages": [1],
+            "total_pages": 1,
             "affected_page_numbers": [1],
             "defect_severity": "MAJOR",
             "defect_codes": ["content_overflow_or_cutoff"],
@@ -527,3 +632,68 @@ def test_contestable_functional_gate_requires_isomorphic_vlm_confirmation() -> N
     assert rejected.metadata["gate_verdicts"][0]["verdict"] == "REJECTED"
     assert confirmed.multiplier == 0.5
     assert confirmed.metadata["gate_verdicts"][0]["verdict"] == "CONFIRMED"
+
+
+def test_gate_confirmation_requires_isomorphic_defect_on_same_candidate_page() -> None:
+    candidate = AtomicObservation(
+        observation_id="obs-page-21-overflow",
+        oracle_id="v8.slide_geometry_integrity",
+        metric_id="slide_geometry_integrity",
+        scope=EvaluationScope.PAGE,
+        unit_key="page:21",
+        local_score=0.2,
+        raw_value=0.2,
+        confidence=0.9,
+        severity=Severity.CRITICAL,
+        critical=True,
+        evidence=(
+            Evidence(
+                evidence_id="page-21-overflow",
+                kind="out_of_bounds",
+                message="Rule proposed overflow on page 21.",
+                page_number=21,
+            ),
+        ),
+    )
+    model = replace(
+        _vlm_result("structured_vlm_composition_layout", 0.5),
+        evidence=(
+            Evidence(
+                evidence_id="matching-code-wrong-page",
+                kind="criterion_summary",
+                message="Overflow exists on another page.",
+                page_number=1,
+                payload={
+                    "defect_codes": ["content_overflow_or_cutoff"],
+                    "affected_page_numbers": [1],
+                    "severity": "MAJOR",
+                },
+            ),
+            Evidence(
+                evidence_id="wrong-code-right-page",
+                kind="criterion_summary",
+                message="Page 21 has only an unrelated hierarchy issue.",
+                page_number=21,
+                payload={
+                    "defect_codes": ["poor_visual_hierarchy"],
+                    "affected_page_numbers": [21],
+                    "severity": "MAJOR",
+                },
+            ),
+        ),
+        metadata={
+            "sampled_pages": [1, 21],
+            "total_pages": 26,
+            "affected_page_numbers": [1, 21],
+            "defect_severity": "MAJOR",
+            "defect_codes": [
+                "content_overflow_or_cutoff",
+                "poor_visual_hierarchy",
+            ],
+        },
+    )
+
+    result = V8QualityReducerOracle()._integrity_gate((candidate,), (model,))
+
+    assert result.multiplier == 1.0
+    assert result.metadata["gate_verdicts"][0]["verdict"] == "REJECTED"

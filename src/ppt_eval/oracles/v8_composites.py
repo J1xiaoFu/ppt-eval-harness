@@ -520,7 +520,7 @@ class V8TieredVisualCriterionOracle:
             reason = "RULE_MODEL_DISAGREEMENT"
         chosen = flash
         tier = "FLASH"
-        selected_attempt_tier = "FLASH"
+        selected_attempt_tier: str | None = "FLASH" if reason is None else None
         advanced_rule_disagreement = False
         if reason is not None and self._advanced is not None:
             advanced = self._advanced.evaluate(context)
@@ -551,29 +551,20 @@ class V8TieredVisualCriterionOracle:
                     chosen = advanced
                     tier = "ADVANCED"
             else:
-                chosen = replace(
-                    flash,
-                    metric_status=MetricStatus.NA,
-                    raw_value=None,
-                    normalized_score=None,
-                    severity=Severity.INFO,
-                )
+                chosen = _unresolved_model_result(flash)
                 tier = "FLASH_UNRESOLVED_ADVANCED_FAILED"
         elif reason is not None:
-            chosen = replace(
-                flash,
-                metric_status=MetricStatus.NA,
-                raw_value=None,
-                normalized_score=None,
-                severity=Severity.INFO,
-            )
+            chosen = _unresolved_model_result(flash)
             tier = "FLASH_UNRESOLVED_ADVANCED_UNCONFIGURED"
         routing_attempts = [
             _model_routing_attempt(
                 attempt_tier,
                 oracle,
                 result,
-                selected=attempt_tier == selected_attempt_tier,
+                selected=(
+                    selected_attempt_tier is not None
+                    and attempt_tier == selected_attempt_tier
+                ),
             )
             for attempt_tier, oracle, result in attempted
         ]
@@ -723,7 +714,7 @@ class V8RasterTextObservationOracle:
 
         chosen = flash
         tier = "FLASH"
-        selected_attempt_tier = "FLASH"
+        selected_attempt_tier: str | None = "FLASH" if reason is None else None
         if reason is not None and self._advanced is not None:
             advanced = self._advanced.evaluate(context)
             attempted.append(("ADVANCED", self._advanced, advanced))
@@ -735,22 +726,10 @@ class V8RasterTextObservationOracle:
                 tier = "ADVANCED"
                 selected_attempt_tier = "ADVANCED"
             else:
-                chosen = replace(
-                    flash,
-                    metric_status=MetricStatus.NA,
-                    raw_value=None,
-                    normalized_score=None,
-                    severity=Severity.INFO,
-                )
+                chosen = _unresolved_model_result(flash)
                 tier = "FLASH_UNRESOLVED_ADVANCED_FAILED"
         elif reason is not None:
-            chosen = replace(
-                flash,
-                metric_status=MetricStatus.NA,
-                raw_value=None,
-                normalized_score=None,
-                severity=Severity.INFO,
-            )
+            chosen = _unresolved_model_result(flash)
             tier = "FLASH_UNRESOLVED_ADVANCED_UNCONFIGURED"
 
         routing_attempts = [
@@ -758,7 +737,10 @@ class V8RasterTextObservationOracle:
                 attempt_tier,
                 oracle,
                 result,
-                selected=attempt_tier == selected_attempt_tier,
+                selected=(
+                    selected_attempt_tier is not None
+                    and attempt_tier == selected_attempt_tier
+                ),
             )
             for attempt_tier, oracle, result in attempted
         ]
@@ -837,25 +819,34 @@ class V8RasterTextObservationOracle:
             valid_scores.append((page_number, float(raw_score)))
         if not valid_scores:
             return ()
+        score_by_page = dict(valid_scores)
         allocated_cost = result.cost / len(valid_scores)
+        sampling_coverage = len(valid_scores) / presentation.slide_count
         observations: list[AtomicObservation] = []
-        for page_number, page_score in sorted(valid_scores):
-            finding = evidence_by_page[page_number]
-            payload = finding.payload
+        for page_number in range(1, presentation.slide_count + 1):
+            sampled = page_number in score_by_page
+            page_score = score_by_page.get(page_number)
+            finding = evidence_by_page.get(page_number)
+            payload = finding.payload if finding is not None else {}
             raw_confidence = payload.get("criterion_confidence", result.confidence)
             confidence = (
                 float(raw_confidence)
-                if not isinstance(raw_confidence, bool)
+                if sampled
+                and not isinstance(raw_confidence, bool)
                 and isinstance(raw_confidence, (int, float))
                 and 0.0 <= float(raw_confidence) <= 1.0
-                else result.confidence
+                else 0.0
             )
             raw_severity = str(payload.get("severity") or "NONE")
-            severity = {
-                "CRITICAL": Severity.CRITICAL,
-                "MAJOR": Severity.MAJOR,
-                "MINOR": Severity.MINOR,
-            }.get(raw_severity, Severity.INFO)
+            severity = (
+                {
+                    "CRITICAL": Severity.CRITICAL,
+                    "MAJOR": Severity.MAJOR,
+                    "MINOR": Severity.MINOR,
+                }.get(raw_severity, Severity.INFO)
+                if sampled
+                else Severity.INFO
+            )
             role = roles.get(page_number)
             unit_key = f"page:{page_number}"
             digest = hashlib.sha256(
@@ -872,15 +863,33 @@ class V8RasterTextObservationOracle:
                     scope=EvaluationScope.PAGE,
                     unit_key=unit_key,
                     execution_status=ExecutionStatus.SUCCESS,
-                    metric_status=MetricStatus.SCORED,
-                    raw_value=page_score,
-                    local_score=page_score,
+                    metric_status=(
+                        MetricStatus.SCORED if sampled else MetricStatus.NA
+                    ),
+                    raw_value=page_score if sampled else "NOT_SAMPLED",
+                    local_score=page_score if sampled else None,
                     confidence=confidence,
                     severity=severity,
                     importance=role.importance if role is not None else 1.0,
                     key_unit=role.key_unit if role is not None else False,
                     critical=False,
-                    evidence=(finding,),
+                    evidence=(
+                        (finding,)
+                        if finding is not None
+                        else (
+                            evidence(
+                                self.observation_metric_id,
+                                f"not-sampled-{page_number}",
+                                "raster_page_not_sampled",
+                                "Page was outside the bounded raster-text model sample.",
+                                page_number=page_number,
+                                payload={
+                                    "sampled_pages": sorted(score_by_page),
+                                    "total_pages": presentation.slide_count,
+                                },
+                            ),
+                        )
+                    ),
                     version=self.version,
                     cost=0.0,
                     metadata={
@@ -890,12 +899,33 @@ class V8RasterTextObservationOracle:
                         "sampled_pages": list(result.metadata.get("sampled_pages", ())),
                         "model_input_mode": "RASTER_RENDERED_TEXT_RECOVERY",
                         "primary_owner": self.observation_metric_id,
-                        "allocated_model_cost": allocated_cost,
+                        "sampled": sampled,
+                        "sample_count": len(valid_scores),
+                        "total_pages": presentation.slide_count,
+                        "deck_page_coverage": sampling_coverage,
+                        "allocated_model_cost": allocated_cost if sampled else 0.0,
                         "cost_accounted_by_result": True,
                     },
                 )
             )
         return tuple(observations)
+
+
+def _unresolved_model_result(result: OracleResult) -> OracleResult:
+    """Project a failed/uncertain attempt to legal N/A without erasing telemetry."""
+
+    return replace(
+        result,
+        execution_status=ExecutionStatus.SUCCESS,
+        metric_status=MetricStatus.NA,
+        raw_value=None,
+        normalized_score=None,
+        multiplier=None,
+        confidence=max(0.0, min(1.0, result.confidence)),
+        severity=Severity.INFO,
+        error_code=None,
+        error_message=None,
+    )
 
 
 def _model_routing_attempt(
@@ -1092,6 +1122,11 @@ class V8QualityReducerOracle:
                 "raster_content_structure_recovery",
                 ScoreRole.DIAGNOSTIC,
                 required=False,
+                minimum_observability=self._bounded_sample_minimum(
+                    batch,
+                    "raster_content_structure_vlm",
+                    maximum_sample_pages=4,
+                ),
             ),
             output_metric_id="content_structure",
         )
@@ -1105,6 +1140,11 @@ class V8QualityReducerOracle:
                 "raster_language_consistency_recovery",
                 ScoreRole.DIAGNOSTIC,
                 required=False,
+                minimum_observability=self._bounded_sample_minimum(
+                    batch,
+                    "raster_language_consistency_vlm",
+                    maximum_sample_pages=8,
+                ),
             ),
             output_metric_id="language_consistency",
         )
@@ -1220,6 +1260,7 @@ class V8QualityReducerOracle:
         role: ScoreRole,
         *,
         required: bool = True,
+        minimum_observability: float = 0.60,
     ) -> OracleResult:
         spec = ReducerSpec(
             reducer_id=f"v8.{output_metric}.reducer",
@@ -1231,10 +1272,25 @@ class V8QualityReducerOracle:
             output_metric_id=output_metric,
             output_score_role=role,
             critical_cap=0.34,
-            minimum_observability=0.60,
+            minimum_observability=minimum_observability,
             required=required,
         )
         return ReducerEngine().reduce(batch, spec)
+
+    @staticmethod
+    def _bounded_sample_minimum(
+        batch: ObservationBatch,
+        metric_id: str,
+        *,
+        maximum_sample_pages: int,
+    ) -> float:
+        expected_units = tuple(
+            item for item in batch.observations if item.metric_id == metric_id
+        )
+        if not expected_units:
+            return 0.60
+        complete_sample_size = min(maximum_sample_pages, len(expected_units))
+        return min(0.60, complete_sample_size / len(expected_units))
 
     def _fuse(
         self,
@@ -1297,6 +1353,15 @@ class V8QualityReducerOracle:
                 },
             )
         score = recovery.normalized_score
+        lineage = recovery.metadata.get("lineage")
+        lineage = lineage if isinstance(lineage, Mapping) else {}
+        observation_ids = tuple(lineage.get("observation_ids", ()))
+        applicable_ids = tuple(lineage.get("applicable_observation_ids", ()))
+        deck_page_coverage = (
+            len(applicable_ids) / len(observation_ids)
+            if observation_ids
+            else None
+        )
         return replace(
             recovery,
             metric_id=output_metric_id,
@@ -1310,6 +1375,10 @@ class V8QualityReducerOracle:
                 "deterministic_observability": deterministic.metadata.get(
                     "observability"
                 ),
+                "observability_basis": (
+                    "DECK_PAGE_COVERAGE_WITH_BOUNDED_SAMPLE_MINIMUM"
+                ),
+                "deck_page_coverage": deck_page_coverage,
                 "no_double_score": True,
             },
         )
@@ -1548,34 +1617,82 @@ class V8QualityReducerOracle:
         sampled_pages = {
             int(item) for item in metadata.get("sampled_pages", ())
         }
-        affected_pages = {
-            int(item) for item in metadata.get("affected_page_numbers", ())
-        }
-        candidate_pages = {
-            int(evidence_item.page_number)
-            for item in candidates
-            for evidence_item in item.evidence
-            if evidence_item.page_number is not None
-        }
         model_severity = str(metadata.get("defect_severity") or "NONE")
-        expected_defect_codes = {
-            defect_code
-            for item in candidates
-            for evidence_item in item.evidence
-            for defect_code in _GATE_RULE_KIND_TO_MODEL_DEFECT_CODES.get(
-                evidence_item.kind,
-                (),
+        expected_by_page: dict[int, set[str]] = {}
+        candidate_by_page: dict[int, AtomicObservation] = {}
+        for candidate in candidates:
+            for evidence_item in candidate.evidence:
+                if evidence_item.page_number is None:
+                    continue
+                page_number = int(evidence_item.page_number)
+                candidate_by_page[page_number] = candidate
+                expected_by_page.setdefault(page_number, set()).update(
+                    _GATE_RULE_KIND_TO_MODEL_DEFECT_CODES.get(
+                        evidence_item.kind,
+                        (),
+                    )
+                )
+        candidate_pages = set(candidate_by_page)
+        if not candidate_pages:
+            return "UNRESOLVED", model_severity
+
+        matching_pages: set[int] = set()
+        matching_severities: list[str] = []
+        for finding in model.evidence:
+            if finding.page_number is None:
+                continue
+            page_number = int(finding.page_number)
+            if page_number not in expected_by_page:
+                continue
+            payload = finding.payload
+            affected_pages = {
+                int(item) for item in payload.get("affected_page_numbers", ())
+            }
+            defect_codes = {
+                str(item) for item in payload.get("defect_codes", ())
+            }
+            severity = str(payload.get("severity") or "NONE")
+            if (
+                page_number in affected_pages
+                and severity in {"MAJOR", "CRITICAL"}
+                and bool(expected_by_page[page_number] & defect_codes)
+            ):
+                matching_pages.add(page_number)
+                matching_severities.append(severity)
+
+        critical_candidates = any(
+            item.severity == Severity.CRITICAL for item in candidates
+        )
+        if critical_candidates and matching_pages:
+            severity = (
+                "CRITICAL" if "CRITICAL" in matching_severities else "MAJOR"
             )
-        }
-        model_defect_codes = {
-            str(item) for item in metadata.get("defect_codes", ())
-        }
-        isomorphic_defect = bool(expected_defect_codes & model_defect_codes)
-        if model_severity in {"MAJOR", "CRITICAL"} and isomorphic_defect and (
-            not candidate_pages or bool(candidate_pages & affected_pages)
-        ):
-            return "CONFIRMED", model_severity
-        if candidate_pages and candidate_pages <= sampled_pages:
+            return "CONFIRMED", severity
+
+        if not critical_candidates and candidate_pages <= sampled_pages:
+            total_pages_value = metadata.get("total_pages")
+            total_pages = (
+                int(total_pages_value)
+                if isinstance(total_pages_value, int)
+                and not isinstance(total_pages_value, bool)
+                and total_pages_value > 0
+                else max(sampled_pages, default=1)
+            )
+            matching_key_units = sum(
+                candidate_by_page[page].key_unit for page in matching_pages
+            )
+            if (
+                len(matching_pages) / total_pages >= 0.20
+                or matching_key_units >= 2
+            ):
+                severity = (
+                    "CRITICAL"
+                    if "CRITICAL" in matching_severities
+                    else "MAJOR"
+                )
+                return "CONFIRMED", severity
+
+        if candidate_pages <= sampled_pages:
             return "REJECTED", model_severity
         return "UNRESOLVED", model_severity
 
