@@ -35,6 +35,7 @@
 - [验收与 Shadow](../reports/03_evaluation/02_acceptance_and_shadow.md)
 - [评测报告模板](../reports/03_evaluation/03_evaluation_report_template.md)
 - [MVP 验证报告](../reports/03_evaluation/04_mvp_verification.md)
+- [v6 六维视觉真实切片重放](../reports/03_evaluation/09_v6_visual_dimensions_replay.md)
 
 ## 审计与演示
 
