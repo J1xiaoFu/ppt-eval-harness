@@ -2097,7 +2097,7 @@ def _finding_html(finding: Mapping[str, Any], slide_ids: Mapping[int, str]) -> s
     page_value = finding.get("page_number")
     page_number = int(page_value) if isinstance(page_value, (int, float)) else None
     page_html = ""
-    if page_number in slide_ids:
+    if page_number is not None and page_number in slide_ids:
         page_html = (
             f'<a class="page-link" href="#{slide_ids[page_number]}" '
             f'data-open-slide="{slide_ids[page_number]}">第 {page_number} 页</a> '
@@ -2126,7 +2126,7 @@ def _routing_html(item: Mapping[str, Any]) -> str:
                     html.escape(
                         f"{attempt.get('tier', 'model')} "
                         f"{attempt.get('metric_status', 'UNKNOWN')} "
-                        f"tokens={(attempt.get('usage') if isinstance(attempt.get('usage'), Mapping) else {}).get('total_tokens', 0)} "
+                        f"tokens={_routing_attempt_tokens(attempt)} "
                         f"cost_known={attempt.get('cost_known', False)}"
                     )
                     for attempt in event.get("attempts", ())
@@ -2141,6 +2141,11 @@ def _routing_html(item: Mapping[str, Any]) -> str:
         if isinstance(event, Mapping)
     )
     return rows or '<div class="route">未启用模型审计</div>'
+
+
+def _routing_attempt_tokens(attempt: Mapping[str, Any]) -> object:
+    usage = attempt.get("usage")
+    return usage.get("total_tokens", 0) if isinstance(usage, Mapping) else 0
 
 
 def case_html(item: Mapping[str, Any], output: Path, dataset_root: Path) -> str:
