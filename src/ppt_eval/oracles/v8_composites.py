@@ -1289,8 +1289,20 @@ class V8QualityReducerOracle:
         )
         if not expected_units:
             return 0.60
+        scored_units = tuple(
+            item
+            for item in expected_units
+            if item.metric_status == MetricStatus.SCORED
+            and item.local_score is not None
+        )
         complete_sample_size = min(maximum_sample_pages, len(expected_units))
-        return min(0.60, complete_sample_size / len(expected_units))
+        if len(scored_units) < complete_sample_size:
+            return 0.60
+        total_importance = sum(item.importance for item in expected_units)
+        sampled_importance = sum(item.importance for item in scored_units)
+        if total_importance <= 0.0:
+            return 0.60
+        return min(0.60, sampled_importance / total_importance)
 
     def _fuse(
         self,

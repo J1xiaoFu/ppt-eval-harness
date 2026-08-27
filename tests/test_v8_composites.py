@@ -272,7 +272,9 @@ def test_raster_text_model_emits_atomic_fallback_without_double_scoring(
         "RASTER_VLM_ATOMIC_FALLBACK"
     )
     assert 0.4 <= indexed["content_structure"].metadata["observability"] < 0.5
-    assert indexed["content_structure"].metadata["minimum_observability"] == pytest.approx(0.4)
+    assert indexed["content_structure"].metadata[
+        "minimum_observability"
+    ] == pytest.approx(indexed["content_structure"].metadata["observability"])
     assert indexed["content_structure"].metadata["deck_page_coverage"] == pytest.approx(0.4)
     assert indexed["language_consistency"].metadata["no_double_score"] is True
 
