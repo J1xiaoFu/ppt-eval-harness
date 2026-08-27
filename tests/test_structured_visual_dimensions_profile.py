@@ -22,6 +22,9 @@ from ppt_eval.scoring import DecisionPolicy, PptPdmsAggregator
 PROFILE_PATH = Path(
     "configs/profiles/finished_deck_v6_structured_visual_dimensions_candidate.json"
 )
+QWEN38_AB_PROFILE_PATH = Path(
+    "configs/profiles/finished_deck_v6_structured_visual_dimensions_qwen38_ab.json"
+)
 V5_PROFILE_PATH = Path(
     "configs/profiles/finished_deck_v5_structured_visual_candidate.json"
 )
@@ -41,6 +44,22 @@ OVERLAPPING_DIMENSIONS = {
     "structured_vlm_cross_slide_consistency",
 }
 INCREMENTAL_DIMENSIONS = STRUCTURED_DIMENSION_METRICS - OVERLAPPING_DIMENSIONS
+
+
+def test_qwen38_ab_profile_changes_only_identity_and_flash_model() -> None:
+    baseline = json.loads(PROFILE_PATH.read_text(encoding="utf-8"))
+    qwen38 = json.loads(QWEN38_AB_PROFILE_PATH.read_text(encoding="utf-8"))
+
+    assert baseline["metadata"]["flash_model"] == "qwen3.7-flash"
+    assert qwen38["metadata"]["flash_model"] == "qwen3.8-flash"
+    assert qwen38["profile_id"].endswith("qwen38-ab")
+    assert qwen38["version"] == "6.0-qwen38-ab"
+
+    for payload in (baseline, qwen38):
+        payload.pop("profile_id")
+        payload.pop("version")
+        payload["metadata"].pop("flash_model")
+    assert qwen38 == baseline
 
 
 def test_v6_profile_loads_without_replacing_v3_or_v5() -> None:
