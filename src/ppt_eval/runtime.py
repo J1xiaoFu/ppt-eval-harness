@@ -210,6 +210,16 @@ class LocalEvaluationRuntime:
                     },
                 ),
             )
+            self.audit_log.append(
+                run_id=outcome.report.run_id,
+                event_type="ATOMIC_OBSERVATIONS_STORED",
+                actor="local-runtime",
+                payload={
+                    "sha256": observation_artifact["sha256"],
+                    "count": len(outcome.observations),
+                    "media_type": observation_artifact["media_type"],
+                },
+            )
         payload = normalized_report_payload(outcome)
         if observation_artifact is not None:
             payload["observation_artifact"] = dict(observation_artifact)

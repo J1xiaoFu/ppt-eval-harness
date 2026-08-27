@@ -206,9 +206,7 @@ class V8AtomicObservationComposite:
                 observe_chart_series(context, adapter=self.adapter).observations
             )
 
-        normalized = tuple(
-            replace(item, oracle_id=self.oracle_id) for item in observations
-        )
+        normalized = tuple(observations)
         return ObservationBatch(
             oracle_id=self.oracle_id,
             observations=normalized,

@@ -6,8 +6,8 @@
 |---|---|---|
 | Audit schema | 1.0 | 同主版本向后兼容；未知字段显式处理 |
 | Eval API | v1 | 新字段可选；删除/改义升 v2 |
-| Oracle protocol | 1.0 | 返回 Schema 严格校验 |
-| PPT-PDMS Profile | v3.1 默认 / v4.1 construct 实验 / v5 汇总视觉 / v6 六维视觉 / v2 Shadow / v1 formula | 新行为提升 Profile/Oracle 版本；完整历史回放同时固定 Git SHA |
+| Oracle protocol | 1.0 result / v8 AtomicObservation | 原子观察与Reducer结果分离；legacy结果继续兼容 |
+| PPT-PDMS Profile | v8 默认 / v7 原子视觉 / v6 六维视觉 / v5 汇总视觉 / v4.1 construct / v3.1及更早历史 | 新行为提升 Profile/Oracle 版本；完整历史回放同时固定 Git SHA |
 | Rubric | rubric-v1 | 报告携带版本 |
 | Dataset | local-synthetic-v1 / external starter manifests v1 | 每次切分固定 source revision、逐文件 hash、许可和用途分区 |
 | Runnable package | 0.1.0 | 领域契约同主版本兼容；行为变化发布新 Profile/Oracle 版本 |
@@ -16,6 +16,15 @@
 
 ### 2026-08-27
 
+- v8 成为四场景默认：新增九种 observation scope、完整 observation artifact、三类 Reducer、
+  多阶段固定 DAG 和 visual/layout/content/full-deck 四轨训练准入。
+- 重写/去重 page/object/pair/claim/requirement/asset/chart-series 原子能力；critical requirement、
+  required asset 和 chart expectation 只观察一次，由 criticality 决定 gate 或 additive reducer。
+- 六个视觉维度成为独立 DAG 节点；qwen3.7-flash 未解决、低置信或与规则冲突时，只对同一
+  criterion 调用 qwen3.8-flash。v8 公式不包含任何整体 LLM/VLM Judge 分数。
+- v8 基础构念按质量属性而非传感器组织：content structure 25%、composition 20%、
+  typography 10%、palette 8%、visual communication 15%、visual system 10%、
+  authorship specificity 12%。规则提供cap，模型提供正向信号，避免重复计权。
 - 新增 v6 六维视觉候选：一次 VLM 调用返回六个独立 metric，Prompt/Oracle `1.2.0`
   要求单维 score/confidence/observability；低置信或不可观测转 N/A/REVIEW。
 - v6 将 `visual_deterministic=40%` 与 `visual_vlm=10%` 硬隔离；VLM 占合并视觉

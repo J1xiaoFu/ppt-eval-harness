@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import time
+from dataclasses import replace
 from pathlib import Path
 
 from ppt_eval.application import (
@@ -101,6 +104,14 @@ class _ReducerOracle:
         return ReducerEngine().reduce(batch, spec)
 
 
+class _SlowObservationOracle(_ObservationOracle):
+    oracle_id = "test.v8.slow-observe"
+
+    def evaluate(self, context: EvaluationContext) -> ObservationBatch:
+        time.sleep(0.50)
+        return super().evaluate(context)
+
+
 def _profile() -> EvalProfile:
     return EvalProfile(
         profile_id="v8-pipeline-test",
@@ -164,3 +175,50 @@ def test_runtime_persists_full_observation_artifact(tmp_path: Path) -> None:
     artifact = report["observation_artifact"]
     assert Path(artifact["uri"]).is_file()
     assert report["manifest"]["artifact_hashes"]["atomic_observations"] == artifact["sha256"]
+    events = [
+        json.loads(line)
+        for line in runtime.paths.audit.read_text(encoding="utf-8").splitlines()
+        if line
+    ]
+    assert events[-1]["event_type"] == "ATOMIC_OBSERVATIONS_STORED"
+    assert events[-1]["payload"]["sha256"] == artifact["sha256"]
+    assert runtime.audit_log.verify() == (True, None)
+
+
+def test_scheduler_enforces_profile_timeout_per_atomic_node(tmp_path: Path) -> None:
+    deck = build_pptx(tmp_path / "timeout.pptx")
+    runtime = LocalEvaluationRuntime(tmp_path / "timeout-var")
+    runtime.registry.register(_SlowObservationOracle())
+    profile = replace(
+        EvalProfile.default(SceneType.READY_MADE),
+        oracle_timeout_seconds=0.02,
+        enabled_oracle_ids=(),
+        metadata={
+            "pipeline_nodes": (
+                {
+                    "node_id": "observe:slow",
+                    "oracle_id": _SlowObservationOracle.oracle_id,
+                    "kind": "OBSERVE",
+                    "dependencies": ("baseline_ppt_quality",),
+                },
+            )
+        },
+    )
+
+    started = time.perf_counter()
+    report = runtime.evaluate(
+        EvalCase(
+            case_id="v8-timeout",
+            scene=SceneType.READY_MADE,
+            pptx_path=str(deck),
+        ),
+        profile,
+    )
+    elapsed = time.perf_counter() - started
+    timeout_result = next(
+        item for item in report["results"] if item["oracle_id"] == _SlowObservationOracle.oracle_id
+    )
+
+    assert elapsed < 0.25
+    assert timeout_result["error_code"] == "ORACLE_EXCEPTION"
+    assert "configured timeout" in timeout_result["error_message"]

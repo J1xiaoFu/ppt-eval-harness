@@ -203,31 +203,29 @@ def test_optional_low_observability_reduces_available_observations() -> None:
     assert result.metadata["observability"] == 0.2
 
 
-@pytest.mark.parametrize(
-    ("key_unit", "critical"), ((True, False), (False, True))
-)
-def test_critical_unit_caps_the_output_without_erasing_raw_score(
-    key_unit: bool, critical: bool
-) -> None:
-    items = (
-        observation(
-            1,
-            0.9,
-            key_unit=key_unit,
-            critical=critical,
-            severity=Severity.CRITICAL,
-        ),
-        observation(2, 0.9),
-        observation(3, 0.9),
-    )
+def test_critical_unit_caps_the_output_without_erasing_raw_score() -> None:
+    for key_unit, critical in ((True, False), (False, True)):
+        items = (
+            observation(
+                1,
+                0.9,
+                key_unit=key_unit,
+                critical=critical,
+                severity=Severity.CRITICAL,
+            ),
+            observation(2, 0.9),
+            observation(3, 0.9),
+        )
 
-    result = reduce_observations(batch(*items), spec(PAGE_QUALITY, EvaluationScope.PAGE))
+        result = reduce_observations(
+            batch(*items), spec(PAGE_QUALITY, EvaluationScope.PAGE)
+        )
 
-    assert result.raw_value == pytest.approx(0.9)
-    assert result.normalized_score == pytest.approx(0.34)
-    assert result.severity == Severity.CRITICAL
-    assert result.metadata["critical_cap_applied"] is True
-    assert result.metadata["critical_observation_ids"] == ("obs-1",)
+        assert result.raw_value == pytest.approx(0.9)
+        assert result.normalized_score == pytest.approx(0.34)
+        assert result.severity == Severity.CRITICAL
+        assert result.metadata["critical_cap_applied"] is True
+        assert result.metadata["critical_observation_ids"] == ("obs-1",)
 
 
 def test_configured_metric_with_wrong_scope_is_a_contract_error() -> None:

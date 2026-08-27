@@ -56,13 +56,20 @@ cross-slide 使用最多 8 页。局部调用要求每个实际上传页一条 o
 `RENDERED_SLIDE_PAGE=N` 直接绑定。详见
 [grounded_visual_oracle_method.md](grounded_visual_oracle_method.md)。
 
+v8 已成为四场景默认路径。六个视觉构念分别是独立 DAG 节点
+`v8.visual.<criterion_id>`：先调用 `qwen3.7-flash`，只有 Flash N/A/ERROR、单维低置信或
+同构念规则冲突时才调用 `qwen3.8-flash`。模型仍只提交页级或跨页原子判断；最终
+`composition_craft`、`typography_craft`、`palette_craft`、`visual_communication` 和
+`visual_system_sequence` 由确定性 Reducer 生成。规则提供缺陷 cap，模型提供正向视觉信号，
+两者不作为两个独立构念重复计权。
+
 仓库另有一个非默认的 `experimental_text_generation_model_scoring.json`，仅用于评分链路和金标校准实验。它明确标记 `EXPERIMENTAL / UNVALIDATED / production_approved=false`，其 3%/4% 权重不是生产标准。
 
-默认映射明确指向 `*_v3.json`（当前文件内版本 `3.1`），脱离仓库时的
-`EvalProfile.default()` 回退也使用 v3.1。
+默认文件映射指向 `*_v8.json`；脱离仓库、缺少 Profile 文件时的
+`EvalProfile.default()` 仍是兼容性 v3.1 回退，不能据此声称执行了 v8。
 原有 v1 与 `*_v2.json` 文件均保留：v1 为纯确定性快照，v2 执行但不计分的 Shadow
-审计，v3.1 是 Flash 默认计分与 Flash -> Advanced -> Human 路由。回放时应显式指定历史
-Profile，不会被默认版本静默改写。
+审计；v3.1 是历史整体模型计分路径，v8 是 scoped observation → reducer → training
+eligibility 默认路径。回放时应显式指定历史 Profile，不会被默认版本静默改写。
 
 这里的“回放”只保证 Profile 权重、required 和路由语义，不是位级算法回放。当前代码仍会执行
 Baseline `2.0.0`、Layout `1.1.0` 和新 `template_residue` Leaf。需要完全复现历史结果/证据时，

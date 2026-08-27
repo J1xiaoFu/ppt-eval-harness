@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import queue
+import threading
 from dataclasses import dataclass
-from typing import Mapping
+from typing import Mapping, cast
 
 from ppt_eval.domain import (
     AtomicObservation,
@@ -22,6 +24,7 @@ from .oracle import (
     Oracle,
     OracleDescriptor,
     OracleExecutionOutput,
+    OracleOutput,
     OracleRegistry,
     coerce_descriptor,
     normalize_oracle_execution_output,
@@ -101,7 +104,11 @@ class DagScheduler:
                 # deterministic Oracles retain the Profile retry policy.
                 max_retries = profile.max_retries if descriptor.deterministic else 0
                 node_output, used_attempts = self._execute_with_retries(
-                    oracle, descriptor, context, max_retries
+                    oracle,
+                    descriptor,
+                    context,
+                    max_retries,
+                    profile.oracle_timeout_seconds,
                 )
                 node_results = node_output.results
                 node_observations = node_output.observations
@@ -134,11 +141,17 @@ class DagScheduler:
         descriptor: OracleDescriptor,
         context: EvaluationContext,
         max_retries: int,
+        timeout_seconds: float,
     ) -> tuple[OracleExecutionOutput, int]:
         last_output = OracleExecutionOutput()
         for attempt in range(1, max_retries + 2):
             try:
-                last_output = normalize_oracle_execution_output(oracle.evaluate(context))
+                raw_output = DagScheduler._evaluate_with_timeout(
+                    oracle,
+                    context,
+                    timeout_seconds,
+                )
+                last_output = normalize_oracle_execution_output(raw_output)
                 if not last_output.results and not last_output.observations:
                     raise ValueError("Oracle returned no results or observations")
             except Exception as exc:
@@ -155,6 +168,34 @@ class DagScheduler:
             if not has_error:
                 return last_output, attempt
         return last_output, max_retries + 1
+
+    @staticmethod
+    def _evaluate_with_timeout(
+        oracle: Oracle,
+        context: EvaluationContext,
+        timeout_seconds: float,
+    ) -> OracleOutput:
+        completed: queue.Queue[tuple[bool, object]] = queue.Queue(maxsize=1)
+
+        def invoke() -> None:
+            try:
+                completed.put((True, oracle.evaluate(context)))
+            except Exception as exc:  # propagated on the scheduler thread
+                completed.put((False, exc))
+
+        worker = threading.Thread(target=invoke, daemon=True)
+        worker.start()
+        worker.join(timeout_seconds)
+        if worker.is_alive():
+            raise TimeoutError(
+                f"Oracle exceeded configured timeout of {timeout_seconds:g} seconds"
+            )
+        succeeded, value = completed.get_nowait()
+        if not succeeded:
+            if not isinstance(value, Exception):
+                raise RuntimeError("Oracle worker returned an invalid exception payload")
+            raise value
+        return cast(OracleOutput, value)
 
     @staticmethod
     def _unsupported_results(

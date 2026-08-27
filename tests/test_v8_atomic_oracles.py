@@ -353,6 +353,48 @@ def test_authorship_specificity_is_explicitly_low_confidence_proxy(tmp_path: Pat
     assert all(item.metadata["proxy_only"] is True for item in observations)
 
 
+def test_repeated_card_grid_lowers_authorship_signal_without_penalizing_minimalism(
+    tmp_path: Path,
+) -> None:
+    cards = tuple(
+        {
+            "kind": "text",
+            "text": "核心优势 解决方案",
+            "x": 500_000 + (index % 2) * 5_000_000,
+            "y": 500_000 + (index // 2) * 2_500_000,
+            "w": 4_000_000,
+            "h": 1_500_000,
+            "font_pt": 20,
+        }
+        for index in range(4)
+    )
+    path = build_pptx(
+        tmp_path / "authorship-visual.pptx",
+        (
+            cards,
+            (
+                {
+                    "kind": "text",
+                    "text": "2026 年客户留存率提升 12%，主要来自续费流程缩短。",
+                    "x": 900_000,
+                    "y": 1_000_000,
+                    "w": 9_000_000,
+                    "h": 1_500_000,
+                    "font_pt": 26,
+                },
+            ),
+        ),
+    )
+
+    observations = AuthorshipSpecificitySignalsOracle(_ooxml()).evaluate(
+        _context(path)
+    ).observations
+
+    assert observations[0].metadata["visual_and_text_signals"] is True
+    assert observations[0].evidence[0].payload["mechanical_grid_signal"] is True
+    assert observations[0].local_score < observations[1].local_score
+
+
 def test_requirement_helper_expands_page_scopes_without_deck_aggregation(tmp_path: Path) -> None:
     path = build_pptx(
         tmp_path / "requirements.pptx",

@@ -22,11 +22,14 @@ from ppt_eval.domain import (
     MetricStatus,
     OracleResult,
     RunManifest,
+    SceneType,
     ScoreBreakdown,
     ScoreRole,
+    Severity,
     SupervisorState,
 )
 from ppt_eval.scoring import DecisionPolicy, PptPdmsAggregator
+from ppt_eval.training_eligibility import TrainingTrack, assess_training_eligibility
 
 from .audit import AuditLog
 from .model_escalation import ModelAuditEscalationPolicy, ModelEscalationOutcome
@@ -223,6 +226,12 @@ class RunSupervisor:
                 )
             )
             errors = self._result_errors(scheduler_outcome)
+            training_eligibility = self._training_eligibility(
+                case,
+                profile,
+                breakdown,
+                scheduler_outcome,
+            )
             report = EvalReport(
                 report_id=report_id,
                 run_id=run_id,
@@ -243,6 +252,7 @@ class RunSupervisor:
                 results=scheduler_outcome.results,
                 review_reasons=review_reasons,
                 errors=errors,
+                training_eligibility=training_eligibility,
                 created_at=completed_at,
             )
             manifest = RunManifest(
@@ -690,6 +700,92 @@ class RunSupervisor:
             for item in outcome.results
             if item.execution_status == ExecutionStatus.ERROR
         )
+
+    @staticmethod
+    def _training_eligibility(
+        case: EvalCase,
+        profile: EvalProfile,
+        breakdown: ScoreBreakdown,
+        outcome: SchedulerOutcome,
+    ) -> Mapping[str, Any]:
+        if not str(profile.version).startswith("8"):
+            return {}
+        scores = {
+            item.metric_id: item.normalized_score
+            for item in outcome.results
+            if item.metric_status == MetricStatus.SCORED
+            and item.normalized_score is not None
+        }
+
+        def average(metric_ids: tuple[str, ...]) -> float | None:
+            values = [scores[metric_id] for metric_id in metric_ids if metric_id in scores]
+            return 100.0 * sum(values) / len(values) if values else None
+
+        visual_score = average(
+            (
+                "composition_craft",
+                "palette_craft",
+                "visual_communication",
+                "visual_system_sequence",
+                "authorship_specificity",
+            )
+        )
+        layout_score = average(
+            ("content_structure", "composition_craft", "typography_craft")
+        )
+        content_metric_ids = tuple(
+            metric_id
+            for metric_id in (
+                "content_structure",
+                "instruction",
+                "audience",
+                "fact_claim",
+                "source_claim",
+                "key_point",
+                "numeric",
+                "compression_richness",
+                "traceability",
+                "asset_coverage",
+                "chart_fidelity",
+            )
+            if metric_id in scores
+        )
+        content_score = average(content_metric_ids)
+        full_score = breakdown.full_score
+        critical_codes = tuple(
+            observation.metric_id
+            for observation in outcome.observations
+            if observation.severity == Severity.CRITICAL
+            and (observation.critical or observation.key_unit)
+        )
+        raster_only = any(
+            observation.metric_id == "slide_editability"
+            and observation.metadata.get("raster_only") is True
+            for observation in outcome.observations
+        )
+        content_evidence = (
+            bool(case.request)
+            if case.scene == SceneType.TEXT_TO_PPT
+            else bool(case.source_materials)
+            if case.scene == SceneType.PROJECT_SUMMARY
+            else bool(case.request or case.assets or case.metadata.get("chart_expectations"))
+            if case.scene == SceneType.MULTIMODAL
+            else False
+        )
+        eligibility = assess_training_eligibility(
+            {
+                TrainingTrack.VISUAL: visual_score,
+                TrainingTrack.LAYOUT: layout_score,
+                TrainingTrack.CONTENT: content_score,
+                TrainingTrack.FULL_DECK: full_score,
+            },
+            critical_issue_codes=critical_codes,
+            content_evidence_available=content_evidence,
+            raster_only=raster_only,
+            train_threshold=profile.pass_threshold,
+            review_threshold=profile.review_threshold,
+        )
+        return eligibility.to_mapping()
 
     @classmethod
     def _hash(cls, value: Any) -> str:

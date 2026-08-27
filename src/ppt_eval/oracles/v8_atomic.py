@@ -1327,12 +1327,26 @@ class AuthorshipSpecificitySignalsOracle(ScopedObservationOracle):
             anchors = len(_CONCRETE_ANCHOR_RE.findall(text))
             tokens = text_tokens(text)
             lexical_signal = clamp(len(tokens) / 24.0)
+            component_signatures = [
+                (round(item.bbox.width, 2), round(item.bbox.height, 2))
+                for item in slide.visible_objects
+                if 0.015 <= item.bbox.area <= 0.25
+            ]
+            repeated_components = max(
+                (component_signatures.count(signature) for signature in set(component_signatures)),
+                default=0,
+            )
+            mechanical_grid = (
+                repeated_components >= 4
+                and repeated_components / max(1, len(component_signatures)) >= 0.50
+            )
             score = clamp(
                 0.35
                 + 0.35 * lexical_signal
                 + 0.10 * min(2, anchors)
                 - 0.20 * generic_hits
                 - 0.55 * bool(residue_codes)
+                - 0.15 * mechanical_grid
             )
             result.append(
                 _scored_observation(
@@ -1350,17 +1364,24 @@ class AuthorshipSpecificitySignalsOracle(ScopedObservationOracle):
                             self.metric_id,
                             f"specificity-{slide.page_number}",
                             "authorship_rule_signals",
-                            "Concrete anchors, lexical variety, generic phrases and template residue were recorded.",
+                            "Concrete anchors, lexical variety, repeated components, generic phrases and template residue were recorded.",
                             page_number=slide.page_number,
                             payload={
                                 "concrete_anchors": anchors,
                                 "distinct_tokens": len(tokens),
                                 "generic_phrase_hits": generic_hits,
                                 "template_residue_codes": residue_codes,
+                                "repeated_component_count": repeated_components,
+                                "mechanical_grid_signal": mechanical_grid,
                             },
                         ),
                     ),
-                    metadata={"role": role, "proxy_only": True, "not_semantic_authorship_proof": True},
+                    metadata={
+                        "role": role,
+                        "proxy_only": True,
+                        "visual_and_text_signals": True,
+                        "not_semantic_authorship_proof": True,
+                    },
                 )
             )
         return tuple(result)
