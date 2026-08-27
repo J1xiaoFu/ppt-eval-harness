@@ -57,6 +57,13 @@ STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID = (
 STRUCTURED_DIMENSIONS_VLM_ORACLE_ID = "structured_dimensions_vlm_audit_oracle"
 STRUCTURED_VLM_VISUAL_ORACLE_VERSION = "1.0.0"
 STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION = "1.2.0"
+GROUNDED_STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION = "2.0.0"
+GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID = (
+    "grounded_structured_dimensions.model_audits"
+)
+GROUNDED_STRUCTURED_DIMENSIONS_VLM_ORACLE_ID = (
+    "grounded_structured_dimensions_vlm_audit_oracle"
+)
 _MAX_SLIDE_TEXT_CHARS = 20_000
 _MAX_SOURCE_CHARS = 100_000
 _MAX_VLM_IMAGES_PER_REQUEST = 12
@@ -190,6 +197,205 @@ provider-neutral model-audit response contract with confidence in [0,1], actual 
 this exact prompt reference, token/cost usage, and slide-grounded evidence. Do not make a final
 run-level PASS/FAIL decision.""",
 )
+
+GROUNDED_VLM_DEFECT_CODES: Mapping[str, frozenset[str]] = {
+    "composition_layout": frozenset(
+        {
+            "poor_visual_hierarchy",
+            "cluttered_layout",
+            "unbalanced_space_distribution",
+            "content_alignment_issue",
+            "content_overflow_or_cutoff",
+            "occluded_content",
+        }
+    ),
+    "typography_legibility": frozenset(
+        {
+            "illegible_typeface",
+            "improper_font_sizing",
+            "excessive_text_volume",
+            "improper_text_styling",
+            "improper_line_or_character_spacing",
+            "poor_text_hierarchy",
+        }
+    ),
+    "color_contrast": frozenset(
+        {
+            "insufficient_color_contrast",
+            "excessive_or_inconsistent_color_usage",
+            "mismatched_color_combination",
+        }
+    ),
+    "imagery_data_visualization": frozenset(
+        {
+            "irrelevant_visual_content",
+            "poor_image_quality_or_editing",
+            "improper_image_sizing",
+            "inconsistent_visual_style",
+            "unclear_data_encoding",
+            "missing_material_visual_explanation",
+        }
+    ),
+    "cross_slide_consistency": frozenset(
+        {
+            "inconsistent_grid_system",
+            "inconsistent_typography_system",
+            "inconsistent_palette_system",
+            "inconsistent_component_conventions",
+            "disjointed_visual_rhythm",
+        }
+    ),
+    "render_integrity": frozenset(
+        {
+            "missing_glyph_boxes",
+            "corrupted_raster_or_image",
+            "object_tree_content_missing_in_render",
+            "visible_export_artifact",
+        }
+    ),
+}
+
+GROUNDED_VLM_POSITIVE_SIGNALS: Mapping[str, frozenset[str]] = {
+    "composition_layout": frozenset(
+        {
+            "clear_visual_hierarchy",
+            "balanced_composition",
+            "intentional_alignment",
+            "effective_space_use",
+        }
+    ),
+    "typography_legibility": frozenset(
+        {
+            "projection_legible",
+            "disciplined_type_scale",
+            "comfortable_reading_load",
+            "clear_text_hierarchy",
+        }
+    ),
+    "color_contrast": frozenset(
+        {
+            "readable_contrast",
+            "coherent_palette",
+            "accessible_color_encoding",
+            "purposeful_color_emphasis",
+        }
+    ),
+    "imagery_data_visualization": frozenset(
+        {
+            "task_relevant_visuals",
+            "clear_data_encoding",
+            "integrated_visual_explanation",
+            "appropriate_visual_restraint",
+        }
+    ),
+    "cross_slide_consistency": frozenset(
+        {
+            "coherent_grid_system",
+            "consistent_typography_system",
+            "consistent_palette_system",
+            "consistent_component_system",
+            "intentional_visual_rhythm",
+        }
+    ),
+    "render_integrity": frozenset(
+        {
+            "pixel_content_complete",
+            "glyphs_render_correctly",
+            "images_render_cleanly",
+            "no_visible_export_artifacts",
+        }
+    ),
+}
+
+_GROUNDED_VLM_SEVERITIES = frozenset({"NONE", "MINOR", "MAJOR", "CRITICAL"})
+
+_GROUNDED_VLM_CRITERION_RUBRICS: Mapping[str, str] = {
+    "composition_layout": (
+        "Judge visible hierarchy, balance, alignment, spacing, crowding, cutoff, "
+        "and occlusion within each supplied slide. Judge visual gestalt that geometry "
+        "alone cannot settle."
+    ),
+    "typography_legibility": (
+        "Judge visible reading effort, type scale, line and character spacing, density, "
+        "styling, and text hierarchy. Do not judge spelling, wording, facts, or color."
+    ),
+    "color_contrast": (
+        "Judge visible text/background contrast, palette coherence, accessible color "
+        "encoding, and purposeful emphasis. Monochrome, minimal, and dark themes are "
+        "not defects by themselves."
+    ),
+    "imagery_data_visualization": (
+        "Judge whether images, charts, diagrams, and visual encoding are relevant, "
+        "clear, well edited, properly sized, and useful for communication. Do not "
+        "reward decoration, gradients, icons, or image count. A text-only slide can be "
+        "excellent when visual restraint suits its communication job."
+    ),
+    "cross_slide_consistency": (
+        "Judge only the visual system across the supplied pages: grids, typography, "
+        "palette, components, and intentional rhythm. Do not repeat isolated "
+        "within-slide defects. A defect requires at least two affected supplied pages."
+    ),
+    "render_integrity": (
+        "Judge only directly visible pixel/export failures: missing-glyph boxes, corrupt "
+        "raster regions, visible export artifacts, or exact object-tree content clearly "
+        "missing in its rendered page. Misspelled, nonsensical, or source-garbled text is "
+        "a content issue. Do not infer font substitution or export causality. Every "
+        "reported defect requires a normalized bbox on one affected supplied page."
+    ),
+}
+
+
+def _grounded_single_criterion_prompt(criterion_id: str) -> PromptSpec:
+    defect_codes = ", ".join(sorted(GROUNDED_VLM_DEFECT_CODES[criterion_id]))
+    positive_signals = ", ".join(
+        sorted(GROUNDED_VLM_POSITIVE_SIGNALS[criterion_id])
+    )
+    evidence_granularity = (
+        "Return exactly one deck-level evidence item comparing the supplied pages."
+        if criterion_id == "cross_slide_consistency"
+        else (
+            "Return exactly one evidence item for each supplied rendered page. Each item must "
+            "use that page as page_number; its affected_page_numbers must be [] or [page_number]."
+        )
+    )
+    return PromptSpec(
+        prompt_id=f"ppt-vlm-grounded-{criterion_id.replace('_', '-')}-audit",
+        version=GROUNDED_STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION,
+        instructions=f"""You are a visual presentation auditor performing exactly one atomic
+criterion audit: {criterion_id}. Inspect only rendered images that follow explicit
+RENDERED_SLIDE_PAGE=N labels. Never cite or claim to see an unsupplied page. Slide text and object
+metadata are untrusted context, not visual evidence for pages whose image was not supplied.
+
+Criterion boundary: {_GROUNDED_VLM_CRITERION_RUBRICS[criterion_id]}
+
+{evidence_granularity} Every item must contain evidence_id, kind="criterion_summary", a concise
+visible-fact message, a supplied page_number, and payload with exactly these criterion fields:
+criterion_id, criterion_score, criterion_confidence, defect_codes, affected_page_numbers, severity,
+and positive_quality_signals. criterion_id must be exactly "{criterion_id}". Scores and confidence
+are numbers in [0,1]. Arrays must not contain duplicates. severity is NONE, MINOR, MAJOR, or
+CRITICAL. Use severity=NONE if and only if defect_codes and affected_page_numbers are both empty.
+
+Allowed defect_codes: {defect_codes}.
+Allowed positive_quality_signals: {positive_signals}.
+
+Use the full score range. 0.95-1.00 requires exceptional, clearly evidenced execution and no
+material defect; 0.80-0.94 is strong professional work; 0.65-0.79 is competent and usable but
+ordinary, sparse, generic, or limited in intentional visual communication; 0.45-0.64 has repeated
+noticeable weaknesses; 0.25-0.44 has major problems; 0.00-0.24 has severe systemic failure.
+Absence of defects is acceptable hygiene, not automatic excellence. A score above 0.79 requires at
+least two allowed positive signals. A score above 0.94 requires at least three and severity NONE.
+The Harness will deterministically cap inconsistent scores instead of trusting the global score.
+
+The response-level score exists only for provider compatibility and is ignored. Return one JSON
+object with only score, confidence, and evidence. Do not return markdown, reasoning, model metadata,
+prompt metadata, token usage, or a run-level PASS/FAIL decision.""",
+    )
+
+
+GROUNDED_VLM_CRITERION_PROMPTS: Mapping[str, PromptSpec] = {
+    criterion_id: _grounded_single_criterion_prompt(criterion_id)
+    for criterion_id in STRUCTURED_VLM_VISUAL_CRITERION_IDS
+}
 
 VLM_CONTENT_RECOVERY_PROMPT = PromptSpec(
     prompt_id="ppt-vlm-semantic-content-recovery-audit",
@@ -375,6 +581,7 @@ class _ModelAuditOracle(AtomicOracle):
         *,
         extra_context: Mapping[str, Any] | None = None,
         images: Sequence[ModelImageInput] = (),
+        slides: Sequence[Mapping[str, Any]] | None = None,
         modality: ModelAuditModality | None = None,
         prompt: PromptSpec | None = None,
     ) -> ModelAuditRequest:
@@ -387,7 +594,7 @@ class _ModelAuditOracle(AtomicOracle):
             prompt=prompt or self.prompt,
             case_id=str(getattr(case, "case_id")),
             scene=scene.value,
-            slides=_slide_payloads(presentation),
+            slides=tuple(slides) if slides is not None else _slide_payloads(presentation),
             context=dict(extra_context or {}),
             images=tuple(images),
         )
@@ -546,6 +753,7 @@ class VlmVisualQualityAuditOracle(_ModelAuditOracle):
     score_role = ScoreRole.BASE_ADDITIVE
     modality = ModelAuditModality.VLM
     prompt = VLM_VISUAL_PROMPT
+    maximum_images_per_request = _MAX_VLM_IMAGES_PER_REQUEST
 
     def _evaluate(self, context: object) -> OracleResult:
         if self.provider is None:
@@ -587,13 +795,25 @@ class VlmVisualQualityAuditOracle(_ModelAuditOracle):
                     "rendered_pages": sorted(actual_pages),
                 },
             )
+        maximum_images = self.maximum_images_per_request
         canonical_sample_pages = set(
             _canonical_sample_pages(
                 presentation.slide_count,
-                maximum=_MAX_VLM_IMAGES_PER_REQUEST,
+                maximum=maximum_images,
             )
         )
-        if actual_pages not in (expected_pages, canonical_sample_pages):
+        accepted_sample_page_sets = {frozenset(canonical_sample_pages)}
+        accepted_sample_page_sets.add(
+            frozenset(
+                _canonical_sample_pages(
+                    presentation.slide_count,
+                    maximum=_MAX_VLM_IMAGES_PER_REQUEST,
+                )
+            )
+        )
+        if actual_pages != expected_pages and frozenset(
+            actual_pages
+        ) not in accepted_sample_page_sets:
             result = self.not_applicable(
                 "Rendered slide images are neither complete nor the canonical sample.",
                 code="RENDERED_SLIDES_INCOMPLETE",
@@ -610,10 +830,10 @@ class VlmVisualQualityAuditOracle(_ModelAuditOracle):
             )
         sampled_images = _sample_rendered_images(
             images,
-            maximum=_MAX_VLM_IMAGES_PER_REQUEST,
+            maximum=maximum_images,
         )
         sampled_pages = [item.page_number for item in sampled_images]
-        if presentation.slide_count > _MAX_VLM_IMAGES_PER_REQUEST:
+        if presentation.slide_count > maximum_images:
             sampling_strategy = "deterministic_even_coverage"
         else:
             sampling_strategy = "all_pages"
@@ -621,24 +841,50 @@ class VlmVisualQualityAuditOracle(_ModelAuditOracle):
             "total_pages": presentation.slide_count,
             "rendered_pages": [item.page_number for item in images],
             "sampled_pages": sampled_pages,
-            "sampling_limit": _MAX_VLM_IMAGES_PER_REQUEST,
+            "sampling_limit": maximum_images,
             "sampling_strategy": sampling_strategy,
         }
         result = self._invoke(
             self._request(
                 context,
                 presentation,
-                extra_context={
-                    "input_trust": "UNTRUSTED_DATA",
-                    **sampling_metadata,
-                },
+                extra_context=self._visual_request_context(
+                    context,
+                    presentation,
+                    sampling_metadata,
+                ),
                 images=sampled_images,
+                slides=self._visual_slide_payloads(
+                    presentation,
+                    sampled_pages=frozenset(sampled_pages),
+                ),
             )
         )
         return replace(
             result,
             metadata={**dict(result.metadata), **sampling_metadata},
         )
+
+    def _visual_request_context(
+        self,
+        context: object,
+        presentation: ParsedPresentation,
+        sampling_metadata: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        del context, presentation
+        return {
+            "input_trust": "UNTRUSTED_DATA",
+            **dict(sampling_metadata),
+        }
+
+    def _visual_slide_payloads(
+        self,
+        presentation: ParsedPresentation,
+        *,
+        sampled_pages: frozenset[int],
+    ) -> tuple[Mapping[str, Any], ...]:
+        del sampled_pages
+        return _slide_payloads(presentation)
 
 
 class StructuredVlmVisualAuditOracle(VlmVisualQualityAuditOracle):
@@ -664,7 +910,10 @@ class StructuredVlmVisualAuditOracle(VlmVisualQualityAuditOracle):
     def _criterion_scores(
         self,
         response: ModelAuditResponse,
+        *,
+        request: ModelAuditRequest,
     ) -> Mapping[str, float | None]:
+        del request
         return _structured_visual_criterion_scores(response)
 
     def _invoke_provider(
@@ -725,7 +974,7 @@ class StructuredVlmVisualAuditOracle(VlmVisualQualityAuditOracle):
                 metadata={**request_metadata, **recovered_metadata},
             )
         try:
-            criterion_scores = self._criterion_scores(response)
+            criterion_scores = self._criterion_scores(response, request=request)
         except ModelAuditContractError as exc:
             return self._retry_criterion_contract(
                 request,
@@ -751,6 +1000,21 @@ class StructuredVlmVisualAuditOracle(VlmVisualQualityAuditOracle):
         first_error: ModelAuditContractError,
         request_metadata: Mapping[str, Any],
     ) -> OracleResult:
+        retry_request = replace(
+            request,
+            context={
+                **dict(request.context),
+                "response_repair": {
+                    "error_category": _criterion_contract_error_category(
+                        first_error
+                    ),
+                    "instruction": (
+                        "Repair only the criterion payload contract; do not change "
+                        "the requested rubric or invent unsupported evidence."
+                    ),
+                },
+            },
+        )
         retry_metadata = {
             **dict(request_metadata),
             "criterion_retry_count": 1,
@@ -759,9 +1023,10 @@ class StructuredVlmVisualAuditOracle(VlmVisualQualityAuditOracle):
                 first_response.response_fingerprint
             ),
             "response_fingerprint_scope": "FINAL_ATTEMPT",
+            "criterion_retry_request_fingerprint": retry_request.fingerprint,
         }
         try:
-            retry_payload = provider.audit(request)
+            retry_payload = provider.audit(retry_request)
         except ModelAuditProviderError as exc:
             provider_metadata = _safe_provider_error_metadata({}, exc)
             combined_usage = _sum_model_usage(
@@ -811,7 +1076,7 @@ class StructuredVlmVisualAuditOracle(VlmVisualQualityAuditOracle):
         try:
             retry_response = ModelAuditResponse.from_mapping(
                 retry_payload,
-                request=request,
+                request=retry_request,
             )
         except ModelAuditContractError as exc:
             recovered_metadata, recovered_cost = _recover_invalid_response_telemetry(
@@ -848,7 +1113,10 @@ class StructuredVlmVisualAuditOracle(VlmVisualQualityAuditOracle):
                 },
             )
         try:
-            retry_scores = self._criterion_scores(retry_response)
+            retry_scores = self._criterion_scores(
+                retry_response,
+                request=retry_request,
+            )
         except ModelAuditContractError as exc:
             combined_usage = _sum_model_usage(
                 first_response.usage,
@@ -888,7 +1156,7 @@ class StructuredVlmVisualAuditOracle(VlmVisualQualityAuditOracle):
             first_response
         ) and _model_response_usage_complete(retry_response)
         return self._validated_response_result(
-            request,
+            retry_request,
             combined_response,
             retry_scores,
             {
@@ -971,8 +1239,15 @@ class _StructuredDimensionsBatchCallOracle(StructuredVlmVisualAuditOracle):
     def _criterion_scores(
         self,
         response: ModelAuditResponse,
+        *,
+        request: ModelAuditRequest,
     ) -> Mapping[str, float | None]:
-        assessments = _structured_visual_dimension_assessments(response)
+        assessments = _structured_visual_dimension_assessments(
+            response,
+            allowed_page_numbers=frozenset(
+                image.page_number for image in request.images
+            ),
+        )
         return {
             criterion_id: assessment["score"]
             for criterion_id, assessment in assessments.items()
@@ -985,7 +1260,12 @@ class _StructuredDimensionsBatchCallOracle(StructuredVlmVisualAuditOracle):
         criterion_scores: Mapping[str, float | None],
         request_metadata: Mapping[str, Any],
     ) -> OracleResult:
-        assessments = _structured_visual_dimension_assessments(response)
+        assessments = _structured_visual_dimension_assessments(
+            response,
+            allowed_page_numbers=frozenset(
+                image.page_number for image in request.images
+            ),
+        )
         metadata = {
             **self._response_metadata(request, response, request_metadata),
             "criterion_scores": dict(criterion_scores),
@@ -1018,11 +1298,226 @@ class _StructuredDimensionsBatchCallOracle(StructuredVlmVisualAuditOracle):
         )
 
 
+class _GroundedSingleCriterionVlmOracle(StructuredVlmVisualAuditOracle):
+    """One visual criterion over a bounded, explicitly labelled page sample."""
+
+    score_role = ScoreRole.BASE_ADDITIVE
+    version = GROUNDED_STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION
+    maximum_images_per_request = 4
+
+    def __init__(
+        self,
+        criterion_id: str,
+        provider: ModelAuditProvider | None,
+        adapter: PptxAdapter | None = None,
+        *,
+        source_access_policy: ModelSourceAccessPolicy | None = None,
+    ) -> None:
+        if criterion_id not in STRUCTURED_VLM_VISUAL_CRITERION_IDS:
+            raise ValueError(f"unknown grounded visual criterion {criterion_id!r}")
+        self.criterion_id = criterion_id
+        self.oracle_id = f"grounded_vlm_{criterion_id}_audit_oracle"
+        self.metric_id = f"structured_vlm_{criterion_id}"
+        self.prompt = GROUNDED_VLM_CRITERION_PROMPTS[criterion_id]
+        if criterion_id == "cross_slide_consistency":
+            self.maximum_images_per_request = 8
+        super().__init__(
+            provider,
+            adapter,
+            source_access_policy=source_access_policy,
+        )
+
+    def _base_metadata(self) -> Mapping[str, Any]:
+        return {
+            **_ModelAuditOracle._base_metadata(self),
+            "validation_mode": "GROUNDED_ATOMIC_VISUAL_CRITERION",
+            "structured_contract_version": self.version,
+            "criterion_id": self.criterion_id,
+            "aesthetic_anchor_mode": "POSITIVE_SIGNALS_AND_DEFECT_SEVERITY",
+            "observability_owner": "HARNESS",
+            "call_granularity": "ONE_CRITERION_BOUNDED_PAGE_SAMPLE",
+        }
+
+    def _visual_request_context(
+        self,
+        context: object,
+        presentation: ParsedPresentation,
+        sampling_metadata: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        case = getattr(context, "case", context)
+        profile = getattr(context, "profile", None)
+        profile_metadata = getattr(profile, "metadata", {})
+        raw_confidence_floor = (
+            profile_metadata.get("vlm_dimension_min_confidence", 0.0)
+            if isinstance(profile_metadata, Mapping)
+            else 0.0
+        )
+        confidence_floor = _validated_confidence_floor(raw_confidence_floor)
+        sampled_pages = tuple(
+            int(item) for item in sampling_metadata.get("sampled_pages", ())
+        )
+        return {
+            **dict(
+                super()._visual_request_context(
+                    context,
+                    presentation,
+                    sampling_metadata,
+                )
+            ),
+            "evaluation_scope": "SUPPLIED_RENDERED_PAGES_ONLY",
+            "criterion_id": self.criterion_id,
+            "request": str(getattr(case, "request", "") or "")[:_MAX_SOURCE_CHARS],
+            "audience": str(getattr(case, "audience", "") or "")[:10_000],
+            "sampled_page_roles": {
+                str(page_number): _coarse_page_role(
+                    page_number,
+                    total_pages=presentation.slide_count,
+                )
+                for page_number in sampled_pages
+            },
+            "vlm_dimension_min_confidence": confidence_floor,
+        }
+
+    def _visual_slide_payloads(
+        self,
+        presentation: ParsedPresentation,
+        *,
+        sampled_pages: frozenset[int],
+    ) -> tuple[Mapping[str, Any], ...]:
+        payloads: list[Mapping[str, Any]] = []
+        for slide in _slide_payloads(presentation):
+            page_number = int(slide["page_number"])
+            if page_number in sampled_pages:
+                payloads.append({**dict(slide), "rendered_image_supplied": True})
+            else:
+                payloads.append(
+                    {
+                        "page_number": page_number,
+                        "text": "",
+                        "text_truncated": False,
+                        "objects": (),
+                        "rendered_image_supplied": False,
+                    }
+                )
+        return tuple(payloads)
+
+    def _criterion_scores(
+        self,
+        response: ModelAuditResponse,
+        *,
+        request: ModelAuditRequest,
+    ) -> Mapping[str, float | None]:
+        assessment = _grounded_atomic_criterion_assessment(
+            response,
+            request=request,
+            criterion_id=self.criterion_id,
+        )
+        return {self.criterion_id: assessment["score"]}
+
+    def _validated_response_result(
+        self,
+        request: ModelAuditRequest,
+        response: ModelAuditResponse,
+        criterion_scores: Mapping[str, float | None],
+        request_metadata: Mapping[str, Any],
+    ) -> OracleResult:
+        assessment = _grounded_atomic_criterion_assessment(
+            response,
+            request=request,
+            criterion_id=self.criterion_id,
+        )
+        score = criterion_scores[self.criterion_id]
+        confidence = float(assessment["confidence"])
+        confidence_floor = _validated_confidence_floor(
+            request.context.get("vlm_dimension_min_confidence", 0.0)
+        )
+        evidence = tuple(
+            replace(item, kind=_STRUCTURED_CRITERION_SUMMARY_KIND).to_domain()
+            for item in response.evidence
+        )
+        metadata = {
+            **self._response_metadata(request, response, request_metadata),
+            "criterion_id": self.criterion_id,
+            "criterion_score": score,
+            "model_reported_score": assessment["model_reported_score"],
+            "criterion_confidence": confidence,
+            "criterion_confidence_floor": confidence_floor,
+            "criterion_observability": assessment["observability"],
+            "defect_codes": list(assessment["defect_codes"]),
+            "affected_page_numbers": list(assessment["affected_page_numbers"]),
+            "defect_severity": assessment["severity"],
+            "positive_quality_signals": list(
+                assessment["positive_quality_signals"]
+            ),
+            "criterion_validation_reason": assessment["validation_reason"],
+            "criterion_validation_reasons": list(
+                assessment["validation_reasons"]
+            ),
+            "score_adjustments": list(assessment["score_adjustments"]),
+            "page_scores": dict(assessment["page_scores"]),
+            "page_model_reported_scores": dict(
+                assessment["page_model_reported_scores"]
+            ),
+            "observation_count": assessment["observation_count"],
+            "reported_kinds": list(assessment["reported_kinds"]),
+            "criterion_kind_normalized": (
+                any(
+                    kind != _STRUCTURED_CRITERION_SUMMARY_KIND
+                    for kind in assessment["reported_kinds"]
+                )
+            ),
+            "model_global_score": response.score,
+            "model_global_score_used_for_metric": False,
+            "criterion_score_used_for_metric": (
+                score is not None and confidence >= confidence_floor
+            ),
+            "dimension_batch_validated": False,
+            "atomic_criterion_validated": True,
+            "visual_page_grounding_validated": True,
+            "observability_owner": "HARNESS",
+        }
+        reason_code: str | None = None
+        if score is None:
+            validation_reason = assessment["validation_reason"]
+            reason_code = (
+                str(validation_reason)
+                if isinstance(validation_reason, str) and validation_reason
+                else "CRITERION_OBSERVABILITY_INSUFFICIENT"
+            )
+        elif confidence < confidence_floor:
+            reason_code = "CRITERION_CONFIDENCE_BELOW_PROFILE_FLOOR"
+        if reason_code is not None:
+            return OracleResult(
+                oracle_id=self.oracle_id,
+                metric_id=self.metric_id,
+                execution_status=ExecutionStatus.SUCCESS,
+                metric_status=MetricStatus.NA,
+                score_role=self.score_role,
+                confidence=confidence,
+                severity=Severity.INFO,
+                evidence=evidence,
+                version=self.version,
+                cost=response.usage.cost,
+                metadata={**metadata, "reason_code": reason_code},
+            )
+        if score is None:
+            raise AssertionError("scoreable grounded criterion has no score")
+        result = self.scored(
+            score,
+            evidence,
+            confidence=confidence,
+            raw_value=score,
+            metadata=metadata,
+        )
+        return replace(result, cost=response.usage.cost)
+
+
 class StructuredVlmVisualDimensionsAuditOracle:
     """One VLM request projected into six independently scoreable metrics."""
 
     oracle_id = STRUCTURED_DIMENSIONS_VLM_ORACLE_ID
     version = STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION
+    batch_oracle_type = _StructuredDimensionsBatchCallOracle
 
     def __init__(
         self,
@@ -1031,7 +1526,7 @@ class StructuredVlmVisualDimensionsAuditOracle:
         *,
         source_access_policy: ModelSourceAccessPolicy | None = None,
     ) -> None:
-        self._batch = _StructuredDimensionsBatchCallOracle(
+        self._batch = self.batch_oracle_type(
             provider,
             adapter,
             source_access_policy=source_access_policy,
@@ -1165,9 +1660,29 @@ class StructuredVlmVisualDimensionsAuditOracle:
                     "model_global_score_used_for_metric": False,
                 }
             )
+            for batch_key, metric_key in (
+                ("criterion_defect_codes", "defect_codes"),
+                ("criterion_affected_pages", "affected_page_numbers"),
+                ("criterion_severity", "defect_severity"),
+                (
+                    "criterion_positive_quality_signals",
+                    "positive_quality_signals",
+                ),
+                ("criterion_model_reported_scores", "model_reported_score"),
+                ("criterion_validation_reasons", "criterion_validation_reason"),
+                ("criterion_score_adjustments", "score_adjustments"),
+            ):
+                values = batch.metadata.get(batch_key)
+                if isinstance(values, Mapping) and criterion_id in values:
+                    metadata[metric_key] = values[criterion_id]
             reason_code: str | None = None
             if observability == "INSUFFICIENT":
-                reason_code = "CRITERION_OBSERVABILITY_INSUFFICIENT"
+                validation_reason = metadata.get("criterion_validation_reason")
+                reason_code = (
+                    str(validation_reason)
+                    if isinstance(validation_reason, str) and validation_reason
+                    else "CRITERION_OBSERVABILITY_INSUFFICIENT"
+                )
             elif confidence < confidence_floor:
                 reason_code = "CRITERION_CONFIDENCE_BELOW_PROFILE_FLOOR"
             if reason_code is not None:
@@ -1212,6 +1727,36 @@ class StructuredVlmVisualDimensionsAuditOracle:
                 )
             )
         return tuple(dimension_results)
+
+
+class GroundedStructuredVlmVisualDimensionsAuditOracle(MultiResultCompositeOracle):
+    """Six independent atomic VLM calls with bounded page samples."""
+
+    oracle_id = GROUNDED_STRUCTURED_DIMENSIONS_VLM_ORACLE_ID
+    version = GROUNDED_STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION
+
+    def __init__(
+        self,
+        provider: ModelAuditProvider | None,
+        adapter: PptxAdapter | None = None,
+        *,
+        source_access_policy: ModelSourceAccessPolicy | None = None,
+    ) -> None:
+        super().__init__(
+            self.oracle_id,
+            tuple(
+                _GroundedSingleCriterionVlmOracle(
+                    criterion_id,
+                    provider,
+                    adapter,
+                    source_access_policy=source_access_policy,
+                )
+                for criterion_id in STRUCTURED_VLM_VISUAL_CRITERION_IDS
+            ),
+            name=self.__class__.__name__,
+            version=self.version,
+            description=self.__doc__ or "Atomic grounded visual dimension audit",
+        )
 
 
 class LlmScenarioComplianceAuditOracle(_ModelAuditOracle):
@@ -1447,6 +1992,47 @@ class StructuredDimensionsModelAuditOracle(MultiResultCompositeOracle):
             name=self.__class__.__name__,
             version=self.version,
             description=self.__doc__ or "Structured dimension model audits",
+        )
+
+
+class GroundedStructuredDimensionsModelAuditOracle(MultiResultCompositeOracle):
+    """Grounded visual candidate preserving the six v6 metric projections."""
+
+    oracle_id = GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID
+    metric_id = "grounded_structured_dimensions_model_audits"
+    version = GROUNDED_STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION
+
+    def __init__(
+        self,
+        adapter: PptxAdapter | None = None,
+        *,
+        llm_provider: ModelAuditProvider | None = None,
+        vlm_provider: ModelAuditProvider | None = None,
+        source_access_policy: ModelSourceAccessPolicy | None = None,
+    ) -> None:
+        super().__init__(
+            self.oracle_id,
+            (
+                LlmContentQualityAuditOracle(
+                    llm_provider,
+                    adapter,
+                    visual_fallback_provider=vlm_provider,
+                    source_access_policy=source_access_policy,
+                ),
+                GroundedStructuredVlmVisualDimensionsAuditOracle(
+                    vlm_provider,
+                    adapter,
+                    source_access_policy=source_access_policy,
+                ),
+                LlmScenarioComplianceAuditOracle(
+                    llm_provider,
+                    adapter,
+                    source_access_policy=source_access_policy,
+                ),
+            ),
+            name=self.__class__.__name__,
+            version=self.version,
+            description=self.__doc__ or "Grounded structured dimension model audits",
         )
 
 
@@ -1760,8 +2346,29 @@ def _structured_visual_criterion_scores(
     return scores
 
 
+def _criterion_contract_error_category(exc: ModelAuditContractError) -> str:
+    """Return a bounded repair label without echoing rejected model content."""
+
+    message = str(exc)
+    if "missing required criterion IDs" in message:
+        return "MISSING_CRITERION_SUMMARY"
+    if "missing required fields" in message or "must contain" in message:
+        return "MISSING_CRITERION_FIELDS"
+    if "duplicates criterion_id" in message:
+        return "DUPLICATE_CRITERION_SUMMARY"
+    if "exactly six" in message:
+        return "CRITERION_ITEM_COUNT_INVALID"
+    if "page" in message:
+        return "CRITERION_PAGE_GROUNDING_INVALID"
+    if "score" in message:
+        return "CRITERION_SCORE_INVALID"
+    return "CRITERION_CONTRACT_INVALID"
+
+
 def _structured_visual_dimension_assessments(
     response: ModelAuditResponse,
+    *,
+    allowed_page_numbers: frozenset[int] | None = None,
 ) -> dict[str, Mapping[str, Any]]:
     """Validate the v1.2 per-dimension score, confidence, and observability."""
 
@@ -1857,6 +2464,14 @@ def _structured_visual_dimension_assessments(
                         "related_page_numbers must be an array of distinct positive integers"
                     )
                 normalized_pages.append(page_number)
+                if (
+                    allowed_page_numbers is not None
+                    and page_number not in allowed_page_numbers
+                ):
+                    raise ModelAuditContractError(
+                        "related_page_numbers may reference only rendered pages "
+                        "supplied to the VLM"
+                    )
             if len(normalized_pages) != len(set(normalized_pages)):
                 raise ModelAuditContractError(
                     "related_page_numbers must be an array of distinct positive integers"
@@ -1876,12 +2491,397 @@ def _structured_visual_dimension_assessments(
     return assessments
 
 
+def _grounded_visual_dimension_assessments(
+    response: ModelAuditResponse,
+    *,
+    request: ModelAuditRequest,
+    expected_criterion_ids: Sequence[str] = STRUCTURED_VLM_VISUAL_CRITERION_IDS,
+) -> dict[str, Mapping[str, Any]]:
+    """Validate v1.3 visual summaries against actual rendered-page evidence."""
+
+    expected = frozenset(expected_criterion_ids)
+    if not expected or any(
+        criterion_id not in STRUCTURED_VLM_VISUAL_CRITERION_IDS
+        for criterion_id in expected
+    ):
+        raise ValueError("expected grounded criterion IDs must be known and non-empty")
+    sampled_pages = frozenset(image.page_number for image in request.images)
+    total_pages_value = request.context.get("total_pages", len(request.slides))
+    if (
+        isinstance(total_pages_value, bool)
+        or not isinstance(total_pages_value, int)
+        or total_pages_value < 1
+    ):
+        raise ModelAuditContractError(
+            "grounded dimension request requires a positive total_pages value"
+        )
+    total_pages = int(total_pages_value)
+    expected_deck_pages = frozenset(range(1, total_pages + 1))
+    if not sampled_pages or not sampled_pages.issubset(expected_deck_pages):
+        raise ModelAuditContractError(
+            "grounded dimension request has invalid rendered-page coverage"
+        )
+    observability = "FULL" if sampled_pages == expected_deck_pages else "PARTIAL"
+
+    assessments: dict[str, Mapping[str, Any]] = {}
+    for item in response.evidence:
+        if item.page_number is None or item.page_number not in sampled_pages:
+            raise ModelAuditContractError(
+                "grounded criterion_summary must cite a supplied rendered page"
+            )
+        payload = item.payload
+        required = {
+            "criterion_id",
+            "criterion_score",
+            "criterion_confidence",
+            "defect_codes",
+            "affected_page_numbers",
+            "severity",
+            "positive_quality_signals",
+        }
+        missing = required - set(payload)
+        if missing:
+            raise ModelAuditContractError(
+                "each grounded criterion_summary is missing required fields: "
+                + ", ".join(sorted(missing))
+            )
+        unknown = {
+            key
+            for key in payload
+            if key not in required and not key.startswith("adapter_")
+        }
+        if unknown:
+            raise ModelAuditContractError(
+                "grounded criterion_summary contains unknown criterion fields: "
+                + ", ".join(sorted(unknown))
+            )
+
+        criterion_id = payload["criterion_id"]
+        if (
+            not isinstance(criterion_id, str)
+            or criterion_id not in expected
+            or criterion_id != criterion_id.strip()
+        ):
+            raise ModelAuditContractError(
+                f"grounded criterion_summary has invalid criterion_id {criterion_id!r}"
+            )
+        if criterion_id in assessments:
+            raise ModelAuditContractError(
+                f"criterion_summary duplicates criterion_id {criterion_id!r}"
+            )
+        model_reported_score = _grounded_unit_number(
+            payload["criterion_score"],
+            f"criterion_score for {criterion_id!r}",
+        )
+        confidence = _grounded_unit_number(
+            payload["criterion_confidence"],
+            f"criterion_confidence for {criterion_id!r}",
+        )
+        defect_codes = _grounded_code_list(
+            payload["defect_codes"],
+            label=f"defect_codes for {criterion_id!r}",
+            allowed=GROUNDED_VLM_DEFECT_CODES[criterion_id],
+        )
+        positive_signals = _grounded_code_list(
+            payload["positive_quality_signals"],
+            label=f"positive_quality_signals for {criterion_id!r}",
+            allowed=GROUNDED_VLM_POSITIVE_SIGNALS[criterion_id],
+        )
+        affected_pages = _grounded_page_list(
+            payload["affected_page_numbers"],
+            label=f"affected_page_numbers for {criterion_id!r}",
+            allowed=sampled_pages,
+        )
+        severity = payload["severity"]
+        if not isinstance(severity, str) or severity not in _GROUNDED_VLM_SEVERITIES:
+            raise ModelAuditContractError(
+                f"severity for {criterion_id!r} must be NONE, MINOR, MAJOR, or CRITICAL"
+            )
+        has_defect = bool(defect_codes or affected_pages)
+        if severity == "NONE" and has_defect:
+            raise ModelAuditContractError(
+                f"severity NONE for {criterion_id!r} requires empty defect and page arrays"
+            )
+        if severity != "NONE" and (not defect_codes or not affected_pages):
+            raise ModelAuditContractError(
+                f"non-NONE severity for {criterion_id!r} requires defects and affected pages"
+            )
+        adjusted_score = model_reported_score
+        score_adjustments: list[str] = []
+        if adjusted_score > 0.79 and len(positive_signals) < 2:
+            adjusted_score = 0.79
+            score_adjustments.append("POSITIVE_SIGNAL_CAP_0_79")
+        if adjusted_score > 0.94 and (
+            severity != "NONE" or len(positive_signals) < 3
+        ):
+            adjusted_score = 0.94
+            score_adjustments.append("EXCEPTIONAL_EVIDENCE_CAP_0_94")
+        if severity == "MAJOR" and adjusted_score > 0.64:
+            adjusted_score = 0.64
+            score_adjustments.append("MAJOR_SEVERITY_CAP_0_64")
+        if severity == "CRITICAL" and adjusted_score > 0.34:
+            adjusted_score = 0.34
+            score_adjustments.append("CRITICAL_SEVERITY_CAP_0_34")
+        score: float | None = adjusted_score
+        criterion_observability = observability
+        validation_reason: str | None = None
+        if criterion_id == "cross_slide_consistency" and defect_codes and len(
+            affected_pages
+        ) < 2:
+            score = None
+            criterion_observability = "INSUFFICIENT"
+            validation_reason = "CROSS_SLIDE_COMPARISON_GROUNDING_INSUFFICIENT"
+        if criterion_id == "render_integrity" and defect_codes:
+            if item.bbox is None or item.page_number not in affected_pages:
+                score = None
+                criterion_observability = "INSUFFICIENT"
+                validation_reason = "RENDER_DEFECT_LOCALIZATION_INSUFFICIENT"
+
+        assessments[criterion_id] = {
+            "score": score,
+            "model_reported_score": model_reported_score,
+            "confidence": confidence,
+            "observability": criterion_observability,
+            "defect_codes": defect_codes,
+            "affected_page_numbers": affected_pages,
+            "severity": severity,
+            "positive_quality_signals": positive_signals,
+            "reported_kind": item.kind,
+            "validation_reason": validation_reason,
+            "score_adjustments": tuple(score_adjustments),
+        }
+
+    missing_ids = expected - set(assessments)
+    if missing_ids:
+        raise ModelAuditContractError(
+            "criterion_summary is missing required criterion IDs: "
+            + ", ".join(sorted(missing_ids))
+        )
+    return assessments
+
+
+def _grounded_atomic_criterion_assessment(
+    response: ModelAuditResponse,
+    *,
+    request: ModelAuditRequest,
+    criterion_id: str,
+) -> Mapping[str, Any]:
+    """Validate page-level observations and deterministically aggregate one criterion."""
+
+    if not response.evidence:
+        raise ModelAuditContractError("atomic visual criterion requires evidence")
+    sampled_pages = frozenset(image.page_number for image in request.images)
+    reported_pages = [item.page_number for item in response.evidence]
+    if any(page_number is None for page_number in reported_pages):
+        raise ModelAuditContractError(
+            "atomic visual criterion evidence must cite rendered pages"
+        )
+    integer_pages = [int(page_number) for page_number in reported_pages if page_number]
+    if len(integer_pages) != len(set(integer_pages)):
+        raise ModelAuditContractError(
+            "atomic visual criterion must not duplicate a page observation"
+        )
+    if criterion_id == "cross_slide_consistency":
+        if len(response.evidence) != 1:
+            raise ModelAuditContractError(
+                "cross_slide_consistency requires exactly one deck-level summary"
+            )
+    elif frozenset(integer_pages) != sampled_pages:
+        raise ModelAuditContractError(
+            "atomic visual criterion requires exactly one observation per supplied page"
+        )
+
+    observations: list[Mapping[str, Any]] = []
+    for item in response.evidence:
+        assessment = _grounded_visual_dimension_assessments(
+            replace(response, evidence=(item,)),
+            request=request,
+            expected_criterion_ids=(criterion_id,),
+        )[criterion_id]
+        if criterion_id != "cross_slide_consistency":
+            affected_pages = assessment["affected_page_numbers"]
+            if affected_pages not in ((), (item.page_number,)):
+                raise ModelAuditContractError(
+                    "page-level affected_page_numbers must be empty or match page_number"
+                )
+        observations.append(assessment)
+
+    valid_scores = [
+        float(item["score"]) for item in observations if item["score"] is not None
+    ]
+    score = math.fsum(valid_scores) / len(valid_scores) if valid_scores else None
+    model_scores = [float(item["model_reported_score"]) for item in observations]
+    model_reported_score = math.fsum(model_scores) / len(model_scores)
+    confidence = min(float(item["confidence"]) for item in observations)
+    observability_values = {str(item["observability"]) for item in observations}
+    if not valid_scores:
+        observability = "INSUFFICIENT"
+    elif len(valid_scores) != len(observations) or "INSUFFICIENT" in observability_values:
+        observability = "PARTIAL"
+    elif "PARTIAL" in observability_values:
+        observability = "PARTIAL"
+    else:
+        observability = "FULL"
+
+    severity_order = {"NONE": 0, "MINOR": 1, "MAJOR": 2, "CRITICAL": 3}
+    severity = max(
+        (str(item["severity"]) for item in observations),
+        key=severity_order.__getitem__,
+    )
+    validation_reasons = tuple(
+        dict.fromkeys(
+            str(item["validation_reason"])
+            for item in observations
+            if item["validation_reason"]
+        )
+    )
+    return {
+        "score": score,
+        "model_reported_score": model_reported_score,
+        "confidence": confidence,
+        "observability": observability,
+        "defect_codes": tuple(
+            sorted(
+                {
+                    str(code)
+                    for item in observations
+                    for code in item["defect_codes"]
+                }
+            )
+        ),
+        "affected_page_numbers": tuple(
+            sorted(
+                {
+                    int(page_number)
+                    for item in observations
+                    for page_number in item["affected_page_numbers"]
+                }
+            )
+        ),
+        "severity": severity,
+        "positive_quality_signals": tuple(
+            sorted(
+                {
+                    str(signal)
+                    for item in observations
+                    for signal in item["positive_quality_signals"]
+                }
+            )
+        ),
+        "reported_kinds": tuple(str(item["reported_kind"]) for item in observations),
+        "validation_reason": validation_reasons[0] if validation_reasons else None,
+        "validation_reasons": validation_reasons,
+        "score_adjustments": tuple(
+            dict.fromkeys(
+                str(adjustment)
+                for item in observations
+                for adjustment in item["score_adjustments"]
+            )
+        ),
+        "page_scores": {
+            str(evidence.page_number): observation["score"]
+            for evidence, observation in zip(
+                response.evidence,
+                observations,
+                strict=True,
+            )
+        },
+        "page_model_reported_scores": {
+            str(evidence.page_number): observation["model_reported_score"]
+            for evidence, observation in zip(
+                response.evidence,
+                observations,
+                strict=True,
+            )
+        },
+        "observation_count": len(observations),
+    }
+
+
+def _grounded_unit_number(value: object, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ModelAuditContractError(f"{label} must be a finite number in [0,1]")
+    number = float(value)
+    if not math.isfinite(number) or not 0.0 <= number <= 1.0:
+        raise ModelAuditContractError(f"{label} must be a finite number in [0,1]")
+    return number
+
+
+def _validated_confidence_floor(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise RuntimeError("vlm_dimension_min_confidence must be numeric")
+    floor = float(value)
+    if not math.isfinite(floor) or not 0.0 <= floor <= 1.0:
+        raise RuntimeError("vlm_dimension_min_confidence must be in [0,1]")
+    return floor
+
+
+def _grounded_code_list(
+    value: object,
+    *,
+    label: str,
+    allowed: frozenset[str],
+) -> tuple[str, ...]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ModelAuditContractError(f"{label} must be a JSON array")
+    codes: list[str] = []
+    for code in value:
+        if not isinstance(code, str) or code not in allowed:
+            raise ModelAuditContractError(f"{label} contains an unsupported code")
+        codes.append(code)
+    if len(codes) != len(set(codes)):
+        raise ModelAuditContractError(f"{label} must not contain duplicates")
+    return tuple(codes)
+
+
+def _grounded_page_list(
+    value: object,
+    *,
+    label: str,
+    allowed: frozenset[int],
+) -> tuple[int, ...]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ModelAuditContractError(f"{label} must be a JSON array")
+    pages: list[int] = []
+    for page_number in value:
+        if (
+            isinstance(page_number, bool)
+            or not isinstance(page_number, int)
+            or page_number not in allowed
+        ):
+            raise ModelAuditContractError(
+                f"{label} may reference only supplied rendered pages"
+            )
+        pages.append(page_number)
+    if len(pages) != len(set(pages)):
+        raise ModelAuditContractError(f"{label} must not contain duplicates")
+    return tuple(pages)
+
+
+def _coarse_page_role(page_number: int, *, total_pages: int) -> str:
+    if total_pages == 1:
+        return "SINGLE_SLIDE"
+    if page_number == 1:
+        return "COVER_OR_OPENING"
+    if page_number == total_pages:
+        return "ENDING_OR_APPENDIX"
+    return "BODY"
+
+
 __all__ = [
     "ADVANCED_MODEL_REVIEW_COMPOSITE_ID",
     "AdvancedLlmContentReviewOracle",
     "AdvancedLlmScenarioReviewOracle",
     "AdvancedModelReviewOracle",
     "AdvancedVlmVisualReviewOracle",
+    "GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID",
+    "GROUNDED_STRUCTURED_DIMENSIONS_VLM_ORACLE_ID",
+    "GROUNDED_STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION",
+    "GROUNDED_VLM_CRITERION_PROMPTS",
+    "GROUNDED_VLM_DEFECT_CODES",
+    "GROUNDED_VLM_POSITIVE_SIGNALS",
+    "GroundedStructuredDimensionsModelAuditOracle",
+    "GroundedStructuredVlmVisualDimensionsAuditOracle",
     "HighCostModelAuditOracle",
     "LLM_CONTENT_PROMPT",
     "LLM_SCENARIO_PROMPT",

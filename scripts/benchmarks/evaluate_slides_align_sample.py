@@ -20,6 +20,9 @@ for entry in (str(ROOT), str(SRC)):
 from ppt_eval.config import load_profile  # noqa: E402
 from ppt_eval.domain import EvalCase, EvalProfile, SceneType  # noqa: E402
 from ppt_eval.oracles.model_audits import (  # noqa: E402
+    GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
+    GROUNDED_STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION,
+    GROUNDED_VLM_CRITERION_PROMPTS,
     STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
     STRUCTURED_DIMENSIONS_VLM_ORACLE_ID,
     STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION,
@@ -46,6 +49,47 @@ STRUCTURED_VLM_CRITERION_BY_METRIC = {
 }
 STRUCTURED_VLM_DIMENSION_ID_SET = frozenset(STRUCTURED_VLM_DIMENSION_IDS)
 STRUCTURED_VLM_SENSITIVITY_SHARES = (0.10, 0.15, 0.20, 0.25)
+
+
+def _structured_dimension_contract_spec(
+    profile: EvalProfile,
+) -> Mapping[str, Any] | None:
+    candidates = (
+        {
+            "composite_id": STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
+            "mode": "SHARED_BATCH",
+            "oracle_ids": {
+                metric_id: STRUCTURED_DIMENSIONS_VLM_ORACLE_ID
+                for metric_id in STRUCTURED_VLM_DIMENSION_IDS
+            },
+            "version": STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION,
+            "prompts": {
+                metric_id: STRUCTURED_VLM_VISUAL_DIMENSIONS_PROMPT
+                for metric_id in STRUCTURED_VLM_DIMENSION_IDS
+            },
+        },
+        {
+            "composite_id": GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
+            "mode": "ATOMIC_CRITERION_CALLS",
+            "oracle_ids": {
+                metric_id: f"grounded_vlm_{criterion_id}_audit_oracle"
+                for criterion_id, metric_id in STRUCTURED_VLM_VISUAL_DIMENSION_METRICS
+            },
+            "version": GROUNDED_STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION,
+            "prompts": {
+                metric_id: GROUNDED_VLM_CRITERION_PROMPTS[criterion_id]
+                for criterion_id, metric_id in STRUCTURED_VLM_VISUAL_DIMENSION_METRICS
+            },
+        },
+    )
+    selected = [
+        candidate
+        for candidate in candidates
+        if candidate["composite_id"] in profile.enabled_oracle_ids
+    ]
+    if len(selected) > 1:
+        raise ValueError("profile enables more than one structured visual contract")
+    return selected[0] if selected else None
 
 
 def average_ranks(values: Sequence[float]) -> list[float]:
@@ -275,7 +319,25 @@ def _structured_projection_contract(
     profile: EvalProfile,
 ) -> dict[str, Any]:
     failures: list[str] = []
-    expected_prompt = dict(STRUCTURED_VLM_VISUAL_DIMENSIONS_PROMPT.reference())
+    contract = _structured_dimension_contract_spec(profile)
+    if contract is None:
+        return {
+            "oracle_projection_contract_ok": False,
+            "oracle_projection_contract_failures": ["profile:structured_contract_missing"],
+            "request_fingerprint": None,
+            "response_fingerprint": None,
+            "model_ids": [],
+            "prompt_reference": None,
+            "usage_owner_metric_id": None,
+            "criterion_confidences": {},
+            "criterion_observability": {},
+        }
+    prompts = contract["prompts"]
+    oracle_ids = contract["oracle_ids"]
+    if not isinstance(prompts, Mapping) or not isinstance(oracle_ids, Mapping):
+        raise ValueError("structured visual contract mappings are invalid")
+    contract_mode = str(contract["mode"])
+    expected_version = str(contract["version"])
     expected_owner = STRUCTURED_VLM_DIMENSION_IDS[0]
     request_fingerprints: set[str] = set()
     response_fingerprints: set[str] = set()
@@ -297,6 +359,7 @@ def _structured_projection_contract(
         configured_confidence_floor = float(configured_confidence_floor)
     allocated_cost_total = 0.0
     owner_usage_cost: float | None = None
+    atomic_usage_cost_total = 0.0
     for entry in entries:
         metric_id = str(entry.get("metric_id", ""))
         if metric_id not in STRUCTURED_VLM_DIMENSION_ID_SET:
@@ -305,20 +368,38 @@ def _structured_projection_contract(
         if not isinstance(metadata, Mapping):
             failures.append(f"{metric_id}:metadata")
             continue
-        if entry.get("oracle_id") != STRUCTURED_DIMENSIONS_VLM_ORACLE_ID:
+        expected_prompt_spec = prompts.get(metric_id)
+        expected_oracle_id = oracle_ids.get(metric_id)
+        if expected_prompt_spec is None or expected_oracle_id is None:
+            failures.append(f"{metric_id}:contract_spec")
+            continue
+        expected_prompt = dict(expected_prompt_spec.reference())
+        if entry.get("oracle_id") != expected_oracle_id:
             failures.append(f"{metric_id}:oracle_id")
-        if entry.get("version") != STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION:
+        if entry.get("version") != expected_version:
             failures.append(f"{metric_id}:oracle_version")
         if metadata.get("prompt") != expected_prompt:
             failures.append(f"{metric_id}:prompt_reference")
-        if metadata.get("structured_contract_version") != STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION:
+        if metadata.get("structured_contract_version") != expected_version:
             failures.append(f"{metric_id}:structured_contract_version")
-        if metadata.get("output_mode") != "SINGLE_CALL_DIMENSION_PROJECTION":
-            failures.append(f"{metric_id}:output_mode")
-        if metadata.get("batch_request_metric_id") != ("structured_vlm_visual_dimensions_batch"):
-            failures.append(f"{metric_id}:batch_request_metric_id")
-        if metadata.get("dimension_batch_validated") is not True:
-            failures.append(f"{metric_id}:dimension_batch_validated")
+        if contract_mode == "SHARED_BATCH":
+            if metadata.get("output_mode") != "SINGLE_CALL_DIMENSION_PROJECTION":
+                failures.append(f"{metric_id}:output_mode")
+            if metadata.get("batch_request_metric_id") != (
+                "structured_vlm_visual_dimensions_batch"
+            ):
+                failures.append(f"{metric_id}:batch_request_metric_id")
+            if metadata.get("dimension_batch_validated") is not True:
+                failures.append(f"{metric_id}:dimension_batch_validated")
+        else:
+            if metadata.get("call_granularity") != (
+                "ONE_CRITERION_BOUNDED_PAGE_SAMPLE"
+            ):
+                failures.append(f"{metric_id}:call_granularity")
+            if metadata.get("atomic_criterion_validated") is not True:
+                failures.append(f"{metric_id}:atomic_criterion_validated")
+            if metadata.get("visual_page_grounding_validated") is not True:
+                failures.append(f"{metric_id}:visual_page_grounding_validated")
         if metadata.get("criterion_id") != STRUCTURED_VLM_CRITERION_BY_METRIC[metric_id]:
             failures.append(f"{metric_id}:criterion_id")
         if metadata.get("model_global_score_used_for_metric") is not False:
@@ -390,10 +471,15 @@ def _structured_projection_contract(
             if score is not None or metadata.get("criterion_score_used_for_metric") is not False:
                 failures.append(f"{metric_id}:na_projection")
             if observability == "INSUFFICIENT":
+                validation_reason = metadata.get("criterion_validation_reason")
+                expected_reason = (
+                    validation_reason
+                    if isinstance(validation_reason, str) and validation_reason
+                    else "CRITERION_OBSERVABILITY_INSUFFICIENT"
+                )
                 if (
                     criterion_score is not None
-                    or metadata.get("reason_code")
-                    != "CRITERION_OBSERVABILITY_INSUFFICIENT"
+                    or metadata.get("reason_code") != expected_reason
                 ):
                     failures.append(f"{metric_id}:insufficient_projection")
             elif observability in {"FULL", "PARTIAL"}:
@@ -427,60 +513,99 @@ def _structured_projection_contract(
             model_ids.add(model_id)
         else:
             failures.append(f"{metric_id}:model_id")
-        if metadata.get("shared_call_usage_owner_metric_id") != expected_owner:
-            failures.append(f"{metric_id}:usage_owner_metric_id")
-        is_owner = metadata.get("shared_call_usage_owner") is True
-        if is_owner:
-            owners.append(metric_id)
+        result_cost = entry.get("cost")
+        if contract_mode == "SHARED_BATCH":
+            if metadata.get("shared_call_usage_owner_metric_id") != expected_owner:
+                failures.append(f"{metric_id}:usage_owner_metric_id")
+            is_owner = metadata.get("shared_call_usage_owner") is True
+            if is_owner:
+                owners.append(metric_id)
+                usage = metadata.get("usage")
+                if not isinstance(usage, Mapping):
+                    failures.append(f"{metric_id}:owner_usage")
+                else:
+                    usage_cost = usage.get("cost")
+                    if isinstance(usage_cost, bool) or not isinstance(
+                        usage_cost, (int, float)
+                    ):
+                        failures.append(f"{metric_id}:owner_usage_cost")
+                    else:
+                        owner_usage_cost = float(usage_cost)
+            elif "usage" in metadata:
+                failures.append(f"{metric_id}:duplicate_usage")
+            if metadata.get("cost_allocation_method") != "EQUAL_BY_OUTPUT_METRIC":
+                failures.append(f"{metric_id}:cost_allocation_method")
+            fraction = metadata.get("cost_allocation_fraction")
+            if (
+                isinstance(fraction, bool)
+                or not isinstance(fraction, (int, float))
+                or not math.isclose(
+                    float(fraction),
+                    1.0 / len(STRUCTURED_VLM_DIMENSION_IDS),
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                )
+            ):
+                failures.append(f"{metric_id}:cost_allocation_fraction")
+            allocated_cost = metadata.get("allocated_cost")
+            if (
+                isinstance(allocated_cost, bool)
+                or not isinstance(allocated_cost, (int, float))
+                or isinstance(result_cost, bool)
+                or not isinstance(result_cost, (int, float))
+                or not math.isclose(
+                    float(allocated_cost),
+                    float(result_cost),
+                    rel_tol=0.0,
+                    abs_tol=1e-12,
+                )
+            ):
+                failures.append(f"{metric_id}:allocated_cost")
+            else:
+                allocated_cost_total += float(result_cost)
+        else:
             usage = metadata.get("usage")
             if not isinstance(usage, Mapping):
-                failures.append(f"{metric_id}:owner_usage")
+                failures.append(f"{metric_id}:atomic_usage")
             else:
                 usage_cost = usage.get("cost")
-                if isinstance(usage_cost, bool) or not isinstance(usage_cost, (int, float)):
-                    failures.append(f"{metric_id}:owner_usage_cost")
+                if (
+                    isinstance(usage_cost, bool)
+                    or not isinstance(usage_cost, (int, float))
+                    or isinstance(result_cost, bool)
+                    or not isinstance(result_cost, (int, float))
+                    or not math.isclose(
+                        float(usage_cost),
+                        float(result_cost),
+                        rel_tol=0.0,
+                        abs_tol=1e-12,
+                    )
+                ):
+                    failures.append(f"{metric_id}:atomic_usage_cost")
                 else:
-                    owner_usage_cost = float(usage_cost)
-        elif "usage" in metadata:
-            failures.append(f"{metric_id}:duplicate_usage")
-        if metadata.get("cost_allocation_method") != "EQUAL_BY_OUTPUT_METRIC":
-            failures.append(f"{metric_id}:cost_allocation_method")
-        fraction = metadata.get("cost_allocation_fraction")
-        if (
-            isinstance(fraction, bool)
-            or not isinstance(fraction, (int, float))
-            or not math.isclose(
-                float(fraction),
-                1.0 / len(STRUCTURED_VLM_DIMENSION_IDS),
-                rel_tol=0.0,
-                abs_tol=1e-12,
-            )
-        ):
-            failures.append(f"{metric_id}:cost_allocation_fraction")
-        allocated_cost = metadata.get("allocated_cost")
-        result_cost = entry.get("cost")
-        if (
-            isinstance(allocated_cost, bool)
-            or not isinstance(allocated_cost, (int, float))
-            or isinstance(result_cost, bool)
-            or not isinstance(result_cost, (int, float))
-            or not math.isclose(
-                float(allocated_cost),
-                float(result_cost),
-                rel_tol=0.0,
-                abs_tol=1e-12,
-            )
-        ):
-            failures.append(f"{metric_id}:allocated_cost")
-        else:
-            allocated_cost_total += float(result_cost)
+                    atomic_usage_cost_total += float(usage_cost)
         evidence = entry.get("evidence")
-        if not isinstance(evidence, list) or len(evidence) != 1:
+        expected_evidence_count = (
+            1
+            if contract_mode == "SHARED_BATCH"
+            or metric_id == "structured_vlm_cross_slide_consistency"
+            else metadata.get("observation_count")
+        )
+        if (
+            not isinstance(evidence, list)
+            or isinstance(expected_evidence_count, bool)
+            or not isinstance(expected_evidence_count, int)
+            or expected_evidence_count < 1
+            or len(evidence) != expected_evidence_count
+        ):
             failures.append(f"{metric_id}:criterion_evidence")
-    if len(request_fingerprints) != 1:
-        failures.append("shared_call:request_fingerprint")
-    if len(response_fingerprints) != 1:
-        failures.append("shared_call:response_fingerprint")
+    expected_call_count = (
+        1 if contract_mode == "SHARED_BATCH" else len(STRUCTURED_VLM_DIMENSION_IDS)
+    )
+    if len(request_fingerprints) != expected_call_count:
+        failures.append("visual_calls:request_fingerprints")
+    if len(response_fingerprints) != expected_call_count:
+        failures.append("visual_calls:response_fingerprints")
     expected_model = profile.metadata.get("flash_model")
     if (
         not isinstance(expected_model, str)
@@ -491,23 +616,48 @@ def _structured_projection_contract(
         )
     ):
         failures.append("shared_call:model_id")
-    if owners != [expected_owner]:
-        failures.append("shared_call:usage_owner")
-    if owner_usage_cost is None or not math.isclose(
-        allocated_cost_total,
-        owner_usage_cost,
-        rel_tol=0.0,
-        abs_tol=1e-12,
-    ):
-        failures.append("shared_call:cost_total")
+    if contract_mode == "SHARED_BATCH":
+        if owners != [expected_owner]:
+            failures.append("shared_call:usage_owner")
+        if owner_usage_cost is None or not math.isclose(
+            allocated_cost_total,
+            owner_usage_cost,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        ):
+            failures.append("shared_call:cost_total")
     return {
         "oracle_projection_contract_ok": not failures,
         "oracle_projection_contract_failures": sorted(set(failures)),
-        "request_fingerprint": next(iter(request_fingerprints), None),
-        "response_fingerprint": next(iter(response_fingerprints), None),
+        "request_fingerprint": (
+            next(iter(request_fingerprints), None)
+            if contract_mode == "SHARED_BATCH"
+            else None
+        ),
+        "response_fingerprint": (
+            next(iter(response_fingerprints), None)
+            if contract_mode == "SHARED_BATCH"
+            else None
+        ),
+        "request_fingerprints": sorted(request_fingerprints),
+        "response_fingerprints": sorted(response_fingerprints),
         "model_ids": sorted(model_ids),
-        "prompt_reference": expected_prompt,
+        "prompt_reference": (
+            dict(STRUCTURED_VLM_VISUAL_DIMENSIONS_PROMPT.reference())
+            if contract_mode == "SHARED_BATCH"
+            else None
+        ),
+        "prompt_references": {
+            metric_id: dict(prompt_spec.reference())
+            for metric_id, prompt_spec in prompts.items()
+        },
+        "call_mode": contract_mode,
         "usage_owner_metric_id": owners[0] if len(owners) == 1 else None,
+        "atomic_usage_cost_total": (
+            atomic_usage_cost_total
+            if contract_mode == "ATOMIC_CRITERION_CALLS"
+            else None
+        ),
         "criterion_confidences": criterion_confidences,
         "criterion_observability": criterion_observability,
     }
@@ -519,6 +669,9 @@ def _structured_manifest_contract(
     expected_case_id: str,
 ) -> tuple[bool, list[str]]:
     failures: list[str] = []
+    contract = _structured_dimension_contract_spec(profile)
+    if contract is None:
+        return False, ["profile:structured_contract_missing"]
     manifest = report.get("manifest")
     if not isinstance(manifest, Mapping):
         return False, ["manifest:missing"]
@@ -531,15 +684,21 @@ def _structured_manifest_contract(
     oracle_versions = manifest.get("oracle_versions")
     if (
         not isinstance(oracle_versions, Mapping)
-        or oracle_versions.get(STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID)
-        != STRUCTURED_VLM_DIMENSIONS_ORACLE_VERSION
+        or oracle_versions.get(str(contract["composite_id"]))
+        != str(contract["version"])
     ):
         failures.append("manifest:oracle_version")
-    prompt = STRUCTURED_VLM_VISUAL_DIMENSIONS_PROMPT.reference()
-    expected_prompt = f"{prompt['prompt_id']}@{prompt['version']}#{prompt['sha256']}"
+    prompts = contract["prompts"]
+    if not isinstance(prompts, Mapping):
+        return False, ["profile:structured_prompt_contract_invalid"]
     prompt_versions = manifest.get("prompt_versions")
     if not isinstance(prompt_versions, Mapping) or any(
-        prompt_versions.get(metric_id) != expected_prompt for metric_id in STRUCTURED_VLM_DIMENSION_IDS
+        prompt_versions.get(metric_id)
+        != (
+            f"{prompts[metric_id].prompt_id}@{prompts[metric_id].version}"
+            f"#{prompts[metric_id].sha256}"
+        )
+        for metric_id in STRUCTURED_VLM_DIMENSION_IDS
     ):
         failures.append("manifest:prompt_versions")
     expected_model = profile.metadata.get("flash_model")
@@ -668,7 +827,7 @@ def structured_visual_replay_analysis(
     *,
     expected_cases: Sequence[tuple[str, str, int]],
 ) -> dict[str, Any] | None:
-    if STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID not in profile.enabled_oracle_ids:
+    if _structured_dimension_contract_spec(profile) is None:
         return None
     excluded = [
         {
@@ -881,12 +1040,10 @@ def evaluate(
         profile_name = "finished_deck_v3.json" if qwen_v3 else "finished_deck_v2.json"
         profile_path = ROOT / "configs" / "profiles" / profile_name
     profile = load_profile(profile_path)
-    structured_dimensions_enabled = (
-        STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID in profile.enabled_oracle_ids
-    )
+    structured_dimensions_enabled = _structured_dimension_contract_spec(profile) is not None
     if structured_dimensions_enabled and not qwen_v3:
         raise ValueError(
-            "structured_dimensions.model_audits requires --qwen-v3 so the "
+            "the structured visual model-audit profile requires --qwen-v3 so the "
             "configured model provider and pinned rendered slides are used"
         )
     reference_dir = reference_report_dir or (dataset_root / "report")

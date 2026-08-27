@@ -31,6 +31,10 @@ from .baseline import (
     VisualHierarchyOracle,
 )
 from .model_audits import (
+    GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
+    GROUNDED_VLM_CRITERION_PROMPTS,
+    GROUNDED_VLM_DEFECT_CODES,
+    GROUNDED_VLM_POSITIVE_SIGNALS,
     STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
     STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
     STRUCTURED_VLM_VISUAL_CRITERIA,
@@ -41,6 +45,8 @@ from .model_audits import (
     AdvancedLlmScenarioReviewOracle,
     AdvancedModelReviewOracle,
     AdvancedVlmVisualReviewOracle,
+    GroundedStructuredDimensionsModelAuditOracle,
+    GroundedStructuredVlmVisualDimensionsAuditOracle,
     HighCostModelAuditOracle,
     LlmContentQualityAuditOracle,
     LlmScenarioComplianceAuditOracle,
@@ -114,6 +120,12 @@ def build_default_oracles(
             vlm_provider=vlm_provider,
             source_access_policy=model_source_access_policy,
         ),
+        GroundedStructuredDimensionsModelAuditOracle(
+            adapter,
+            llm_provider=llm_provider,
+            vlm_provider=vlm_provider,
+            source_access_policy=model_source_access_policy,
+        ),
     )
 
 
@@ -161,6 +173,12 @@ __all__ = [
     "EditabilityOracle",
     "FactQualityOracle",
     "FileDeliverabilityOracle",
+    "GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID",
+    "GROUNDED_VLM_CRITERION_PROMPTS",
+    "GROUNDED_VLM_DEFECT_CODES",
+    "GROUNDED_VLM_POSITIVE_SIGNALS",
+    "GroundedStructuredDimensionsModelAuditOracle",
+    "GroundedStructuredVlmVisualDimensionsAuditOracle",
     "HighCostModelAuditOracle",
     "InstructionCoverageOracle",
     "InternalDataConsistencyOracle",

@@ -304,6 +304,7 @@ class ModelAuditEvidence:
         value: object,
         *,
         slide_count: int,
+        allowed_page_numbers: frozenset[int] | None = None,
         known_objects: Mapping[int, frozenset[str]],
         known_source_uris: frozenset[str],
     ) -> "ModelAuditEvidence":
@@ -321,6 +322,18 @@ class ModelAuditEvidence:
             if page_number > slide_count:
                 raise ModelAuditContractError(
                     f"evidence.page_number {page_number} exceeds slide count {slide_count}"
+                )
+            if (
+                allowed_page_numbers is not None
+                and page_number not in allowed_page_numbers
+            ):
+                allowed = ", ".join(
+                    str(item) for item in sorted(allowed_page_numbers)
+                )
+                raise ModelAuditContractError(
+                    "evidence.page_number "
+                    f"{page_number} was not supplied as visual evidence; "
+                    f"allowed rendered pages: [{allowed}]"
                 )
         object_id = _optional_text(payload.get("object_id"), "evidence.object_id")
         source_uri = _optional_text(payload.get("source_uri"), "evidence.source_uri")
@@ -423,10 +436,16 @@ class ModelAuditResponse:
             )
             if str(item)
         )
+        allowed_page_numbers = (
+            frozenset(image.page_number for image in request.images)
+            if request.modality == ModelAuditModality.VLM
+            else None
+        )
         evidence_items = tuple(
             ModelAuditEvidence.from_mapping(
                 item,
                 slide_count=len(request.slides),
+                allowed_page_numbers=allowed_page_numbers,
                 known_objects=known_objects,
                 known_source_uris=known_source_uris,
             )

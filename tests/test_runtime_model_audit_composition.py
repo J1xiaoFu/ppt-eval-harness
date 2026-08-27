@@ -8,6 +8,7 @@ from ppt_eval.adapters import ModelAuditRequest, RenderResult
 from ppt_eval.config import load_profile
 from ppt_eval.domain import EvalCase, EvalProfile, SceneType
 from ppt_eval.oracles.model_audits import (
+    GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
     MODEL_AUDIT_COMPOSITE_ID,
     STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
     STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
@@ -133,6 +134,23 @@ def test_structured_dimensions_profile_enables_automatic_render_inputs(
         profile,
         {"render_result": object()},
     ) is False
+
+
+def test_grounded_visual_profile_enables_automatic_render_inputs(tmp_path) -> None:
+    runtime = LocalEvaluationRuntime(
+        tmp_path / "var",
+        vlm_provider=RecordingProvider(),
+        slide_renderer=RecordingRenderer(),
+    )
+    profile = load_profile(
+        "configs/profiles/finished_deck_v7_grounded_visual_candidate.json"
+    )
+
+    assert (
+        GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID
+        in profile.enabled_oracle_ids
+    )
+    assert runtime._should_render_model_inputs(profile, {}) is True
 
 
 def test_environment_factory_wires_flash_baseline_and_qwen38_advanced_review(

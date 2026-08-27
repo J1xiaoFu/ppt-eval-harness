@@ -48,6 +48,14 @@ REVIEW。六个结果共用一个 request/response fingerprint；cost 等分、t
 metric 记录，不伪造六次调用。v6 仍为 `STRUCTURED_DIMENSIONS_FLASH_ONLY`；
 `qwen3.8-flash` 只是未来同构 Advanced reviewer 的预留模型，尚未接入本 Profile。
 
+v7 实验候选使用 `grounded_structured_dimensions.model_audits`，Oracle 版本 `2.0.0`。
+它保留六个 metric ID，但不再共享响应：五个局部构念各自使用最多 4 页的单构念 Prompt，
+cross-slide 使用最多 8 页。局部调用要求每个实际上传页一条 observation，由 Harness 求
+页级均值；每个结果拥有独立 request/response fingerprint、usage 和 cost。任一维 ERROR/N/A
+只影响该维，不重做已成功调用。VLM 页码证据只能引用 `request.images`，每张图在消息中由
+`RENDERED_SLIDE_PAGE=N` 直接绑定。详见
+[grounded_visual_oracle_method.md](grounded_visual_oracle_method.md)。
+
 仓库另有一个非默认的 `experimental_text_generation_model_scoring.json`，仅用于评分链路和金标校准实验。它明确标记 `EXPERIMENTAL / UNVALIDATED / production_approved=false`，其 3%/4% 权重不是生产标准。
 
 默认映射明确指向 `*_v3.json`（当前文件内版本 `3.1`），脱离仓库时的

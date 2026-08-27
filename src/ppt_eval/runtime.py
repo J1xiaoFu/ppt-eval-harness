@@ -42,6 +42,7 @@ from ppt_eval.oracles import (
     build_default_registry,
 )
 from ppt_eval.oracles.model_audits import (
+    GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
     MODEL_AUDIT_COMPOSITE_ID,
     STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
     STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
@@ -250,6 +251,7 @@ class LocalEvaluationRuntime:
             return False
         if not {
             MODEL_AUDIT_COMPOSITE_ID,
+            GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
             STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
             STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
         }.intersection(profile.enabled_oracle_ids):

@@ -107,32 +107,34 @@ class QwenOpenAICompatibleProvider:
         try:
             _validate_outbound_evidence(request, protected_secret=self._api_key)
             body = _request_body(request, model=self._model)
-            encoded_body = json.dumps(
-                body,
-                ensure_ascii=False,
-                separators=(",", ":"),
-                allow_nan=False,
-            ).encode("utf-8")
         except QwenModelAuditProviderError:
             raise
         except (TypeError, ValueError) as exc:
             raise QwenModelAuditProviderError(
                 "model audit request could not be serialized safely"
             ) from exc
-        http_request = urllib.request.Request(
-            self._endpoint,
-            data=encoded_body,
-            method="POST",
-            headers={
-                "Accept": "application/json",
-                "Authorization": f"Bearer {self._api_key}",
-                "Content-Type": "application/json; charset=utf-8",
-            },
-        )
         accumulated_usage = {"input_tokens": 0, "output_tokens": 0, "cost": 0.0}
         retry_reasons: list[str] = []
         attempts_with_usage = 0
         for attempt in range(1, _MAX_STRUCTURED_RESPONSE_ATTEMPTS + 1):
+            attempt_body = (
+                _with_structured_response_repair_hint(
+                    body,
+                    error_category=retry_reasons[-1],
+                )
+                if retry_reasons
+                else body
+            )
+            try:
+                http_request = _http_request(
+                    self._endpoint,
+                    api_key=self._api_key,
+                    body=attempt_body,
+                )
+            except (TypeError, ValueError) as exc:
+                raise QwenModelAuditProviderError(
+                    "model audit request could not be serialized safely"
+                ) from exc
             try:
                 response_payload = _send(
                     http_request,
@@ -241,6 +243,16 @@ def _request_body(request: ModelAuditRequest, *, model: str) -> Mapping[str, Any
         for image in request.images:
             content_items.append(
                 {
+                    "type": "text",
+                    "text": (
+                        f"RENDERED_SLIDE_PAGE={image.page_number}. "
+                        "The image immediately following this label is the rendered "
+                        f"pixel evidence for slide {image.page_number} only."
+                    ),
+                }
+            )
+            content_items.append(
+                {
                     "type": "image_url",
                     "image_url": {"url": _local_image_data_uri(image)},
                 }
@@ -273,6 +285,60 @@ def _request_body(request: ModelAuditRequest, *, model: str) -> Mapping[str, Any
         # The OpenAI SDK's extra_body={"enable_thinking": True} becomes this
         # top-level wire field.  We issue raw HTTP, so no SDK wrapper is used.
         "enable_thinking": True,
+    }
+
+
+def _http_request(
+    endpoint: str,
+    *,
+    api_key: str,
+    body: Mapping[str, Any],
+) -> urllib.request.Request:
+    encoded_body = json.dumps(
+        body,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return urllib.request.Request(
+        endpoint,
+        data=encoded_body,
+        method="POST",
+        headers={
+            "Accept": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json; charset=utf-8",
+        },
+    )
+
+
+def _with_structured_response_repair_hint(
+    body: Mapping[str, Any],
+    *,
+    error_category: str,
+) -> Mapping[str, Any]:
+    """Retry with a bounded machine-generated hint, never the rejected output."""
+
+    raw_messages = body.get("messages")
+    if isinstance(raw_messages, (str, bytes)) or not isinstance(
+        raw_messages, Sequence
+    ):
+        raise ValueError("request body messages must be a sequence")
+    return {
+        **dict(body),
+        "messages": [
+            *(dict(item) for item in raw_messages if isinstance(item, Mapping)),
+            {
+                "role": "user",
+                "content": (
+                    "The previous completion was rejected by the response validator. "
+                    f"Machine-readable error category: {error_category}. "
+                    "Repair only the JSON structure and grounding fields requested by "
+                    "the trusted policy. Return one JSON object with no markdown or "
+                    "explanation."
+                ),
+            },
+        ],
     }
 
 
@@ -654,7 +720,11 @@ def _sanitize_optional_qwen_localization(
         )
         for slide in request.slides
     }
-    known_pages = frozenset(known_objects)
+    known_pages = (
+        frozenset(image.page_number for image in request.images)
+        if request.modality == ModelAuditModality.VLM
+        else frozenset(known_objects)
+    )
     known_source_uris = frozenset(
         str(item)
         for item in (

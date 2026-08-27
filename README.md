@@ -26,6 +26,11 @@ New maintainers should start with the Chinese [onboarding and handover guide](do
   is retained only as metadata. The v6 candidate exposes the six criteria as independent metrics,
   hard-caps VLM at 20% of visual, and keeps scalar Advanced routing disabled until a dimension-
   isomorphic reviewer is released.
+- The v7 grounded visual candidate replaces the unstable six-dimensions-in-one-call judge with six
+  independent criterion calls over bounded, explicitly labelled page samples. It adds SlideAudit-
+  derived defect codes, deterministic score caps, positive aesthetic anchors, Harness-owned
+  observability, and a 5% VLM-internal render-integrity budget. It remains experimental and does
+  not replace v6 or the default v3 production path.
 - Local CLI/runtime, optional FastAPI/Celery/PostgreSQL/S3 adapters, review UI source, Docker Compose, run export, and hash-chained audit logs.
 - Feedback/edit-diff ingestion, active-sampling priorities, and parameter proposals that require frozen/challenge/shadow validation plus two human approvals; v1 intentionally exposes no automatic production apply method.
 - Three-part research/development/evaluation audit pack and a generated read-only HTML report.

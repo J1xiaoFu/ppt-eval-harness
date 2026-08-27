@@ -374,7 +374,10 @@ def test_dimension_oracle_retries_criterion_contract_once_and_sums_usage(
     results = _evaluate_dimensions(tmp_path, provider)
 
     assert len(provider.requests) == 2
-    assert provider.requests[0].fingerprint == provider.requests[1].fingerprint
+    assert provider.requests[0].fingerprint != provider.requests[1].fingerprint
+    assert provider.requests[1].context["response_repair"]["error_category"] == (
+        "MISSING_CRITERION_FIELDS"
+    )
     assert all(result.metric_status == MetricStatus.SCORED for result in results)
     assert sum(result.cost for result in results) == pytest.approx(0.006)
     assert sum(

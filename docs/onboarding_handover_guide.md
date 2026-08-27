@@ -340,7 +340,7 @@ PASS 和质量 FAIL 进入 `FINALIZE`；REVIEW 和 Harness ERROR 进入 `REVIEW`
 
 ## 9. Oracle 框架：32 个确定性 Leaf + 分层模型审计
 
-默认 Registry 顶层注册六个 Composite：
+默认 Registry 顶层注册八个 Composite：
 
 | Composite ID | 原子数 | 适用场景 |
 |---|---:|---|
@@ -350,6 +350,8 @@ PASS 和质量 FAIL 进入 `FINALIZE`；REVIEW 和 Harness ERROR 进入 `REVIEW`
 | `scenario.asset_compliance` | 7 | 多模态 |
 | `high_cost.model_audits` | 3 | v3.1 四场景默认 Flash；ID 为兼容 v2 保留，无 Provider 时 N/A |
 | `structured.model_audits` | 3 | v5 实验替代组；自适应内容 + 六维视觉 + 场景合规 |
+| `structured_dimensions.model_audits` | 8 | v6 历史实验；一次 VLM 响应投影六维，加内容与场景审计 |
+| `grounded_structured_dimensions.model_audits` | 8 | v7 实验；六个独立原子视觉调用，加内容与场景审计 |
 
 Supervisor 还可条件执行 `advanced.model_review`，其 3 个 Advanced 结果都是
 `DIAGNOSTIC`，避免对 Flash 分数二次计权。

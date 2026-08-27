@@ -412,11 +412,13 @@ def test_qwen_adapter_retries_invalid_json_and_accumulates_usage() -> None:
     }
     responses = iter((invalid, _vendor_response()))
     calls = 0
+    request_bodies: list[dict[str, Any]] = []
 
     def fake_urlopen(http_request, *, timeout):
-        del http_request, timeout
+        del timeout
         nonlocal calls
         calls += 1
+        request_bodies.append(json.loads(http_request.data.decode("utf-8")))
         return _FakeHttpResponse(next(responses))
 
     request = _request()
@@ -439,6 +441,12 @@ def test_qwen_adapter_retries_invalid_json_and_accumulates_usage() -> None:
     ]
     assert response.evidence[0].payload["adapter_attempts_with_usage"] == 2
     assert response.evidence[0].payload["adapter_usage_complete"] is True
+    assert len(request_bodies[0]["messages"]) == 2
+    assert len(request_bodies[1]["messages"]) == 3
+    assert "Machine-readable error category: JSON_INVALID" in (
+        request_bodies[1]["messages"][2]["content"]
+    )
+    assert "not-json" not in json.dumps(request_bodies[1], ensure_ascii=False)
 
 
 def test_qwen_adapter_retries_ungrounded_structured_evidence() -> None:
@@ -657,7 +665,14 @@ def test_vlm_images_are_integrity_checked_and_sent_as_data_uris(
     body = captured["body"]
     content = body["messages"][1]["content"]
     assert isinstance(content, list)
-    data_uri = content[1]["image_url"]["url"]
+    assert content[1] == {
+        "type": "text",
+        "text": (
+            "RENDERED_SLIDE_PAGE=1. The image immediately following this label is "
+            "the rendered pixel evidence for slide 1 only."
+        ),
+    }
+    data_uri = content[2]["image_url"]["url"]
     assert data_uri.startswith("data:image/png;base64,")
     assert str(image_path) not in json.dumps(body, ensure_ascii=False)
     audit_text = content[0]["text"]
