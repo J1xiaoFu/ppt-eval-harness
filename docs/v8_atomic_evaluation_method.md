@@ -13,7 +13,8 @@ PPTX / rendered pages / source / request
 → visual / layout / content / full-deck eligibility
 ```
 
-旧 v1–v7 Profile 保留显式回放能力，四场景默认文件映射切到 v8。
+main 只发布 v8.3；v1–v7 的 Profile、Oracle 入口和同期协议由
+`archive/v8.3-pre-release` 提供不可变回放。
 
 ## 原子作用域和完整审计
 
@@ -51,7 +52,7 @@ Profile 不再按 deterministic/VLM 分组，而按质量属性计分。确定�
 - visual system/sequence：10%
 - authorship specificity v2：12%
 
-历史六个视觉 criterion 仍保持不变；v8.2 另加一个只服务 authorship 构念的跨页原子
+六个基础视觉 criterion 保持互斥；另加一个只服务 authorship 构念的跨页原子
 criterion。七个 v8 criterion 都是独立 DAG 节点，以 `qwen3.8-flash` 为主线；结果未解决、
 单维置信不足或同构念规则冲突时，只把该 criterion 升级到独立 BigModel Provider 的
 `glm-5.3-flash`。Prompt、权重和 Reducer 不因 Provider 切换而改变。composition 等高置信
@@ -66,6 +67,13 @@ v8.3 新增两个只在所有页面均被判为 raster-only 时运行的 observa
 它们输出页级 `AtomicObservation`、短可见文字证据、独立路由和 usage；Reducer 仅在原
 deterministic owner 为 N/A 时采用该结果，不与规则平均，也不形成第二个公式入口。可编辑
 deck 会返回不计分 N/A 且不发起这两次模型调用。
+
+视觉页选择策略 `2.0.0` 进一步区分“普通探索预算”和“规则兜底页”。普通页级 criterion
+仍以 4 页为风险/角色/探索预算，跨页 criterion 仍以 8 页为预算；但 composition、
+typography、color、imagery 会把对应规则的所有 `CRITICAL` 页强制加入请求，且不占用普通
+预算。这样规则不能独自作出可争议视觉硬门结论，也不会再因候选页被抽样上限截掉而长期
+停留在 `GATE_AUDIT_UNRESOLVED`。强制页、overflow、不可用页与选择原因全部进入模型结果
+metadata，供 Report 和 Manifest lineage 消费。
 
 `language_consistency` 是中英内部混用/部分本地化的唯一 owner；明确请求语言不符合仍由
 scenario instruction 负责。专业缩写和声明的系统性双语不扣分。
@@ -91,6 +99,15 @@ contestable gate 为 UNRESOLVED 时相关 run 进入 REVIEW，而不是由规则
 不能把一个已知低分从 REJECT 提升为 REVIEW。
 
 训练准入与用户侧 PASS/REVIEW/FAIL 是不同合同，不能互相替代。
+
+## Attention-first 人审报告
+
+静态基准报告为每份 PASS、REVIEW、FAIL 和 DEGRADED 样本保留独立人审入口，并将系统已有
+事实投影为 P0–P3 注意力队列。默认优先展示未解决指标、硬门与 CRITICAL 规则证据、
+规则/VLM 冲突、Provider 错误、低置信结果、训练准入和处置原因；页级事项直接绑定缩略图
+与幻灯片查看器。全部幻灯片、Matrix、Reducer lineage、模型路由和展示 Evidence 默认折叠，
+EvaluationReport、完整 observation artifact 与原始 PPTX 始终可访问。注意力摘要不生成新
+视觉判断，也不能替代 content-addressed 全量审计数据。
 
 ## 已知边界
 

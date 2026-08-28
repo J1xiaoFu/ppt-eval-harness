@@ -1,7 +1,7 @@
 """Versioned, dependency-free contracts for PPT evaluation.
 
 Dataclasses are used instead of framework models so the domain can be used by
-the CLI, workers, tests and future service adapters without importing their
+the CLI, API, tests and future service adapters without importing their
 SDKs.  Persistence adapters should serialize enum values, not enum names.
 """
 
@@ -207,88 +207,17 @@ class EvalCase:
             object.__setattr__(self, "scene", SceneType(self.scene))
 
 
-DEFAULT_BASE_WEIGHTS: Mapping[str, float] = {
-    "content_clarity": 0.14,
-    "narrative": 0.12,
-    "visual_hierarchy": 0.12,
-    "layout": 0.12,
-    "typography": 0.10,
-    "style_consistency": 0.10,
-    "multimedia_quality": 0.08,
-    "editability": 0.08,
-    "compatibility": 0.08,
-    "accessibility": 0.06,
-}
-
-DEFAULT_SCENE_WEIGHTS: Mapping[SceneType, Mapping[str, float]] = {
-    SceneType.TEXT_TO_PPT: {
-        "instruction_coverage": 0.45,
-        "audience_fit": 0.25,
-        "fact_quality": 0.30,
-    },
-    SceneType.PROJECT_SUMMARY: {
-        "source_faithfulness": 0.30,
-        "key_point_recall": 0.25,
-        "numeric_accuracy": 0.20,
-        "compression_quality": 0.15,
-        "traceability": 0.10,
-    },
-    SceneType.MULTIMODAL: {
-        "asset_compliance": 0.30,
-        "asset_presentation": 0.25,
-        "crop_clarity": 0.15,
-        "chart_data_accuracy": 0.20,
-        "media_availability": 0.10,
-    },
-    SceneType.READY_MADE: {},
-}
-
 DEFAULT_BASE_MULTIPLIERS = (
     "file_deliverability",
     "critical_content_visibility",
     "internal_data_consistency",
 )
 
-DEFAULT_SCENE_MULTIPLIERS: Mapping[SceneType, tuple[str, ...]] = {
-    SceneType.TEXT_TO_PPT: ("critical_instruction_compliance",),
-    SceneType.PROJECT_SUMMARY: ("critical_source_consistency",),
-    SceneType.MULTIMODAL: (
-        "required_asset_compliance",
-        "critical_chart_data_accuracy",
-    ),
-    SceneType.READY_MADE: (),
-}
-
 DEFAULT_LAMBDA: Mapping[SceneType, float] = {
     SceneType.TEXT_TO_PPT: 0.55,
     SceneType.PROJECT_SUMMARY: 0.40,
     SceneType.MULTIMODAL: 0.45,
     SceneType.READY_MADE: 1.0,
-}
-
-# Model-assisted shadow execution is introduced only by v2 defaults.  Keeping
-# the v1 weights and routing unchanged is important for historical replay.
-V2_OPTIONAL_MODEL_METRIC_IDS = (
-    "llm_content_quality_audit",
-    "vlm_visual_quality_audit",
-    "llm_scenario_compliance_audit",
-)
-V2_MODEL_COMPOSITE_ORACLE_ID = "high_cost.model_audits"
-
-V3_FLASH_BASE_WEIGHTS: Mapping[str, float] = {
-    "template_residue": 0.08,
-    "llm_content_quality_audit": 0.08,
-    "vlm_visual_quality_audit": 0.12,
-}
-V3_FLASH_SCENE_WEIGHTS: Mapping[str, float] = {
-    "llm_scenario_compliance_audit": 0.10,
-}
-V3_METRIC_REVIEW_THRESHOLDS: Mapping[str, float] = {
-    "template_residue": 0.85,
-    "layout": 0.65,
-    "typography": 0.70,
-    "llm_content_quality_audit": 0.70,
-    "vlm_visual_quality_audit": 0.70,
 }
 
 FLAT_WEIGHTED_MEAN = "FLAT_WEIGHTED_MEAN"
@@ -300,9 +229,7 @@ class EvalProfile:
     profile_id: str
     version: str
     scene: SceneType
-    base_weights: Mapping[str, float] = field(
-        default_factory=lambda: dict(DEFAULT_BASE_WEIGHTS)
-    )
+    base_weights: Mapping[str, float] = field(default_factory=dict)
     scene_weights: Mapping[str, float] = field(default_factory=dict)
     base_multiplier_metric_ids: tuple[str, ...] = DEFAULT_BASE_MULTIPLIERS
     scene_multiplier_metric_ids: tuple[str, ...] = ()
@@ -485,102 +412,6 @@ class EvalProfile:
                         f"construct {construct_id!r} must contain a required metric"
                     )
 
-    @classmethod
-    def default(cls, scene: SceneType, version: str = "3.1") -> "EvalProfile":
-        scene = SceneType(scene)
-        try:
-            major_version = int(version.split(".", 1)[0])
-        except ValueError:
-            major_version = 1
-        base_weights = dict(DEFAULT_BASE_WEIGHTS)
-        scene_weights = dict(DEFAULT_SCENE_WEIGHTS[scene])
-        enabled_oracle_ids = {
-            SceneType.TEXT_TO_PPT: ("scenario.instruction_alignment",),
-            SceneType.PROJECT_SUMMARY: ("scenario.source_faithfulness",),
-            SceneType.MULTIMODAL: ("scenario.asset_compliance",),
-            SceneType.READY_MADE: (),
-        }[scene]
-        required_metric_ids: tuple[str, ...] | None = None
-        metric_review_thresholds: Mapping[str, float] = {}
-        metadata: Mapping[str, Any] = {}
-        if major_version >= 2:
-            enabled_oracle_ids = (
-                *enabled_oracle_ids,
-                V2_MODEL_COMPOSITE_ORACLE_ID,
-            )
-            configured = tuple(
-                dict.fromkeys(
-                    (*base_weights, *scene_weights)
-                    + DEFAULT_BASE_MULTIPLIERS
-                    + DEFAULT_SCENE_MULTIPLIERS[scene]
-                )
-            )
-            required_metric_ids = tuple(
-                metric_id
-                for metric_id in configured
-                if metric_id not in V2_OPTIONAL_MODEL_METRIC_IDS
-                and not (
-                    scene == SceneType.READY_MADE
-                    and metric_id == "multimedia_quality"
-                )
-            )
-        if major_version >= 3:
-            base_weights.update(V3_FLASH_BASE_WEIGHTS)
-            if scene != SceneType.READY_MADE:
-                scene_weights.update(V3_FLASH_SCENE_WEIGHTS)
-            configured = tuple(
-                dict.fromkeys(
-                    (*base_weights, *scene_weights)
-                    + DEFAULT_BASE_MULTIPLIERS
-                    + DEFAULT_SCENE_MULTIPLIERS[scene]
-                )
-            )
-            required_metric_ids = tuple(
-                metric_id
-                for metric_id in configured
-                if not (
-                    scene == SceneType.READY_MADE
-                    and metric_id == "multimedia_quality"
-                )
-            )
-            metric_review_thresholds = {
-                **V3_METRIC_REVIEW_THRESHOLDS,
-                **(
-                    {"llm_scenario_compliance_audit": 0.70}
-                    if scene != SceneType.READY_MADE
-                    else {}
-                ),
-            }
-            metadata = {
-                "lifecycle": "PRE_RESEARCH",
-                "model_audit_routing": (
-                    "FLASH_PLUS_HUMAN"
-                    if version == "3.0"
-                    else "FLASH_ADVANCED_HUMAN"
-                ),
-                "flash_model": "qwen3.7-flash",
-                **(
-                    {"plus_model": "qwen3.7-plus"}
-                    if version == "3.0"
-                    else {"advanced_model": "qwen3.8-flash"}
-                ),
-            }
-        return cls(
-            profile_id=f"default-{scene.value}",
-            version=version,
-            scene=scene,
-            base_weights=base_weights,
-            scene_weights=scene_weights,
-            base_multiplier_metric_ids=DEFAULT_BASE_MULTIPLIERS,
-            scene_multiplier_metric_ids=DEFAULT_SCENE_MULTIPLIERS[scene],
-            required_metric_ids=required_metric_ids,
-            lambda_base=DEFAULT_LAMBDA[scene],
-            enabled_oracle_ids=enabled_oracle_ids,
-            metric_review_thresholds=metric_review_thresholds,
-            metadata=metadata,
-        )
-
-
 @dataclass(frozen=True, slots=True)
 class OracleResult:
     oracle_id: str
@@ -731,18 +562,6 @@ class EvalReport:
     review_reasons: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
     training_eligibility: Mapping[str, Any] = field(default_factory=dict)
-    created_at: str = field(default_factory=utc_now_iso)
-    schema_version: str = SCHEMA_VERSION
-
-
-@dataclass(frozen=True, slots=True)
-class ReviewCase:
-    review_id: str
-    run_id: str
-    reason_codes: tuple[str, ...]
-    status: str = "OPEN"
-    assignee: str | None = None
-    resolution: Mapping[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=utc_now_iso)
     schema_version: str = SCHEMA_VERSION
 

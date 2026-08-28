@@ -2,67 +2,29 @@ services:
   api:
     build: .
     command: uvicorn ppt_eval.api:app --host 0.0.0.0 --port 8000
-    environment: &app-env
-      PPT_EVAL_BROKER_URL: redis://redis:6379/0
-      PPT_EVAL_RESULT_BACKEND: redis://redis:6379/1
-      PPT_EVAL_DATABASE_URL: postgresql://ppt_eval:ppt_eval@postgres:5432/ppt_eval
-      PPT_EVAL_S3_ENDPOINT: http://minio:9000
-      PPT_EVAL_S3_BUCKET: ppt-eval
-      PPT_EVAL_S3_ACCESS_KEY: ppt-eval
-      PPT_EVAL_S3_SECRET_KEY: change-me
+    environment:
+      PPT_EVAL_DATA_DIR: /var/lib/ppt-eval
       # Passed at container start, never copied into the image build context.
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      PPT_EVAL_QWEN_AUDIT_ENABLED: ${PPT_EVAL_QWEN_AUDIT_ENABLED:-}
       PPT_EVAL_QWEN_FLASH_MODEL: ${PPT_EVAL_QWEN_FLASH_MODEL:-qwen3.8-flash}
+      PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS: ${PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS:-120}
       ZAI_API_KEY: ${ZAI_API_KEY:-}
       PPT_EVAL_ZHIPU_AUDIT_ENABLED: ${PPT_EVAL_ZHIPU_AUDIT_ENABLED:-}
       PPT_EVAL_ZHIPU_BASE_URL: ${PPT_EVAL_ZHIPU_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
       PPT_EVAL_ZHIPU_MODEL: ${PPT_EVAL_ZHIPU_MODEL:-glm-5.3-flash}
       PPT_EVAL_ZHIPU_HTTP_TIMEOUT_SECONDS: ${PPT_EVAL_ZHIPU_HTTP_TIMEOUT_SECONDS:-300}
-      # Historical Qwen-only compatibility inputs.
-      PPT_EVAL_QWEN_ADVANCED_MODEL: ${PPT_EVAL_QWEN_ADVANCED_MODEL:-}
-      PPT_EVAL_QWEN_PLUS_MODEL: ${PPT_EVAL_QWEN_PLUS_MODEL:-}
-      PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS: ${PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS:-120}
-      PPT_EVAL_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS: ${PPT_EVAL_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS:-}
-      PPT_EVAL_QWEN_PLUS_HTTP_TIMEOUT_SECONDS: ${PPT_EVAL_QWEN_PLUS_HTTP_TIMEOUT_SECONDS:-}
-      PPT_EVAL_MODEL_SOURCE_ROOTS: ${PPT_EVAL_MODEL_SOURCE_ROOTS:-}
+      PPT_EVAL_REVIEW_RENDERING_ENABLED: ${PPT_EVAL_REVIEW_RENDERING_ENABLED:-true}
     volumes:
       - ./var:/var/lib/ppt-eval
     ports:
       - "127.0.0.1:8000:8000"
-    depends_on: [redis, postgres, minio]
-
-  worker:
-    build: .
-    command: celery -A ppt_eval.worker:celery_app worker --loglevel=INFO --concurrency=2
-    environment: *app-env
-    volumes:
-      - ./var:/var/lib/ppt-eval
-    depends_on: [redis, postgres, minio]
-
-  redis:
-    image: redis:7-alpine
-    command: redis-server --appendonly yes
-    volumes: ["redis-data:/data"]
-
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: ppt_eval
-      POSTGRES_USER: ppt_eval
-      POSTGRES_PASSWORD: ppt_eval
-    volumes: ["postgres-data:/var/lib/postgresql/data"]
-
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address :9001
-    environment:
-      MINIO_ROOT_USER: ppt-eval
-      MINIO_ROOT_PASSWORD: change-me
-    volumes: ["minio-data:/data"]
-    ports:
-      - "127.0.0.1:9001:9001"
-
-volumes:
-  redis-data:
-  postgres-data:
-  minio-data:
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).read()"
+      interval: 15s
+      timeout: 5s
+      retries: 5

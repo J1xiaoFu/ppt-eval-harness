@@ -54,7 +54,7 @@ class EvaluationContext:
     memo: MutableMapping[str, Any] = field(default_factory=dict)
 
 
-# Compatibility name used by worker/adaptor code.  Both names are the same
+# Compatibility name used by delivery-adapter code.  Both names are the same
 # contract rather than parallel context types.
 ExecutionContext = EvaluationContext
 

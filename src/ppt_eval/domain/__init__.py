@@ -26,7 +26,6 @@ from .models import (
     ObservationBatch,
     OracleResult,
     ReducerSpec,
-    ReviewCase,
     RunManifest,
     ScoreBreakdown,
 )
@@ -51,7 +50,6 @@ __all__ = [
     "OracleResult",
     "ObservationBatch",
     "ReducerSpec",
-    "ReviewCase",
     "RunManifest",
     "SceneType",
     "ScoreBreakdown",

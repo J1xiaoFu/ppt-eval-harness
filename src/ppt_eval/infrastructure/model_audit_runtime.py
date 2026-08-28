@@ -10,7 +10,6 @@ from typing import Mapping, Sequence
 
 from .qwen_model_audits import (
     DEFAULT_QWEN_HTTP_TIMEOUT_SECONDS,
-    QWEN_ADVANCED_MODEL,
     QWEN_PRIMARY_MODEL,
     QwenModelAuditProvider,
 )
@@ -21,12 +20,9 @@ from .zhipu_model_audits import (
 )
 
 DEFAULT_QWEN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-DEFAULT_QWEN_KEY_FILE = "api/qwen3.7_flash_api.txt"
+DEFAULT_QWEN_KEY_FILE = "api/qwen_api.txt"
 DEFAULT_ZHIPU_BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
 DEFAULT_ZHIPU_KEY_FILE = "api/glm5.3_flash_api.txt"
-DEFAULT_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS = 240.0
-# Backward-compatible symbol for callers that have not migrated their naming.
-DEFAULT_QWEN_PLUS_HTTP_TIMEOUT_SECONDS = DEFAULT_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS
 
 
 class ModelAuditConfigurationError(RuntimeError):
@@ -37,10 +33,8 @@ class ModelAuditConfigurationError(RuntimeError):
 class QwenAuditSettings:
     enabled: bool
     base_url: str
-    flash_model: str
-    advanced_model: str
+    model: str
     http_timeout_seconds: float
-    advanced_http_timeout_seconds: float
     api_key_source: str
     api_key: str | None = field(default=None, repr=False)
 
@@ -60,21 +54,11 @@ class QwenAuditSettings:
             else _parse_boolean(configured)
         )
         base_url = str(env.get("PPT_EVAL_QWEN_BASE_URL") or DEFAULT_QWEN_BASE_URL)
-        flash_model = str(env.get("PPT_EVAL_QWEN_FLASH_MODEL") or QWEN_PRIMARY_MODEL)
-        advanced_model = _advanced_text_setting(
-            env,
-            "PPT_EVAL_QWEN_ADVANCED_MODEL",
-            "PPT_EVAL_QWEN_PLUS_MODEL",
-            QWEN_ADVANCED_MODEL,
-        )
+        model = str(env.get("PPT_EVAL_QWEN_FLASH_MODEL") or QWEN_PRIMARY_MODEL)
         http_timeout_seconds = _positive_timeout(
             env,
             "PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS",
             DEFAULT_QWEN_HTTP_TIMEOUT_SECONDS,
-        )
-        advanced_http_timeout_seconds = _advanced_timeout_setting(
-            env,
-            max(DEFAULT_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS, http_timeout_seconds),
         )
         if explicitly_enabled is False:
             # An operational kill switch must not even open the local secret
@@ -83,10 +67,8 @@ class QwenAuditSettings:
             return cls(
                 enabled=False,
                 base_url=base_url,
-                flash_model=flash_model,
-                advanced_model=advanced_model,
+                model=model,
                 http_timeout_seconds=http_timeout_seconds,
-                advanced_http_timeout_seconds=advanced_http_timeout_seconds,
                 api_key_source="disabled",
                 api_key=None,
             )
@@ -122,49 +104,26 @@ class QwenAuditSettings:
         return cls(
             enabled=enabled,
             base_url=base_url,
-            flash_model=flash_model,
-            advanced_model=advanced_model,
+            model=model,
             http_timeout_seconds=http_timeout_seconds,
-            advanced_http_timeout_seconds=advanced_http_timeout_seconds,
             api_key_source=source,
             api_key=key or None,
         )
 
-    def providers(
+    def provider(
         self,
         *,
         protected_secrets: Sequence[str] = (),
-    ) -> tuple[QwenModelAuditProvider | None, QwenModelAuditProvider | None]:
+    ) -> QwenModelAuditProvider | None:
         if not self.enabled or not self.api_key:
-            return None, None
-        return (
-            QwenModelAuditProvider(
-                self.api_key,
-                self.base_url,
-                self.flash_model,
-                timeout_seconds=self.http_timeout_seconds,
-                protected_secrets=protected_secrets,
-            ),
-            QwenModelAuditProvider(
-                self.api_key,
-                self.base_url,
-                self.advanced_model,
-                timeout_seconds=self.advanced_http_timeout_seconds,
-                protected_secrets=protected_secrets,
-            ),
+            return None
+        return QwenModelAuditProvider(
+            self.api_key,
+            self.base_url,
+            self.model,
+            timeout_seconds=self.http_timeout_seconds,
+            protected_secrets=protected_secrets,
         )
-
-    @property
-    def plus_model(self) -> str:
-        """Deprecated compatibility alias; use ``advanced_model``."""
-
-        return self.advanced_model
-
-    @property
-    def plus_http_timeout_seconds(self) -> float:
-        """Deprecated compatibility alias; use ``advanced_http_timeout_seconds``."""
-
-        return self.advanced_http_timeout_seconds
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,48 +245,6 @@ def _positive_timeout(
     return timeout
 
 
-def _advanced_text_setting(
-    environment: Mapping[str, str],
-    preferred_name: str,
-    legacy_name: str,
-    default: str,
-) -> str:
-    preferred = str(environment.get(preferred_name) or "").strip()
-    legacy = str(environment.get(legacy_name) or "").strip()
-    if preferred and legacy and preferred != legacy:
-        raise ModelAuditConfigurationError(
-            f"{preferred_name} conflicts with legacy {legacy_name}"
-        )
-    return preferred or legacy or default
-
-
-def _advanced_timeout_setting(
-    environment: Mapping[str, str],
-    default: float,
-) -> float:
-    preferred_name = "PPT_EVAL_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS"
-    legacy_name = "PPT_EVAL_QWEN_PLUS_HTTP_TIMEOUT_SECONDS"
-    preferred = str(environment.get(preferred_name) or "").strip()
-    legacy = str(environment.get(legacy_name) or "").strip()
-    if preferred and legacy:
-        preferred_value = _positive_timeout(
-            {preferred_name: preferred}, preferred_name, default
-        )
-        legacy_value = _positive_timeout({legacy_name: legacy}, legacy_name, default)
-        if not math.isclose(preferred_value, legacy_value):
-            raise ModelAuditConfigurationError(
-                f"{preferred_name} conflicts with legacy {legacy_name}"
-            )
-        return preferred_value
-    if preferred:
-        return _positive_timeout(
-            {preferred_name: preferred}, preferred_name, default
-        )
-    if legacy:
-        return _positive_timeout({legacy_name: legacy}, legacy_name, default)
-    return default
-
-
 def _zhipu_environment_key(environment: Mapping[str, str]) -> str:
     names = (
         "PPT_EVAL_ZHIPU_API_KEY",
@@ -364,9 +281,7 @@ def _parse_boolean(
 
 __all__ = [
     "DEFAULT_QWEN_BASE_URL",
-    "DEFAULT_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS",
     "DEFAULT_QWEN_KEY_FILE",
-    "DEFAULT_QWEN_PLUS_HTTP_TIMEOUT_SECONDS",
     "DEFAULT_ZHIPU_BASE_URL",
     "DEFAULT_ZHIPU_KEY_FILE",
     "ModelAuditConfigurationError",

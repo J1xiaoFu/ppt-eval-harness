@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import builtins
 import dataclasses
 import enum
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -14,6 +16,30 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from ppt_eval.domain import AuditEvent
+
+_RECORD_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+_WRITABLE_REVIEW_VERDICTS = frozenset(
+    {
+        "CONFIRM_SYSTEM_DECISION",
+        "OVERRIDE_DECISION",
+        "REQUEST_MORE_EVIDENCE",
+    }
+)
+
+
+def validated_record_id(value: object, *, label: str = "record id") -> str:
+    text = str(value or "")
+    if not _RECORD_ID_PATTERN.fullmatch(text):
+        raise ValueError(f"{label} has an invalid format")
+    return text
+
+
+def validated_sha256(value: object) -> str:
+    text = str(value or "")
+    if not _SHA256_PATTERN.fullmatch(text):
+        raise ValueError("sha256 must be 64 lowercase hexadecimal characters")
+    return text
 
 
 def to_primitive(value: Any) -> Any:
@@ -49,7 +75,7 @@ def sha256_file(path: str | Path) -> str:
 
 
 class LocalArtifactStore:
-    """Content-addressed local replacement for an S3/MinIO artifact port."""
+    """Content-addressed artifact store used by the single-node runtime."""
 
     def __init__(self, root: str | Path = "var/artifacts") -> None:
         self.root = Path(root)
@@ -98,9 +124,13 @@ class LocalArtifactStore:
         }
 
     def resolve(self, sha256: str) -> Path:
-        candidate = self.root / sha256[:2] / sha256
+        digest = validated_sha256(sha256)
+        root = self.root.resolve()
+        candidate = (self.root / digest[:2] / digest).resolve()
+        if not candidate.is_relative_to(root):
+            raise FileNotFoundError(digest)
         if not candidate.is_file():
-            raise FileNotFoundError(sha256)
+            raise FileNotFoundError(digest)
         return candidate
 
 
@@ -115,7 +145,10 @@ class JsonRunRepository:
 
     def save(self, report: Any) -> Path:
         payload = to_primitive(report)
-        run_id = str(payload.get("run_id") or payload.get("id") or uuid.uuid4())
+        run_id = validated_record_id(
+            payload.get("run_id") or payload.get("id") or str(uuid.uuid4()),
+            label="run_id",
+        )
         target = self.root / f"{run_id}.json"
         temporary = target.with_suffix(f".json.{uuid.uuid4().hex}.tmp")
         with self._lock:
@@ -124,9 +157,13 @@ class JsonRunRepository:
         return target
 
     def get(self, run_id: str) -> dict[str, Any]:
-        path = self.root / f"{run_id}.json"
+        safe_run_id = validated_record_id(run_id, label="run_id")
+        root = self.root.resolve()
+        path = (self.root / f"{safe_run_id}.json").resolve()
+        if not path.is_relative_to(root):
+            raise KeyError(safe_run_id)
         if not path.is_file():
-            raise KeyError(run_id)
+            raise KeyError(safe_run_id)
         payload = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("stored run report must be a JSON object")
@@ -139,17 +176,79 @@ class JsonRunRepository:
         return reports
 
     def add_review(self, review: dict[str, Any]) -> dict[str, Any]:
+        run_id = validated_record_id(review.get("run_id"), label="run_id")
+        reviewer_id = str(review.get("reviewer_id") or "").strip()
+        if not reviewer_id:
+            raise ValueError("reviewer_id must be non-blank")
+        verdict = str(review.get("verdict") or "").strip().upper()
+        if verdict not in _WRITABLE_REVIEW_VERDICTS:
+            raise ValueError("unsupported review verdict")
+        review_id_value = review.get("review_id") or f"review-{uuid.uuid4().hex}"
+        review_id = validated_record_id(review_id_value, label="review_id")
+        client_request_id = str(review.get("client_request_id") or "").strip()
+        fingerprint = hashlib.sha256(
+            stable_json(
+                {
+                    key: value
+                    for key, value in review.items()
+                    if key not in {"review_id", "created_at", "idempotency_fingerprint"}
+                }
+            ).encode("utf-8")
+        ).hexdigest()
         record = {
-            "review_id": review.get("review_id") or f"review-{uuid.uuid4().hex}",
-            "created_at": datetime.now(timezone.utc).isoformat(),
             **review,
+            "review_id": review_id,
+            "reviewer_id": reviewer_id,
+            "verdict": verdict,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "run_id": run_id,
+            "idempotency_fingerprint": fingerprint,
         }
         line = json.dumps(record, ensure_ascii=False, sort_keys=True)
-        with self._lock, self.review_path.open("a", encoding="utf-8", newline="\n") as handle:
-            handle.write(line + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+        with self._lock:
+            for existing in self._reviews_unlocked(run_id):
+                same_request = (
+                    client_request_id
+                    and existing.get("client_request_id") == client_request_id
+                )
+                same_review_id = existing.get("review_id") == review_id
+                if not same_request and not same_review_id:
+                    continue
+                if existing.get("idempotency_fingerprint") != fingerprint:
+                    raise ValueError("review idempotency key was reused with different content")
+                return existing
+            with self.review_path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(line + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
         return record
+
+    def list_reviews(
+        self, run_id: str | None = None
+    ) -> builtins.list[dict[str, Any]]:
+        safe_run_id = (
+            validated_record_id(run_id, label="run_id") if run_id is not None else None
+        )
+        with self._lock:
+            return self._reviews_unlocked(safe_run_id)
+
+    def _reviews_unlocked(
+        self, run_id: str | None
+    ) -> builtins.list[dict[str, Any]]:
+        if not self.review_path.is_file():
+            return []
+        reviews: builtins.list[dict[str, Any]] = []
+        for line in self.review_path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            payload = json.loads(line)
+            if not isinstance(payload, dict):
+                continue
+            normalized = {str(key): value for key, value in payload.items()}
+            if run_id is None or normalized.get("run_id") == run_id:
+                reviews.append(normalized)
+        reviews.sort(key=lambda item: str(item.get("created_at") or ""))
+        return reviews
 
 
 class JsonlAuditLog:

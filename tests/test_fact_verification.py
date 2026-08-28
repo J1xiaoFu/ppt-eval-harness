@@ -4,7 +4,8 @@ import hashlib
 
 from ppt_eval.adapters import FactVerdict, FactVerificationBundle, NetworkFactVerifier, SearchHit
 from ppt_eval.application import EvaluationContext
-from ppt_eval.domain import EvalCase, EvalProfile, SceneType
+from ppt_eval.config import default_profile
+from ppt_eval.domain import EvalCase, SceneType
 from ppt_eval.oracles.scenarios import FactQualityOracle
 from tests.fixtures.pptx_factory import build_pptx
 
@@ -75,7 +76,7 @@ def test_fact_oracle_consumes_auditable_bundle(tmp_path) -> None:
         request="制作项目汇报",
         metadata={"fact_verification": bundle},
     )
-    context = EvaluationContext(case, EvalProfile.default(SceneType.TEXT_TO_PPT))
+    context = EvaluationContext(case, default_profile(SceneType.TEXT_TO_PPT))
     result = FactQualityOracle().evaluate(context)
 
     assert result.normalized_score == 1.0
@@ -107,4 +108,3 @@ def test_fact_bundle_rejects_non_https_evidence() -> None:
         assert "HTTPS" in str(exc)
     else:
         raise AssertionError("expected non-HTTPS evidence to be rejected")
-

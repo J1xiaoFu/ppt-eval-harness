@@ -1,0 +1,76 @@
+{
+  "profile_id": "text-generation-v8",
+  "version": "8.3",
+  "scenario": "TEXT_GENERATION",
+  "lambda_base": 0.55,
+  "base_multiplier_metric_ids": ["file_deliverability", "critical_content_visibility", "internal_data_consistency", "v8_functional_integrity"],
+  "scene_multiplier_metric_ids": [],
+  "pass_threshold": 80,
+  "review_threshold": 60,
+  "oracle_timeout_seconds": 300,
+  "metric_review_thresholds": {"content_structure": 0.60},
+  "base_weights": {
+    "content_structure": 0.21,
+    "language_consistency": 0.04,
+    "composition_craft": 0.20,
+    "typography_craft": 0.10,
+    "palette_craft": 0.08,
+    "visual_communication": 0.15,
+    "visual_system_sequence": 0.10,
+    "authorship_specificity_v2": 0.12
+  },
+  "scene_weights": {
+    "instruction": 0.45,
+    "audience": 0.25,
+    "fact_claim": 0.30
+  },
+  "required_metric_ids": [
+    "content_structure",
+    "language_consistency",
+    "composition_craft",
+    "typography_craft",
+    "palette_craft",
+    "visual_communication",
+    "visual_system_sequence",
+    "authorship_specificity_v2",
+    "instruction",
+    "audience",
+    "fact_claim",
+    "file_deliverability", "critical_content_visibility", "internal_data_consistency", "v8_functional_integrity"
+  ],
+  "pipeline_nodes": [
+    {"node_id": "observe:v8", "oracle_id": "v8.atomic_observations", "kind": "OBSERVE", "dependencies": ["baseline_ppt_quality"]},
+    {"node_id": "audit:v8-composition", "oracle_id": "v8.visual.composition_layout", "kind": "AUDIT", "dependencies": ["observe:v8"]},
+    {"node_id": "audit:v8-typography", "oracle_id": "v8.visual.typography_legibility", "kind": "AUDIT", "dependencies": ["observe:v8"]},
+    {"node_id": "audit:v8-color", "oracle_id": "v8.visual.color_contrast", "kind": "AUDIT", "dependencies": ["observe:v8"]},
+    {"node_id": "audit:v8-imagery", "oracle_id": "v8.visual.imagery_data_visualization", "kind": "AUDIT", "dependencies": ["observe:v8"]},
+    {"node_id": "audit:v8-system", "oracle_id": "v8.visual.cross_slide_consistency", "kind": "AUDIT", "dependencies": ["observe:v8"]},
+    {"node_id": "audit:v8-render", "oracle_id": "v8.visual.render_integrity", "kind": "AUDIT", "dependencies": ["observe:v8"]},
+    {"node_id": "audit:v8-authorship", "oracle_id": "v8.visual.authorship_specificity", "kind": "AUDIT", "dependencies": ["observe:v8"]},
+    {"node_id": "audit:v8-raster-content", "oracle_id": "v8.raster_text.raster_content_structure", "kind": "AUDIT", "dependencies": ["observe:v8"]},
+    {"node_id": "audit:v8-raster-language", "oracle_id": "v8.raster_text.raster_language_consistency", "kind": "AUDIT", "dependencies": ["observe:v8"]},
+    {"node_id": "reduce:v8", "oracle_id": "v8.quality_reducers", "kind": "REDUCE", "dependencies": ["audit:v8-composition", "audit:v8-typography", "audit:v8-color", "audit:v8-imagery", "audit:v8-system", "audit:v8-render", "audit:v8-authorship", "audit:v8-raster-content", "audit:v8-raster-language"]}
+  ],
+  "metadata": {
+    "lifecycle": "PRE_RESEARCH",
+    "contract_family": "TRAINING_ELIGIBILITY_V8",
+    "production_approved": true,
+    "runtime_wired": true,
+    "model_audit_routing": "ATOMIC_FLASH_ADVANCED_HUMAN",
+    "vlm_dimension_min_confidence": 0.60,
+    "flash_provider": "qwen-dashscope-openai-compatible",
+    "flash_model": "qwen3.8-flash",
+    "advanced_provider": "zhipu-bigmodel-openai-compatible",
+    "advanced_model": "glm-5.3-flash",
+    "training_eligibility": {
+      "schema_version": "1.0",
+      "tracks": ["visual", "layout", "content", "full_deck"],
+      "statuses": ["TRAIN", "REVIEW", "REJECT"],
+      "train_threshold": 80,
+      "review_threshold": 60,
+      "critical_status": "REJECT",
+      "missing_content_evidence_status": "REVIEW",
+      "raster_only_tracks": ["visual"]
+    }
+  }
+}

@@ -882,25 +882,13 @@ class BaselinePptQualityOracle(CompositeOracle):
     ORACLE_ID = "baseline_ppt_quality"
     oracle_id = ORACLE_ID
     metric_id = "baseline_ppt_quality"
-    version = "2.1.0"
+    version = "8.0.0"
 
     def __init__(self, adapter: PptxAdapter | None = None) -> None:
         children = (
             FileDeliverabilityOracle(adapter),
             CriticalContentVisibilityOracle(adapter),
             InternalDataConsistencyOracle(adapter),
-            ContentClarityOracle(adapter),
-            TemplateResidueOracle(adapter),
-            NarrativeOracle(adapter),
-            BodyCompletenessOracle(adapter),
-            VisualHierarchyOracle(adapter),
-            LayoutOracle(adapter),
-            TypographyOracle(adapter),
-            StyleConsistencyOracle(adapter),
-            MultimediaQualityOracle(adapter),
-            EditabilityOracle(adapter),
-            CompatibilityOracle(adapter),
-            AccessibilityOracle(adapter),
         )
         super().__init__(children)
 

@@ -1,4 +1,4 @@
-"""Infrastructure adapters for local execution and production integration."""
+"""Infrastructure adapters for the audited local runtime."""
 
 from .local import (
     JsonlAuditLog,
@@ -6,13 +6,14 @@ from .local import (
     LocalArtifactStore,
     font_fingerprint,
     git_sha,
+    sha256_file,
     to_primitive,
+    validated_record_id,
+    validated_sha256,
 )
 from .model_audit_runtime import (
-    DEFAULT_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS,
     DEFAULT_QWEN_BASE_URL,
     DEFAULT_QWEN_KEY_FILE,
-    DEFAULT_QWEN_PLUS_HTTP_TIMEOUT_SECONDS,
     DEFAULT_ZHIPU_BASE_URL,
     DEFAULT_ZHIPU_KEY_FILE,
     ModelAuditConfigurationError,
@@ -21,11 +22,6 @@ from .model_audit_runtime import (
 )
 from .qwen_model_audits import (
     DEFAULT_QWEN_HTTP_TIMEOUT_SECONDS,
-    QWEN_ADVANCED_MODEL,
-    QWEN_FLASH_MODEL,
-    QWEN_LEGACY_FLASH_MODEL,
-    QWEN_LEGACY_PLUS_MODEL,
-    QWEN_PLUS_MODEL,
     QWEN_PRIMARY_MODEL,
     QwenModelAuditProvider,
     QwenModelAuditProviderError,
@@ -46,11 +42,12 @@ __all__ = [
     "LocalArtifactStore",
     "font_fingerprint",
     "git_sha",
+    "sha256_file",
     "to_primitive",
-    "DEFAULT_QWEN_ADVANCED_HTTP_TIMEOUT_SECONDS",
+    "validated_record_id",
+    "validated_sha256",
     "DEFAULT_QWEN_BASE_URL",
     "DEFAULT_QWEN_KEY_FILE",
-    "DEFAULT_QWEN_PLUS_HTTP_TIMEOUT_SECONDS",
     "DEFAULT_QWEN_HTTP_TIMEOUT_SECONDS",
     "DEFAULT_ZHIPU_BASE_URL",
     "DEFAULT_ZHIPU_HTTP_TIMEOUT_SECONDS",
@@ -58,11 +55,6 @@ __all__ = [
     "ModelAuditConfigurationError",
     "QwenAuditSettings",
     "ZhipuAuditSettings",
-    "QWEN_ADVANCED_MODEL",
-    "QWEN_FLASH_MODEL",
-    "QWEN_LEGACY_PLUS_MODEL",
-    "QWEN_LEGACY_FLASH_MODEL",
-    "QWEN_PLUS_MODEL",
     "QWEN_PRIMARY_MODEL",
     "QwenModelAuditProvider",
     "QwenModelAuditProviderError",

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from importlib.resources import files
 
 import pytest
 
-from ppt_eval.config import load_profile
+from ppt_eval.config import profile_from_mapping
 from ppt_eval.training_eligibility import (
     TRACK_ORDER,
     TrainingEligibility,
@@ -188,7 +188,7 @@ def test_mapping_is_json_compatible_and_preserves_contract_order() -> None:
 def test_v8_profile_drafts_freeze_construct_and_scene_contracts() -> None:
     for filename, expected in PROFILE_CONTRACTS.items():
         profile = json.loads(
-            (Path("configs/profiles") / filename).read_text(encoding="utf-8")
+            files("ppt_eval.profiles").joinpath(filename).read_text(encoding="utf-8")
         )
         expected_lambda, expected_scene_weights = expected
 
@@ -205,7 +205,7 @@ def test_v8_profile_drafts_freeze_construct_and_scene_contracts() -> None:
         assert profile["metadata"]["production_approved"] is True
         assert profile["metadata"]["runtime_wired"] is True
 
-        loaded = load_profile(Path("configs/profiles") / filename)
+        loaded = profile_from_mapping(profile)
         assert loaded.profile_id == profile["profile_id"]
         assert sum(loaded.base_weights.values()) == pytest.approx(1.0)
 

@@ -35,4 +35,4 @@
 - 尚缺 400 个基础金标、2,000 个受控缺陷、人工 α/ICC、pairwise、误放行置信区间和 1,000 份 Shadow。
 - FastAPI API、异步 Job 和 React 复核台已完成本地构建与交互 Smoke；Celery/PostgreSQL/S3 适配和 Compose 配置已提供，但仍未做真实集群故障演练。
 - PowerPoint Renderer Adapter 已通过 16.0.20326.20100 实测；最终面试 PPT 另经 artifact-tool 与 presentation helper 渲染复核。LibreOffice 差分仍留待容器环境补测。
-- 面试 PPT 已生成并通过 9 页逐页原图、无溢出、speaker notes 和系统自评；历史 Node 阻塞及解决记录保留在 `reports/generated/PPT_BUILD_BLOCKER.md`。
+- 历史面试 PPT、渲染图与 Node 构建阻塞记录已迁入 `archive/v8.3-pre-release`，不属于当前发布制品。

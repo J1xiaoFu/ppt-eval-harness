@@ -77,7 +77,17 @@ class InMemoryAuditLog:
                     "utf-8"
                 )
             ).hexdigest()
-            event = AuditEvent(**core, event_hash=digest)
+            event = AuditEvent(
+                event_id=str(core["event_id"]),
+                run_id=str(core["run_id"]),
+                event_type=str(core["event_type"]),
+                occurred_at=str(core["occurred_at"]),
+                actor=str(core["actor"]),
+                payload=dict(payload),
+                previous_hash=previous_hash,
+                event_hash=digest,
+                supersedes=supersedes,
+            )
             self._events.append(event)
             return event
 
@@ -99,4 +109,3 @@ class InMemoryAuditLog:
                     return False
                 previous = event_hash
             return True
-

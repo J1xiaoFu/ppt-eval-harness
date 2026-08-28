@@ -1,20 +1,17 @@
-# 审计数据目录
+# 审计 schema
 
-本目录保存评测系统的机器可读证据。`project_audit.json` 是项目级快照，
-`events.jsonl` 是只追加事件流；任何更正都新增事件并填写 `supersedes`，不得覆盖原记录。
+本目录只保存当前 v8.3 机器可读运行审计 schema。实际运行数据写入用户指定 data-dir：
 
-## 不变量
-
-- ID 前缀固定为 `REQ/ADR/ORC/TST/EXP/RUN/REL`，全链路可追踪。
-- 所有时间为带时区的 ISO-8601；示例使用 `+08:00`。
-- 运行清单必须记录输入、代码、容器、字体、模型、Prompt、Profile 与输出哈希。
-- 自动结果和人工复核分别写入事件；人工结论不得改写机器原始结果。
-- `status=planned` 只表示设计或门槛，不能在汇报中表述为已达成结果。
-
-## 验证与生成
-
-```powershell
-python scripts/reporting/verify_audit.py audit/example/project_audit.json audit/example/events.jsonl
-python scripts/reporting/build_report.py --audit audit/example/project_audit.json --events audit/example/events.jsonl --output reports/generated
+```text
+var/runs/
+var/runs/reviews.jsonl
+var/audit/events.jsonl
+var/artifacts/
 ```
 
+运行事件与 ReviewEvent 都是 append-only；任何修订都必须创建新事件，不能覆盖 EvalReport 或
+旧事件。开发过程由 Git 提交、`reports/` 中的当前设计/验证记录和 archive tag 共同审计。
+
+开发过程由 Git 提交、`reports/` 与归档 tag 追踪，不再混入运行时 Event schema。旧三阶段项目
+快照、面试汇报生成物和 v1–v7 事件示例已迁入
+`archive/v8.3-pre-release`，不属于当前运行协议。

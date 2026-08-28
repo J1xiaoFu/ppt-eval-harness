@@ -11,7 +11,6 @@ from ppt_eval.config import default_profile
 from ppt_eval.domain import (
     AtomicObservation,
     EvalCase,
-    EvalProfile,
     EvaluationScope,
     Evidence,
     ExecutionStatus,
@@ -93,7 +92,7 @@ def _context(path: Path, scene: SceneType = SceneType.READY_MADE) -> EvaluationC
             pptx_path=str(path),
             request="必须包含市场分析" if scene == SceneType.TEXT_TO_PPT else None,
         ),
-        profile=EvalProfile.default(scene),
+        profile=default_profile(scene),
         memo={},
     )
 

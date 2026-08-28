@@ -1,87 +1,26 @@
-"""Built-in deterministic Oracle catalog and factories."""
+"""Current v8 Oracle catalog and runtime registry."""
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Mapping
-
-from ppt_eval.domain.enums import SceneType
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from ppt_eval.adapters import ModelAuditProvider, PptxAdapter
     from ppt_eval.application.oracle import Oracle, OracleRegistry
 
-    from .model_source_access import ModelSourceAccessPolicy
-
 from .baseline import (
-    AccessibilityOracle,
     BaselinePptQualityOracle,
-    BodyCompletenessOracle,
-    CompatibilityOracle,
-    ContentClarityOracle,
     CriticalContentVisibilityOracle,
-    EditabilityOracle,
     FileDeliverabilityOracle,
     InternalDataConsistencyOracle,
-    LayoutOracle,
-    MultimediaQualityOracle,
-    NarrativeOracle,
-    StyleConsistencyOracle,
-    TemplateResidueOracle,
-    TypographyOracle,
-    VisualHierarchyOracle,
 )
 from .model_audits import (
-    GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
-    GROUNDED_VLM_CRITERION_PROMPTS,
     GROUNDED_VLM_DEFECT_CODES,
     GROUNDED_VLM_POSITIVE_SIGNALS,
-    STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
-    STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
-    STRUCTURED_VLM_VISUAL_CRITERIA,
-    STRUCTURED_VLM_VISUAL_CRITERION_IDS,
-    STRUCTURED_VLM_VISUAL_DIMENSION_METRICS,
-    STRUCTURED_VLM_VISUAL_DIMENSIONS_PROMPT,
     V8_GROUNDED_VISUAL_CRITERION_IDS,
     V8_GROUNDED_VLM_CRITERION_PROMPTS,
     V8_RASTER_TEXT_CRITERION_IDS,
-    AdvancedLlmContentReviewOracle,
-    AdvancedLlmScenarioReviewOracle,
-    AdvancedModelReviewOracle,
-    AdvancedVlmVisualReviewOracle,
     GroundedSingleCriterionVlmOracle,
-    GroundedStructuredDimensionsModelAuditOracle,
-    GroundedStructuredVlmVisualDimensionsAuditOracle,
-    HighCostModelAuditOracle,
-    LlmContentQualityAuditOracle,
-    LlmScenarioComplianceAuditOracle,
-    StructuredDimensionsModelAuditOracle,
-    StructuredModelAuditOracle,
-    StructuredVlmVisualAuditOracle,
-    StructuredVlmVisualDimensionsAuditOracle,
-    VlmVisualQualityAuditOracle,
-)
-from .model_source_access import ModelSourceAccessPolicy
-from .scenarios import (
-    AssetComplianceOracle,
-    AssetPresentationOracle,
-    AudienceFitOracle,
-    ChartDataAccuracyOracle,
-    CompressionQualityOracle,
-    CriticalChartDataAccuracyOracle,
-    CriticalInstructionComplianceOracle,
-    CriticalSourceConsistencyOracle,
-    CropClarityOracle,
-    FactQualityOracle,
-    InstructionCoverageOracle,
-    KeyPointRecallOracle,
-    MediaAvailabilityOracle,
-    MultimodalQualityOracle,
-    NumericAccuracyOracle,
-    ProjectSummaryQualityOracle,
-    RequiredAssetComplianceOracle,
-    SourceFaithfulnessOracle,
-    TextGenerationQualityOracle,
-    TraceabilityOracle,
 )
 from .v8_composites import (
     V8_VISUAL_CRITERION_IDS,
@@ -91,53 +30,17 @@ from .v8_composites import (
     V8TieredVisualCriterionOracle,
 )
 
-SCENE_ORACLE_IDS: Mapping[SceneType, tuple[str, ...]] = {
-    SceneType.TEXT_TO_PPT: (TextGenerationQualityOracle.oracle_id,),
-    SceneType.PROJECT_SUMMARY: (ProjectSummaryQualityOracle.oracle_id,),
-    SceneType.MULTIMODAL: (MultimodalQualityOracle.oracle_id,),
-    SceneType.READY_MADE: (),
-}
-
 
 def build_default_oracles(
     adapter: PptxAdapter | None = None,
     *,
-    llm_provider: ModelAuditProvider | None = None,
     vlm_provider: ModelAuditProvider | None = None,
     advanced_vlm_provider: ModelAuditProvider | None = None,
-    model_source_access_policy: ModelSourceAccessPolicy | None = None,
 ) -> tuple[Oracle, ...]:
-    """Return the baseline plus deterministic and optional model composites."""
+    """Return only the current v8 execution graph and mandatory hard baseline."""
 
     return (
         BaselinePptQualityOracle(adapter),
-        TextGenerationQualityOracle(adapter),
-        ProjectSummaryQualityOracle(adapter),
-        MultimodalQualityOracle(adapter),
-        HighCostModelAuditOracle(
-            adapter,
-            llm_provider=llm_provider,
-            vlm_provider=vlm_provider,
-            source_access_policy=model_source_access_policy,
-        ),
-        StructuredModelAuditOracle(
-            adapter,
-            llm_provider=llm_provider,
-            vlm_provider=vlm_provider,
-            source_access_policy=model_source_access_policy,
-        ),
-        StructuredDimensionsModelAuditOracle(
-            adapter,
-            llm_provider=llm_provider,
-            vlm_provider=vlm_provider,
-            source_access_policy=model_source_access_policy,
-        ),
-        GroundedStructuredDimensionsModelAuditOracle(
-            adapter,
-            llm_provider=llm_provider,
-            vlm_provider=vlm_provider,
-            source_access_policy=model_source_access_policy,
-        ),
         V8AtomicObservationComposite(adapter),
         *(
             V8TieredVisualCriterionOracle(
@@ -145,7 +48,6 @@ def build_default_oracles(
                 vlm_provider,
                 advanced_vlm_provider,
                 adapter,
-                source_access_policy=model_source_access_policy,
             )
             for criterion_id in V8_VISUAL_CRITERION_IDS
         ),
@@ -155,7 +57,6 @@ def build_default_oracles(
                 vlm_provider,
                 advanced_vlm_provider,
                 adapter,
-                source_access_policy=model_source_access_policy,
             )
             for criterion_id in V8_RASTER_TEXT_CRITERION_IDS
         ),
@@ -166,98 +67,38 @@ def build_default_oracles(
 def build_default_registry(
     adapter: PptxAdapter | None = None,
     *,
-    llm_provider: ModelAuditProvider | None = None,
     vlm_provider: ModelAuditProvider | None = None,
     advanced_vlm_provider: ModelAuditProvider | None = None,
-    model_source_access_policy: ModelSourceAccessPolicy | None = None,
 ) -> OracleRegistry:
-    """Create the Harness registry without making infrastructure import it."""
+    """Create the current v8 Harness registry."""
 
     from ppt_eval.application.oracle import OracleRegistry
 
     return OracleRegistry(
         build_default_oracles(
             adapter,
-            llm_provider=llm_provider,
             vlm_provider=vlm_provider,
             advanced_vlm_provider=advanced_vlm_provider,
-            model_source_access_policy=model_source_access_policy,
         )
     )
 
 
 __all__ = [
-    "AdvancedLlmContentReviewOracle",
-    "AdvancedLlmScenarioReviewOracle",
-    "AdvancedModelReviewOracle",
-    "AdvancedVlmVisualReviewOracle",
-    "AccessibilityOracle",
-    "AssetComplianceOracle",
-    "AssetPresentationOracle",
-    "AudienceFitOracle",
     "BaselinePptQualityOracle",
-    "BodyCompletenessOracle",
-    "ChartDataAccuracyOracle",
-    "CompatibilityOracle",
-    "CompressionQualityOracle",
-    "ContentClarityOracle",
-    "CriticalChartDataAccuracyOracle",
     "CriticalContentVisibilityOracle",
-    "CriticalInstructionComplianceOracle",
-    "CriticalSourceConsistencyOracle",
-    "CropClarityOracle",
-    "EditabilityOracle",
-    "FactQualityOracle",
     "FileDeliverabilityOracle",
-    "GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID",
-    "GROUNDED_VLM_CRITERION_PROMPTS",
     "GROUNDED_VLM_DEFECT_CODES",
     "GROUNDED_VLM_POSITIVE_SIGNALS",
-    "GroundedStructuredDimensionsModelAuditOracle",
     "GroundedSingleCriterionVlmOracle",
-    "GroundedStructuredVlmVisualDimensionsAuditOracle",
-    "HighCostModelAuditOracle",
-    "InstructionCoverageOracle",
     "InternalDataConsistencyOracle",
-    "KeyPointRecallOracle",
-    "LayoutOracle",
-    "LlmContentQualityAuditOracle",
-    "LlmScenarioComplianceAuditOracle",
-    "MediaAvailabilityOracle",
-    "MultimediaQualityOracle",
-    "MultimodalQualityOracle",
-    "ModelSourceAccessPolicy",
-    "NarrativeOracle",
-    "NumericAccuracyOracle",
-    "ProjectSummaryQualityOracle",
-    "RequiredAssetComplianceOracle",
-    "SCENE_ORACLE_IDS",
-    "SourceFaithfulnessOracle",
-    "StyleConsistencyOracle",
-    "STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID",
-    "STRUCTURED_MODEL_AUDIT_COMPOSITE_ID",
-    "STRUCTURED_VLM_VISUAL_CRITERIA",
-    "STRUCTURED_VLM_VISUAL_CRITERION_IDS",
-    "STRUCTURED_VLM_VISUAL_DIMENSIONS_PROMPT",
-    "STRUCTURED_VLM_VISUAL_DIMENSION_METRICS",
-    "StructuredDimensionsModelAuditOracle",
-    "StructuredModelAuditOracle",
-    "StructuredVlmVisualAuditOracle",
-    "StructuredVlmVisualDimensionsAuditOracle",
-    "TemplateResidueOracle",
-    "TextGenerationQualityOracle",
-    "TraceabilityOracle",
-    "TypographyOracle",
-    "VisualHierarchyOracle",
-    "VlmVisualQualityAuditOracle",
     "V8AtomicObservationComposite",
     "V8QualityReducerOracle",
     "V8RasterTextObservationOracle",
     "V8TieredVisualCriterionOracle",
-    "V8_VISUAL_CRITERION_IDS",
     "V8_GROUNDED_VISUAL_CRITERION_IDS",
     "V8_GROUNDED_VLM_CRITERION_PROMPTS",
     "V8_RASTER_TEXT_CRITERION_IDS",
+    "V8_VISUAL_CRITERION_IDS",
     "build_default_oracles",
     "build_default_registry",
 ]

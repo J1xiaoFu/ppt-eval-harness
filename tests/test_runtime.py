@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
-from ppt_eval.domain import EvalCase, EvalProfile, SceneType
+import pytest
+
+from ppt_eval.config import default_profile
+from ppt_eval.domain import EvalCase, SceneType
 from ppt_eval.infrastructure import LocalArtifactStore
 from ppt_eval.runtime import LocalEvaluationRuntime
 from tests.fixtures.pptx_factory import build_pptx
@@ -32,14 +36,33 @@ def test_local_runtime_persists_report_manifest_and_valid_audit_chain(tmp_path) 
     runtime = LocalEvaluationRuntime(tmp_path / "var")
     report = runtime.evaluate(
         EvalCase(case_id="ready", scene=SceneType.READY_MADE, pptx_path=str(deck)),
-        EvalProfile.default(SceneType.READY_MADE, version="1.0"),
+        default_profile(SceneType.READY_MADE),
     )
 
-    assert report["coverage"] == "FULL"
+    assert report["coverage"] == "DEGRADED"
+    assert report["decision"] == "REVIEW"
     assert report["base_score"] is not None
     assert report["manifest"]["input_hash"]
     assert runtime.get(report["run_id"])["case_id"] == "ready"
     assert runtime.audit_log.verify() == (True, None)
+
+
+def test_release_runtime_rejects_legacy_profile_before_writing(tmp_path) -> None:
+    deck = build_pptx(tmp_path / "legacy.pptx")
+    runtime = LocalEvaluationRuntime(tmp_path / "var")
+    legacy = replace(default_profile(SceneType.READY_MADE), version="7.0")
+
+    with pytest.raises(ValueError, match="only Profile version 8.3"):
+        runtime.evaluate(
+            EvalCase(
+                case_id="legacy-profile",
+                scene=SceneType.READY_MADE,
+                pptx_path=str(deck),
+            ),
+            legacy,
+        )
+
+    assert runtime.repository.list() == []
 
 
 def test_runtime_scene_degradation_keeps_intrinsic_score_and_routes_review(tmp_path) -> None:
@@ -65,10 +88,24 @@ def test_review_and_run_export_are_audited(tmp_path) -> None:
     deck = build_pptx(tmp_path / "deck.pptx")
     runtime = LocalEvaluationRuntime(tmp_path / "var")
     report = runtime.evaluate(
-        EvalCase(case_id="ready", scene=SceneType.READY_MADE, pptx_path=str(deck))
+        EvalCase(case_id="ready", scene=SceneType.READY_MADE, pptx_path=str(deck)),
+        default_profile(SceneType.READY_MADE),
     )
+    task = runtime.review_task(report["run_id"])
+    issue_resolutions = [
+        {"issue_id": item["issue_id"], "resolution": "CONFIRMED"}
+        for item in task["issues"]
+        if item["priority"] in {"P0", "P1"}
+    ]
     review = runtime.review(
-        {"run_id": report["run_id"], "verdict": "APPROVE", "reviewer_id": "tester", "note": "ok"}
+        {
+            "run_id": report["run_id"],
+            "verdict": "CONFIRM_SYSTEM_DECISION",
+            "reviewer_id": "tester",
+            "note": "ok",
+            "issue_resolutions": issue_resolutions,
+            "track_resolutions": {},
+        }
     )
     markdown, html = runtime.export(report["run_id"], tmp_path / "exports")
 

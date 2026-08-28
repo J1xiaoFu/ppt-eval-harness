@@ -27,16 +27,7 @@ from ppt_eval.adapters.model_audits import (
     ModelImageInput,
 )
 
-QWEN_LEGACY_FLASH_MODEL = "qwen3.7-flash"
-# Backward-compatible symbol retained for historical provider tests and
-# explicit v1-v7 composition roots.  The environment-aware v8 runtime uses
-# ``QWEN_PRIMARY_MODEL`` instead.
-QWEN_FLASH_MODEL = QWEN_LEGACY_FLASH_MODEL
 QWEN_PRIMARY_MODEL = "qwen3.8-flash"
-QWEN_ADVANCED_MODEL = "qwen3.8-flash"
-QWEN_LEGACY_PLUS_MODEL = "qwen3.7-plus"
-# Historical symbol remains pinned for explicit v3.0 replay.
-QWEN_PLUS_MODEL = QWEN_LEGACY_PLUS_MODEL
 
 _PROVIDER_NAME = "qwen-dashscope-openai-compatible"
 _QWEN_DIALECT = "qwen"
@@ -62,8 +53,8 @@ class QwenModelAuditProviderError(ModelAuditProviderError):
 class QwenOpenAICompatibleProvider:
     """Translate :class:`ModelAuditRequest` to Qwen Chat Completions.
 
-    ``model`` is also the tier selector: callers pass ``qwen3.7-flash`` for
-    the inexpensive baseline and ``qwen3.8-flash`` for advanced review.  The
+    The release runtime configures ``qwen3.8-flash`` as its sole Qwen tier;
+    criterion-isomorphic escalation uses the independent GLM provider. The
     constructor intentionally accepts no arbitrary headers or request body
     fields, keeping credentials and vendor-specific behavior isolated here.
     """
@@ -1045,12 +1036,7 @@ def _nonblank(value: object, label: str) -> str:
 
 __all__ = [
     "DEFAULT_QWEN_HTTP_TIMEOUT_SECONDS",
-    "QWEN_FLASH_MODEL",
-    "QWEN_LEGACY_FLASH_MODEL",
     "QWEN_PRIMARY_MODEL",
-    "QWEN_ADVANCED_MODEL",
-    "QWEN_PLUS_MODEL",
-    "QWEN_LEGACY_PLUS_MODEL",
     "QwenModelAuditProvider",
     "QwenModelAuditProviderError",
     "QwenOpenAICompatibleProvider",

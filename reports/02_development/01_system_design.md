@@ -1,5 +1,9 @@
 # 系统设计：Deterministic Agentic Harness
 
+> 发布说明：本文中的 Redis/PostgreSQL/S3/多 worker 图是早期目标架构，不属于当前 main 的
+> 单机运行时。当前有效 composition root 见 `07_single_node_release.md`；旧可执行骨架已归档到
+> `archive/v8.3-pre-release`。
+
 ## 领域词汇
 
 | 术语 | 定义 |
@@ -178,4 +182,3 @@ flowchart TB
 | 安全 | PPTX 含宏/外链/炸弹 | 沙箱拒绝并留证 | 无执行、无外联 |
 | 可追踪 | 审计员给 Run ID | 恢复所有版本和证据 | 关键字段 100% 完整 |
 | 性能 | 20 页普通 PPTX | 快速层完成 | P95≤30s 目标 |
-

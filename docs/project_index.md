@@ -1,47 +1,42 @@
-# PPT 评测项目索引
+# PPT Eval 文档索引
 
-## 新人入口
+## 从这里开始
 
-- [完整交接与维护教程](onboarding_handover_guide.md)
-- [演示脚本](demo_script.md)
-- [审计工作流](audit_workflow.md)
+- [项目 README](../README.md)：安装、启动、提交 PPT、CLI、测试与当前边界。
+- [v8 原子评测方法](v8_atomic_evaluation_method.md)：Observation、Reducer、评分和训练准入。
+- [服务端人工审计平台](review_platform.md)：AttentionIssue、制品安全和 ReviewEvent。
+- [OpenAPI](openapi.yaml)：服务端接口合同。
 
-## 调研
+## 运行与审计
 
-- [项目章程](../reports/01_research/00_project_charter.md)
-- [相关工作矩阵](../reports/01_research/01_related_work_matrix.md)
-- [PPT-PDMS 迁移](../reports/01_research/02_ppt_pdms_migration.md)
-- [失败分类与 Rubric](../reports/01_research/03_failure_taxonomy_and_rubric.md)
+- [模型审计 Provider 合同](model_audit_provider_contract.md)
 - [数据许可计划](../reports/01_research/04_data_license_plan.md)
-- [公开基线复现](../reports/01_research/06_baseline_reproduction.md)
-- [公开 PPT 数据目录](../reports/01_research/07_public_dataset_catalog.md)
 
-## 开发
+## 系统设计
 
 - [SRS](../reports/02_development/00_srs.md)
 - [系统设计](../reports/02_development/01_system_design.md)
-- [ADR](../reports/02_development/02_architecture_decisions.md)
-- [威胁模型/FMEA/SLO](../reports/02_development/03_threat_model_fmea_slo.md)
+- [架构决策](../reports/02_development/02_architecture_decisions.md)
+- [威胁模型、FMEA 与 SLO](../reports/02_development/03_threat_model_fmea_slo.md)
 - [需求追踪矩阵](../reports/02_development/04_traceability_matrix.md)
-- [Oracle/模型/数据卡](../reports/02_development/05_oracle_model_data_cards.md)
-- [v5 结构化视觉实验方法](structured_visual_profile_method.md)
-- [v6 六维结构化视觉实验方法](structured_visual_dimensions_profile_method.md)
-- [v7 Grounded Atomic Visual 基线研究与方法](grounded_visual_oracle_method.md)
-- [v8 原子评测、Reducer 与训练准入方法](v8_atomic_evaluation_method.md)
-- [OpenAPI 契约](openapi.yaml)
+- [Oracle、模型与数据卡](../reports/02_development/05_oracle_model_data_cards.md)
+- [单机发布收敛记录](../reports/02_development/07_single_node_release.md)
 
-## 评测
+## 可审计研发过程
 
+- [调研阶段索引](../reports/01_research/README.md)
+- [开发阶段索引](../reports/02_development/README.md)
+- [评测阶段索引](../reports/03_evaluation/README.md)
 - [实验预注册](../reports/03_evaluation/00_preregistration.md)
 - [测试计划](../reports/03_evaluation/01_test_plan.md)
-- [验收与 Shadow](../reports/03_evaluation/02_acceptance_and_shadow.md)
-- [评测报告模板](../reports/03_evaluation/03_evaluation_report_template.md)
-- [MVP 验证报告](../reports/03_evaluation/04_mvp_verification.md)
-- [v6 六维视觉真实切片重放](../reports/03_evaluation/09_v6_visual_dimensions_replay.md)
+- [MVP 验证](../reports/03_evaluation/04_mvp_verification.md)
+- [v8.3 三主题真实切片](../reports/03_evaluation/13_v83_three_topic_replay.md)
+- [单机发布最终验证](../reports/03_evaluation/14_single_node_release_validation.md)
 
-## 审计与演示
+## 历史复现
 
-- [审计工作流](audit_workflow.md)
-- [汇报生成契约](reporting_contract.md)
-- [只读审计站点](../reports/generated/project-audit.html)
-- [面试 PPT 构建事件与解决记录](../reports/generated/PPT_BUILD_BLOCKER.md)
+v1–v7 Profile、旧 Oracle 入口和同期方法文档保存在不可变 Git tag
+`archive/v8.3-pre-release`。需要复现实验时请在独立 worktree checkout 该 tag，不要把旧合同
+重新合入当前 `main`。
+
+外部基线的代码、许可证与 provenance 位于 `third_party/`，不参与默认运行时。

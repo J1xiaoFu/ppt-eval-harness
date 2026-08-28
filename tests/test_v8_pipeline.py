@@ -115,7 +115,7 @@ class _SlowObservationOracle(_ObservationOracle):
 def _profile() -> EvalProfile:
     return EvalProfile(
         profile_id="v8-pipeline-test",
-        version="8.0",
+        version="8.3",
         scene=SceneType.READY_MADE,
         base_weights={"page_quality": 1.0},
         scene_weights={},
@@ -190,9 +190,8 @@ def test_scheduler_enforces_profile_timeout_per_atomic_node(tmp_path: Path) -> N
     runtime = LocalEvaluationRuntime(tmp_path / "timeout-var")
     runtime.registry.register(_SlowObservationOracle())
     profile = replace(
-        EvalProfile.default(SceneType.READY_MADE),
+        _profile(),
         oracle_timeout_seconds=0.02,
-        enabled_oracle_ids=(),
         metadata={
             "pipeline_nodes": (
                 {

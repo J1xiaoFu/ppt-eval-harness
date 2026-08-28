@@ -52,9 +52,127 @@ paths:
       responses:
         "200": { description: Complete report, manifest, and atomic evidence. }
         "404": { description: Run not found. }
+  /v1/review/tasks:
+    get:
+      operationId: listReviewTasks
+      description: >-
+        Production human-audit queue projection. It consumes only persisted Harness facts;
+        benchmark ranks and correlation statistics are never accepted as inputs.
+      parameters:
+        - in: query
+          name: view
+          schema: { type: string, enum: [queue, all, completed], default: queue }
+        - in: query
+          name: query
+          schema: { type: string, default: "" }
+        - in: query
+          name: decision
+          schema: { type: [string, "null"], enum: [PASS, REVIEW, FAIL, ERROR, null] }
+        - in: query
+          name: coverage
+          schema: { type: [string, "null"], enum: [FULL, DEGRADED, BASE_ONLY, UNASSESSABLE, null] }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+        - in: query
+          name: offset
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Attention-prioritized audit task summaries.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewQueue" }
+  /v1/review/tasks/{run_id}:
+    get:
+      operationId: getReviewTask
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: One task with attention issues, slide links, score lineage, routes, artifacts, and review history.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReviewTaskDetail" }
+        "404": { description: Run not found. }
+  /v1/review/tasks/{run_id}/report:
+    get:
+      operationId: getPublicReviewReport
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Complete report with host filesystem URIs removed. }
+  /v1/review/tasks/{run_id}/audit:
+    get:
+      operationId: getFullReviewAudit
+      description: Full Matrix, Gate/Reducer lineage, model routes, Manifest, and review history loaded on demand.
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Full audit facts for the selected run. }
+        "404": { description: Run not found. }
+  /v1/review/tasks/{run_id}/slides/{page_number}:
+    get:
+      operationId: getReviewSlide
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: page_number
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Integrity-checked rendered slide image.
+          content:
+            image/png: { schema: { type: string, contentEncoding: binary } }
+        "404": { description: Slide unavailable. }
+  /v1/review/tasks/{run_id}/artifacts/{role}:
+    get:
+      operationId: getReviewArtifact
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: role
+          required: true
+          schema:
+            type: string
+            enum: [source_pptx, atomic_observations, slide_render_manifest]
+      responses:
+        "200": { description: Run-scoped, manifest-verified artifact. }
+        "404": { description: Artifact unavailable. }
+        "409": { description: Artifact integrity mismatch. }
+  /v1/review/tasks/{run_id}/reviews:
+    get:
+      operationId: listRunReviews
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { type: string }
+      responses:
+        "200": { description: Append-only review event history. }
   /v1/reviews:
     post:
       operationId: createReview
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema: { type: string, maxLength: 128 }
       requestBody:
         required: true
         content:
@@ -123,7 +241,7 @@ components:
       required: [case]
       properties:
         case: { $ref: "#/components/schemas/EvalCase" }
-        profile: { type: object, additionalProperties: true }
+        profile: { $ref: "#/components/schemas/EvalProfileV83" }
     EvalCase:
       type: object
       required: [case_id, scene, pptx_path]
@@ -138,11 +256,154 @@ components:
         source_materials: { type: array, items: { type: string } }
         assets: { type: array, items: { type: string } }
         metadata: { type: object, additionalProperties: true }
+    EvalProfileV83:
+      type: object
+      required:
+        - profile_id
+        - version
+        - base_weights
+        - scene_weights
+        - base_multiplier_metric_ids
+        - scene_multiplier_metric_ids
+        - required_metric_ids
+        - pipeline_nodes
+      anyOf:
+        - required: [scene]
+        - required: [scenario]
+      properties:
+        profile_id: { type: string, minLength: 1 }
+        version: { const: "8.3" }
+        scene: { type: string }
+        scenario: { type: string }
+        lambda_base: { type: number, minimum: 0, maximum: 1 }
+        base_weights:
+          type: object
+          additionalProperties: { type: number, minimum: 0 }
+        scene_weights:
+          type: object
+          additionalProperties: { type: number, minimum: 0 }
+        base_multiplier_metric_ids:
+          type: array
+          items: { type: string, minLength: 1 }
+        scene_multiplier_metric_ids:
+          type: array
+          items: { type: string, minLength: 1 }
+        required_metric_ids:
+          type: array
+          items: { type: string, minLength: 1 }
+        enabled_oracle_ids:
+          type: array
+          items: { type: string, minLength: 1 }
+        pipeline_nodes:
+          type: array
+          minItems: 1
+          items: { $ref: "#/components/schemas/DagNodeSpec" }
+        hard_gate_min_confidence: { type: number, minimum: 0, maximum: 1 }
+        pass_threshold: { type: number, minimum: 0, maximum: 100 }
+        review_threshold: { type: number, minimum: 0, maximum: 100 }
+        metric_review_thresholds: { type: object, additionalProperties: { type: number } }
+        aggregation_strategy: { type: string }
+        base_metric_constructs: { type: object, additionalProperties: { type: string } }
+        base_construct_weights: { type: object, additionalProperties: { type: number } }
+        scene_metric_constructs: { type: object, additionalProperties: { type: string } }
+        scene_construct_weights: { type: object, additionalProperties: { type: number } }
+        max_retries: { type: integer, minimum: 0 }
+        oracle_timeout_seconds: { type: number, exclusiveMinimum: 0 }
+        cost_budget: { type: [number, "null"], minimum: 0 }
+        metadata: { type: object, additionalProperties: true }
+      additionalProperties: false
+    DagNodeSpec:
+      type: object
+      required: [node_id, oracle_id, kind, dependencies]
+      properties:
+        node_id: { type: string, minLength: 1 }
+        oracle_id: { type: string, minLength: 1 }
+        kind: { type: string, enum: [OBSERVE, SELECT, AUDIT, FUSE, REDUCE, SCORE] }
+        dependencies:
+          type: array
+          items: { type: string, minLength: 1 }
+        mandatory: { type: boolean }
+      additionalProperties: false
     ReviewInput:
       type: object
       required: [run_id, verdict, reviewer_id]
       properties:
         run_id: { type: string }
-        verdict: { type: string, enum: [APPROVE, REJECT] }
+        verdict:
+          type: string
+          enum: [CONFIRM_SYSTEM_DECISION, OVERRIDE_DECISION, REQUEST_MORE_EVIDENCE]
         reviewer_id: { type: string }
         note: { type: string, default: "" }
+        client_request_id: { type: string, maxLength: 128 }
+        target_decision: { type: string, enum: [PASS, REVIEW, FAIL, ERROR] }
+        issue_resolutions:
+          type: array
+          items: { $ref: "#/components/schemas/IssueResolution" }
+        track_resolutions:
+          type: object
+          additionalProperties: { type: string, enum: [TRAIN, REVIEW, REJECT] }
+    IssueResolution:
+      type: object
+      required: [issue_id, resolution]
+      properties:
+        issue_id: { type: string }
+        resolution:
+          type: string
+          enum: [CONFIRMED, FALSE_POSITIVE, INSUFFICIENT_EVIDENCE]
+        note: { type: string }
+    AttentionIssue:
+      type: object
+      required: [issue_id, priority, kind, title, summary, severity, page_numbers, evidence]
+      properties:
+        issue_id: { type: string }
+        priority: { type: string, enum: [P0, P1, P2, P3] }
+        kind: { type: string }
+        title: { type: string }
+        summary: { type: string }
+        severity: { type: string, enum: [INFO, MINOR, MAJOR, CRITICAL] }
+        metric_id: { type: [string, "null"] }
+        page_numbers: { type: array, items: { type: integer, minimum: 1 } }
+        evidence: { type: array, items: { type: object, additionalProperties: true } }
+        lineage: { type: object, additionalProperties: true }
+    ReviewTaskSummary:
+      type: object
+      required: [run_id, case_id, scenario, decision, coverage, priority, priority_reason, issue_count, page_count, review_state]
+      properties:
+        run_id: { type: string }
+        case_id: { type: string }
+        scenario: { type: string }
+        decision: { type: string, enum: [PASS, REVIEW, FAIL, ERROR] }
+        coverage: { type: string, enum: [FULL, DEGRADED, BASE_ONLY, UNASSESSABLE] }
+        score: { type: [number, "null"] }
+        priority: { type: string, enum: [P0, P1, P2, P3] }
+        priority_reason: { type: string }
+        issue_count: { type: integer, minimum: 0 }
+        page_count: { type: integer, minimum: 0 }
+        review_state: { type: string, enum: [OPEN, NEEDS_EVIDENCE, RESOLVED] }
+        created_at: { type: [string, "null"], format: date-time }
+        profile_id: { type: [string, "null"] }
+        profile_version: { type: [string, "null"] }
+    ReviewTaskDetail:
+      allOf:
+        - { $ref: "#/components/schemas/ReviewTaskSummary" }
+        - type: object
+          required: [triage_policy_version, issues, slides, training_tracks, results, gate_results, model_routes, artifacts, reviews]
+          properties:
+            triage_policy_version: { type: string }
+            issues: { type: array, items: { $ref: "#/components/schemas/AttentionIssue" } }
+            slides: { type: array, items: { type: object, additionalProperties: true } }
+            training_tracks: { type: array, items: { type: object, additionalProperties: true } }
+            results: { type: array, items: { type: object, additionalProperties: true } }
+            gate_results: { type: array, items: { type: object, additionalProperties: true } }
+            model_routes: { type: array, items: { type: object, additionalProperties: true } }
+            artifacts: { type: object, additionalProperties: true }
+            reviews: { type: array, items: { type: object, additionalProperties: true } }
+    ReviewQueue:
+      type: object
+      required: [items, total, limit, offset, triage_policy_version]
+      properties:
+        items: { type: array, items: { $ref: "#/components/schemas/ReviewTaskSummary" } }
+        total: { type: integer, minimum: 0 }
+        limit: { type: integer, minimum: 1 }
+        offset: { type: integer, minimum: 0 }
+        triage_policy_version: { type: string }

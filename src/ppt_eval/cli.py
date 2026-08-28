@@ -3,9 +3,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import subprocess
 import sys
+import uuid
 from pathlib import Path
+from typing import Any
 
 from ppt_eval.adapters import LibreOfficeRenderer, PowerPointRenderer
 from ppt_eval.config import default_profile, load_case, load_profile
@@ -14,7 +15,7 @@ from ppt_eval.infrastructure import to_primitive
 from ppt_eval.runtime import build_runtime_from_environment
 
 
-def _json(value) -> str:
+def _json(value: Any) -> str:
     return json.dumps(to_primitive(value), ensure_ascii=False, indent=2)
 
 
@@ -42,9 +43,32 @@ def build_parser() -> argparse.ArgumentParser:
 
     review = commands.add_parser("review", help="record an immutable human review")
     review.add_argument("run_id")
-    review.add_argument("verdict", choices=("APPROVE", "REJECT"))
-    review.add_argument("--reviewer", default="cli-reviewer")
+    review.add_argument(
+        "verdict",
+        choices=(
+            "CONFIRM_SYSTEM_DECISION",
+            "OVERRIDE_DECISION",
+            "REQUEST_MORE_EVIDENCE",
+        ),
+    )
+    review.add_argument("--reviewer", required=True)
     review.add_argument("--note", default="")
+    review.add_argument("--target-decision", choices=("PASS", "REVIEW", "FAIL", "ERROR"))
+    review.add_argument(
+        "--resolve",
+        action="append",
+        default=[],
+        metavar="ISSUE_ID=RESOLUTION",
+        help="repeat for each P0/P1 issue",
+    )
+    review.add_argument(
+        "--track",
+        action="append",
+        default=[],
+        metavar="TRACK=STATUS",
+        help="optional visual/layout/content/full_deck disposition",
+    )
+    review.add_argument("--client-request-id")
 
     feedback = commands.add_parser("feedback", help="record downstream acceptance and edit feedback")
     feedback.add_argument("run_id")
@@ -80,7 +104,6 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", default=8000, type=int)
 
-    commands.add_parser("project-report", help="rebuild the three-part HTML audit site")
     render = commands.add_parser("render", help="render PPTX through PowerPoint or LibreOffice")
     render.add_argument("pptx")
     render.add_argument("--renderer", choices=("powerpoint", "libreoffice"), default="powerpoint")
@@ -95,6 +118,7 @@ def main(argv: list[str] | None = None) -> int:
         runtime = build_runtime_from_environment(args.data_dir)
 
     if args.command == "run":
+        assert runtime is not None
         case = _case_from_argument(args.case)
         profile = load_profile(args.profile) if args.profile else default_profile(case.scene)
         payload = runtime.evaluate(case, profile)
@@ -105,6 +129,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if payload["decision"] != "ERROR" else 2
 
     if args.command == "batch":
+        assert runtime is not None
         override = load_profile(args.profile) if args.profile else None
         reports = []
         for path in args.cases:
@@ -117,15 +142,26 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "review":
+        assert runtime is not None
+        issue_resolutions = [
+            {"issue_id": key, "resolution": value}
+            for key, value in (_assignment(item) for item in args.resolve)
+        ]
+        track_resolutions = dict(_assignment(item) for item in args.track)
         print(_json(runtime.review({
             "run_id": args.run_id,
             "verdict": args.verdict,
             "reviewer_id": args.reviewer,
             "note": args.note,
+            "target_decision": args.target_decision,
+            "issue_resolutions": issue_resolutions,
+            "track_resolutions": track_resolutions,
+            "client_request_id": args.client_request_id or f"cli-{uuid.uuid4().hex}",
         })))
         return 0
 
     if args.command == "feedback":
+        assert runtime is not None
         accepted = {"yes": True, "no": False, "unknown": None}[args.accepted]
         print(_json(runtime.add_feedback({
             "run_id": args.run_id,
@@ -138,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "proposal":
+        assert runtime is not None
         if args.proposal_command == "create":
             changes = _json_argument(args.changes)
             result = runtime.proposals.create(
@@ -155,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if args.command == "audit":
+        assert runtime is not None
         if args.audit_command == "verify":
             valid, event = runtime.audit_log.verify()
             print(_json({"valid": valid, "broken_event": event}))
@@ -173,33 +211,28 @@ def main(argv: list[str] | None = None) -> int:
         uvicorn.run("ppt_eval.api:app", host=args.host, port=args.port, reload=False)
         return 0
 
-    if args.command == "project-report":
-        command = [
-            sys.executable,
-            "scripts/reporting/build_report.py",
-            "--audit",
-            "audit/example/project_audit.json",
-            "--events",
-            "audit/example/events.jsonl",
-            "--output",
-            "reports/generated",
-        ]
-        return subprocess.call(command)
     if args.command == "render":
         renderer = PowerPointRenderer() if args.renderer == "powerpoint" else LibreOfficeRenderer()
-        result = renderer.render(args.pptx, args.output)
-        print(_json(result))
+        render_result = renderer.render(args.pptx, args.output)
+        print(_json(render_result))
         return 0
     return 2
 
 
-def _json_argument(value: str) -> dict:
+def _json_argument(value: str) -> dict[str, Any]:
     path = Path(value)
     text = path.read_text(encoding="utf-8") if path.is_file() else value
     payload = json.loads(text)
     if not isinstance(payload, dict):
         raise ValueError("expected a JSON object")
     return payload
+
+
+def _assignment(value: str) -> tuple[str, str]:
+    key, separator, item = value.partition("=")
+    if not separator or not key.strip() or not item.strip():
+        raise ValueError(f"expected KEY=VALUE, got {value!r}")
+    return key.strip(), item.strip().upper()
 
 
 if __name__ == "__main__":

@@ -57,16 +57,6 @@ def test_v8_is_default_and_emits_atomic_training_contract(tmp_path: Path) -> Non
     assert decisions["full_deck"]["status"] == "REVIEW"
 
 
-def test_explicit_v3_profile_remains_loadable_after_v8_default() -> None:
-    from ppt_eval.config import load_profile
-
-    legacy = load_profile("configs/profiles/finished_deck_v3.json")
-
-    assert legacy.profile_id == "finished-deck-v3"
-    assert legacy.version == "3.1"
-    assert "high_cost.model_audits" in legacy.enabled_oracle_ids
-
-
 def test_v8_cross_provider_fallback_persists_complete_lineage(tmp_path: Path) -> None:
     deck = build_pptx(
         tmp_path / "cross-provider.pptx",

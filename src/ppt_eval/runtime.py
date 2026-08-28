@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import builtins
 import json
 import os
 import shutil
@@ -17,18 +18,23 @@ from ppt_eval.adapters import (
     PptxAdapter,
     RenderResult,
 )
-from ppt_eval.application import DagScheduler, EvaluationService, RunSupervisor
+from ppt_eval.application import (
+    DagScheduler,
+    EvaluationService,
+    RunSupervisor,
+    audit_task_sort_key,
+    build_attention_projection,
+    build_review_task_summary,
+    normalize_review_payload,
+)
 from ppt_eval.config import default_profile
 from ppt_eval.domain import AtomicObservation, EvalCase, EvalProfile
 from ppt_eval.flywheel import (
-    ActiveSampler,
     JsonlRecordStore,
     ParameterProposalService,
     feedback_from_mapping,
 )
 from ppt_eval.infrastructure import (
-    DEFAULT_QWEN_KEY_FILE,
-    DEFAULT_ZHIPU_KEY_FILE,
     JsonlAuditLog,
     JsonRunRepository,
     LocalArtifactStore,
@@ -36,20 +42,10 @@ from ppt_eval.infrastructure import (
     ZhipuAuditSettings,
     font_fingerprint,
     git_sha,
+    sha256_file,
     to_primitive,
 )
-from ppt_eval.oracles import (
-    AdvancedModelReviewOracle,
-    ModelSourceAccessPolicy,
-    build_default_registry,
-)
-from ppt_eval.oracles.model_audits import (
-    GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
-    GROUNDED_STRUCTURED_DIMENSIONS_VLM_ORACLE_ID,
-    MODEL_AUDIT_COMPOSITE_ID,
-    STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
-    STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
-)
+from ppt_eval.oracles import build_default_registry
 from ppt_eval.reporting import export_run_report
 
 _RENDER_MANIFEST_NAME = "render-manifest.json"
@@ -105,13 +101,10 @@ class LocalEvaluationRuntime:
         self,
         root: str | Path = "var",
         *,
-        llm_provider: ModelAuditProvider | None = None,
         vlm_provider: ModelAuditProvider | None = None,
-        advanced_llm_provider: ModelAuditProvider | None = None,
         advanced_vlm_provider: ModelAuditProvider | None = None,
         slide_renderer: SlideRenderer | None = None,
-        model_source_roots: Sequence[str | Path] | str | Path = (),
-        model_source_denied_paths: Sequence[str | Path] | str | Path = (),
+        review_rendering: bool = False,
     ) -> None:
         self.paths = RuntimePaths.under(root)
         self.paths.root.mkdir(parents=True, exist_ok=True)
@@ -120,37 +113,19 @@ class LocalEvaluationRuntime:
         self.artifacts = LocalArtifactStore(self.paths.artifacts)
         self._git_sha = git_sha(Path.cwd())
         self._font_fingerprint = font_fingerprint()
-        self.model_source_access_policy = ModelSourceAccessPolicy(
-            allowed_roots=tuple(Path(item) for item in _path_values(model_source_roots)),
-            denied_paths=tuple(
-                Path(item) for item in _path_values(model_source_denied_paths)
-            ),
-        )
         self.registry = build_default_registry(
-            llm_provider=llm_provider,
             vlm_provider=vlm_provider,
             advanced_vlm_provider=advanced_vlm_provider,
-            model_source_access_policy=self.model_source_access_policy,
-        )
-        self.advanced_model_review = (
-            AdvancedModelReviewOracle(
-                llm_provider=advanced_llm_provider,
-                vlm_provider=advanced_vlm_provider,
-                source_access_policy=self.model_source_access_policy,
-            )
-            if advanced_llm_provider is not None or advanced_vlm_provider is not None
-            else None
         )
         self._vlm_enabled = vlm_provider is not None
         self._slide_renderer = slide_renderer
+        self._review_rendering = bool(review_rendering)
         self.feedback_store = JsonlRecordStore(self.paths.root / "feedback" / "records.jsonl")
         self.proposal_store = JsonlRecordStore(self.paths.root / "proposals" / "events.jsonl")
         self.proposals = ParameterProposalService(self.proposal_store, self._audit_proposal)
-        self.active_sampler = ActiveSampler()
         supervisor = RunSupervisor(
             DagScheduler(self.registry),
             audit_log=self.audit_log,
-            advanced_model_review=self.advanced_model_review,
         )
         self.service = EvaluationService(supervisor)
         self._lock = threading.RLock()
@@ -165,6 +140,7 @@ class LocalEvaluationRuntime:
         run_id: str | None = None,
     ) -> dict[str, Any]:
         profile = profile or default_profile(case.scene)
+        _validate_runtime_profile(profile)
         prepared_artifacts, render_versions = self._prepare_model_artifacts(
             case,
             profile,
@@ -189,6 +165,34 @@ class LocalEvaluationRuntime:
             artifacts=prepared_artifacts,
             run_id=run_id,
         )
+        artifact_hashes = dict(outcome.manifest.artifact_hashes)
+        source_artifact: Mapping[str, Any] | None = None
+        source_path = Path(case.pptx_path)
+        try:
+            if source_path.is_file():
+                source_artifact = self.artifacts.put(
+                    source_path,
+                    media_type=(
+                        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                    ),
+                )
+                artifact_hashes["source_pptx"] = str(source_artifact["sha256"])
+                self.audit_log.append(
+                    run_id=outcome.report.run_id,
+                    event_type="SOURCE_PRESENTATION_STORED",
+                    actor="local-runtime",
+                    payload={
+                        "sha256": source_artifact["sha256"],
+                        "size_bytes": source_artifact["size_bytes"],
+                        "media_type": source_artifact["media_type"],
+                    },
+                )
+        except OSError:
+            # The machine report must remain available even if the audit copy
+            # cannot be persisted.  The review projection exposes the missing
+            # source artifact explicitly instead of leaking a local path.
+            source_artifact = None
+
         observation_artifact: Mapping[str, Any] | None = None
         if outcome.observations:
             observation_bytes = json.dumps(
@@ -202,15 +206,8 @@ class LocalEvaluationRuntime:
                 media_type="application/vnd.ppt-eval.observations+json",
                 original_name=f"{outcome.report.run_id}.observations.json",
             )
-            outcome = replace(
-                outcome,
-                manifest=replace(
-                    outcome.manifest,
-                    artifact_hashes={
-                        **dict(outcome.manifest.artifact_hashes),
-                        "atomic_observations": str(observation_artifact["sha256"]),
-                    },
-                ),
+            artifact_hashes["atomic_observations"] = str(
+                observation_artifact["sha256"]
             )
             self.audit_log.append(
                 run_id=outcome.report.run_id,
@@ -222,12 +219,63 @@ class LocalEvaluationRuntime:
                     "media_type": observation_artifact["media_type"],
                 },
             )
+        render_result = prepared_artifacts.get("render_result")
+        render_manifest_artifact: Mapping[str, Any] | None = None
+        render_cache_key = str(outcome.manifest.input_hash or "")
+        if isinstance(render_result, RenderResult):
+            render_manifest_path = (
+                self.paths.render_cache
+                / render_cache_key
+                / _RENDER_MANIFEST_NAME
+            )
+            if render_manifest_path.is_file():
+                render_manifest_artifact = self.artifacts.put(
+                    render_manifest_path,
+                    media_type="application/vnd.ppt-eval.slide-render-manifest+json",
+                )
+                artifact_hashes["slide_render_manifest"] = str(
+                    render_manifest_artifact["sha256"]
+                )
+                self.audit_log.append(
+                    run_id=outcome.report.run_id,
+                    event_type="SLIDE_RENDER_MANIFEST_STORED",
+                    actor="local-runtime",
+                    payload={
+                        "sha256": render_manifest_artifact["sha256"],
+                        "slide_count": len(render_result.slide_images),
+                        "renderer_id": render_result.renderer_id,
+                        "renderer_version": render_result.renderer_version,
+                    },
+                )
+        outcome = replace(
+            outcome,
+            manifest=replace(outcome.manifest, artifact_hashes=artifact_hashes),
+        )
         payload = normalized_report_payload(outcome)
+        if source_artifact is not None:
+            payload["source_artifact"] = dict(source_artifact)
         if observation_artifact is not None:
             payload["observation_artifact"] = dict(observation_artifact)
             payload["observation_summary"] = _observation_summary(
                 outcome.observations
             )
+        if isinstance(render_result, RenderResult):
+            payload["render_artifact"] = {
+                "cache_key": render_cache_key,
+                "renderer_id": render_result.renderer_id,
+                "renderer_version": render_result.renderer_version,
+                "slide_count": len(render_result.slide_images),
+                "warnings": list(render_result.warnings),
+                "manifest_sha256": (
+                    render_manifest_artifact["sha256"]
+                    if render_manifest_artifact is not None
+                    else None
+                ),
+            }
+            if render_manifest_artifact is not None:
+                payload["slide_render_manifest_artifact"] = dict(
+                    render_manifest_artifact
+                )
         with self._lock:
             self.repository.save(payload)
         return payload
@@ -289,7 +337,7 @@ class LocalEvaluationRuntime:
         profile: EvalProfile,
         artifacts: Mapping[str, Any],
     ) -> bool:
-        if not self._vlm_enabled:
+        if not self._vlm_enabled and not self._review_rendering:
             return False
         pipeline_nodes = profile.metadata.get("pipeline_nodes", ())
         pipeline_oracle_ids = {
@@ -300,13 +348,9 @@ class LocalEvaluationRuntime:
             pipeline_nodes, (str, bytes)
         ) else set()
         configured_oracle_ids = set(profile.enabled_oracle_ids) | pipeline_oracle_ids
-        if not {
-            MODEL_AUDIT_COMPOSITE_ID,
-            GROUNDED_STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
-            GROUNDED_STRUCTURED_DIMENSIONS_VLM_ORACLE_ID,
-            STRUCTURED_DIMENSIONS_MODEL_AUDIT_COMPOSITE_ID,
-            STRUCTURED_MODEL_AUDIT_COMPOSITE_ID,
-        }.intersection(configured_oracle_ids) and not any(
+        if self._review_rendering:
+            return "slide_images" not in artifacts and "render_result" not in artifacts
+        if not any(
             oracle_id.startswith("v8.visual.") for oracle_id in configured_oracle_ids
         ):
             return False
@@ -400,16 +444,302 @@ class LocalEvaluationRuntime:
     def list(self) -> list[dict[str, Any]]:
         return self.repository.list()
 
+    def reviews(self, run_id: str) -> builtins.list[dict[str, Any]]:
+        self.repository.get(run_id)
+        return self.repository.list_reviews(run_id)
+
+    def observations(self, run_id: str) -> builtins.list[dict[str, Any]]:
+        report = self.repository.get(run_id)
+        reference = report.get("observation_artifact")
+        if not isinstance(reference, Mapping):
+            return []
+        path, _metadata = self.review_artifact(run_id, "atomic_observations")
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(payload, builtins.list):
+            raise ValueError("observation artifact must contain a JSON array")
+        return [
+            {str(key): value for key, value in item.items()}
+            for item in payload
+            if isinstance(item, Mapping)
+        ]
+
+    def review_slide_paths(self, run_id: str) -> tuple[Path, ...]:
+        report = self.repository.get(run_id)
+        reference = report.get("render_artifact")
+        if not isinstance(reference, Mapping):
+            return ()
+        manifest = report.get("manifest")
+        manifest = manifest if isinstance(manifest, Mapping) else {}
+        input_hash = str(manifest.get("input_hash") or "")
+        cache_key = str(reference.get("cache_key") or "")
+        slide_count = reference.get("slide_count")
+        if (
+            cache_key != input_hash
+            or len(cache_key) != 64
+            or any(character not in "0123456789abcdef" for character in cache_key)
+            or isinstance(slide_count, bool)
+            or not isinstance(slide_count, int)
+            or slide_count < 1
+        ):
+            return ()
+        result = _load_render_cache(
+            self.paths.render_cache / cache_key,
+            expected_input_hash=input_hash,
+            expected_slide_count=slide_count,
+        )
+        return result.slide_images if result is not None else ()
+
+    def review_artifact(
+        self,
+        run_id: str,
+        role: str,
+    ) -> tuple[Path, Mapping[str, Any]]:
+        report = self.repository.get(run_id)
+        role_to_field = {
+            "source_pptx": "source_artifact",
+            "atomic_observations": "observation_artifact",
+            "slide_render_manifest": "slide_render_manifest_artifact",
+        }
+        field = role_to_field.get(role)
+        if field is None:
+            raise KeyError(role)
+        reference = report.get(field)
+        if not isinstance(reference, Mapping):
+            raise FileNotFoundError(role)
+        digest = str(reference.get("sha256") or "")
+        manifest = report.get("manifest")
+        manifest = manifest if isinstance(manifest, Mapping) else {}
+        artifact_hashes = manifest.get("artifact_hashes")
+        artifact_hashes = artifact_hashes if isinstance(artifact_hashes, Mapping) else {}
+        if artifact_hashes.get(role) != digest:
+            raise ValueError("artifact hash does not match the run manifest")
+        path = self.artifacts.resolve(digest)
+        if sha256_file(path) != digest:
+            raise ValueError("artifact content hash verification failed")
+        metadata = {
+            "role": role,
+            "sha256": digest,
+            "size_bytes": path.stat().st_size,
+            "media_type": str(reference.get("media_type") or "application/octet-stream"),
+            "original_name": str(reference.get("original_name") or role),
+        }
+        return path, metadata
+
+    def list_review_tasks(
+        self,
+        *,
+        view: str = "queue",
+        query: str = "",
+        decision: str | None = None,
+        coverage: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> dict[str, Any]:
+        if view not in {"queue", "all", "completed"}:
+            raise ValueError("view must be queue, all, or completed")
+        if limit < 1 or limit > 200 or offset < 0:
+            raise ValueError("invalid pagination")
+        query_text = query.strip().casefold()
+        summaries: list[dict[str, Any]] = []
+        for report in self.repository.list():
+            run_id = str(report.get("run_id") or "")
+            reviews = self.repository.list_reviews(run_id)
+            projection_report = report
+            try:
+                observations = self.observations(run_id)
+            except (OSError, ValueError, json.JSONDecodeError):
+                observations = []
+                projection_report = _with_integrity_error(
+                    report, "ATOMIC_OBSERVATION_ARTIFACT_INVALID"
+                )
+            page_count = len(self.review_slide_paths(run_id))
+            summary = build_review_task_summary(
+                projection_report,
+                observations=observations,
+                reviews=reviews,
+                page_count=page_count,
+            )
+            if view == "queue" and (
+                summary["review_state"] == "RESOLVED" or summary["priority"] == "P3"
+            ):
+                continue
+            if view == "completed" and summary["review_state"] != "RESOLVED":
+                continue
+            if decision and summary["decision"] != decision:
+                continue
+            if coverage and summary["coverage"] != coverage:
+                continue
+            if query_text and query_text not in (
+                f"{summary['case_id']} {summary['run_id']} {summary['scenario']}"
+            ).casefold():
+                continue
+            summaries.append(summary)
+        summaries.sort(key=audit_task_sort_key)
+        total = len(summaries)
+        return {
+            "items": summaries[offset : offset + limit],
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "triage_policy_version": "audit-attention@1.0.0",
+        }
+
+    def review_task(self, run_id: str) -> dict[str, Any]:
+        report = self.repository.get(run_id)
+        observation_integrity = True
+        try:
+            observations = self.observations(run_id)
+        except (OSError, ValueError, json.JSONDecodeError):
+            observations = []
+            observation_integrity = False
+            report = _with_integrity_error(
+                report, "ATOMIC_OBSERVATION_ARTIFACT_INVALID"
+            )
+        reviews = self.repository.list_reviews(run_id)
+        slides = self.review_slide_paths(run_id)
+        summary = build_review_task_summary(
+            report,
+            observations=observations,
+            reviews=reviews,
+            page_count=len(slides),
+        )
+        attention = build_attention_projection(report, observations)
+        results = [
+            {str(key): value for key, value in item.items()}
+            for item in report.get("results", ())
+            if isinstance(item, Mapping)
+        ]
+        gate_results = [
+            item
+            for item in results
+            if str(item.get("score_role") or "").endswith("MULTIPLIER")
+            or str(item.get("metric_id") or "").endswith("integrity")
+        ]
+        model_routes = []
+        for item in results:
+            metadata = item.get("metadata")
+            metadata = metadata if isinstance(metadata, Mapping) else {}
+            attempts = metadata.get("routing_attempts")
+            if not isinstance(attempts, Sequence) or isinstance(attempts, (str, bytes)):
+                continue
+            model_routes.append(
+                {
+                    "metric_id": item.get("metric_id"),
+                    "criterion_id": metadata.get("criterion_id"),
+                    "selected_tier": metadata.get("selected_tier"),
+                    "escalation_reason": metadata.get("escalation_reason"),
+                    "sampled_pages": list(metadata.get("sampled_pages", ())),
+                    "forced_rule_pages": list(metadata.get("forced_rule_pages", ())),
+                    "attempts": [
+                        {
+                            "tier": attempt.get("tier"),
+                            "selected": attempt.get("selected"),
+                            "execution_status": attempt.get("execution_status"),
+                            "metric_status": attempt.get("metric_status"),
+                            "confidence": attempt.get("confidence"),
+                            "error_code": attempt.get("error_code"),
+                        }
+                        for attempt in attempts
+                        if isinstance(attempt, Mapping)
+                    ],
+                }
+            )
+        manifest = report.get("manifest")
+        manifest = dict(manifest) if isinstance(manifest, Mapping) else {}
+        artifacts: dict[str, dict[str, Any]] = {
+            "report": {"available": True},
+            "atomic_observations": {
+                "available": observation_integrity
+                and isinstance(report.get("observation_artifact"), Mapping),
+                "sha256": _artifact_digest(report, "observation_artifact"),
+            },
+            "source_pptx": {
+                "available": isinstance(report.get("source_artifact"), Mapping),
+                "sha256": _artifact_digest(report, "source_artifact"),
+            },
+            "slide_render_manifest": {
+                "available": isinstance(
+                    report.get("slide_render_manifest_artifact"), Mapping
+                ),
+                "sha256": _artifact_digest(
+                    report, "slide_render_manifest_artifact"
+                ),
+            },
+        }
+        return {
+            **summary,
+            "triage_policy_version": attention["policy_version"],
+            "report_hash": manifest.get("result_hash"),
+            "observation_hash": artifacts["atomic_observations"]["sha256"],
+            "review_reasons": list(report.get("review_reasons", ())),
+            "issues": attention["items"],
+            "slides": [
+                {"page_number": index, "available": True}
+                for index in range(1, len(slides) + 1)
+            ],
+            "results": results,
+            "gate_results": gate_results,
+            "model_routes": model_routes,
+            "manifest": manifest,
+            "artifacts": artifacts,
+            "reviews": reviews,
+            "audit_integrity": {
+                "chain_valid": self.audit_log.verify()[0],
+                "observation_artifact_valid": observation_integrity,
+            },
+        }
+
     def review(self, payload: dict[str, Any]) -> dict[str, Any]:
         run_id = str(payload["run_id"])
-        self.repository.get(run_id)
-        record = self.repository.add_review(payload)
-        self.audit_log.append(
-            run_id=run_id,
-            event_type="HUMAN_REVIEW_RECORDED",
-            actor=str(payload.get("reviewer_id") or "reviewer"),
-            payload=record,
+        report = self.repository.get(run_id)
+        try:
+            observations = self.observations(run_id)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            if str(payload.get("verdict") or "").upper() != "REQUEST_MORE_EVIDENCE":
+                raise ValueError(
+                    "invalid observation artifact permits only REQUEST_MORE_EVIDENCE"
+                ) from exc
+            observations = []
+            report = _with_integrity_error(
+                report, "ATOMIC_OBSERVATION_ARTIFACT_INVALID"
+            )
+        attention = build_attention_projection(report, observations)
+        normalized = normalize_review_payload(
+            report,
+            payload,
+            valid_issue_ids=[str(item["issue_id"]) for item in attention["items"]],
         )
+        if normalized["verdict"] in {
+            "CONFIRM_SYSTEM_DECISION",
+            "OVERRIDE_DECISION",
+        }:
+            required_issue_ids = {
+                str(item["issue_id"])
+                for item in attention["items"]
+                if item.get("priority") in {"P0", "P1"}
+            }
+            resolved_issue_ids = {
+                str(item["issue_id"])
+                for item in normalized["issue_resolutions"]
+            }
+            missing = sorted(required_issue_ids - resolved_issue_ids)
+            if missing:
+                raise ValueError(
+                    "all P0/P1 attention issues must be resolved before final review"
+                )
+        existing_review_ids = {
+            str(item.get("review_id"))
+            for item in self.repository.list_reviews(run_id)
+            if item.get("review_id")
+        }
+        record = self.repository.add_review(normalized)
+        if str(record.get("review_id")) not in existing_review_ids:
+            self.audit_log.append(
+                run_id=run_id,
+                event_type="HUMAN_REVIEW_RECORDED",
+                actor=str(payload.get("reviewer_id") or "reviewer"),
+                payload=record,
+            )
         return record
 
     def export(self, run_id: str, output_dir: str | Path) -> tuple[Path, Path]:
@@ -472,12 +802,19 @@ def _write_render_manifest(
     result: RenderResult,
 ) -> None:
     payload = {
-        "schema_version": "1.0",
+        "schema_version": "1.1",
         "input_hash": input_hash,
         "renderer_id": result.renderer_id,
         "renderer_version": result.renderer_version,
         "slide_count": len(result.slide_images),
-        "slide_images": [path.name for path in result.slide_images],
+        "slide_images": [
+            {
+                "name": path.name,
+                "sha256": sha256_file(path),
+                "size_bytes": path.stat().st_size,
+            }
+            for path in result.slide_images
+        ],
         "warnings": list(result.warnings),
     }
     (output_dir / _RENDER_MANIFEST_NAME).write_text(
@@ -497,7 +834,8 @@ def _load_render_cache(
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
         if not isinstance(payload, Mapping):
             return None
-        if payload.get("schema_version") != "1.0":
+        schema_version = payload.get("schema_version")
+        if schema_version not in {"1.0", "1.1"}:
             return None
         if payload.get("input_hash") != expected_input_hash:
             return None
@@ -505,32 +843,56 @@ def _load_render_cache(
             return None
         renderer_id = payload.get("renderer_id")
         renderer_version = payload.get("renderer_version")
-        names = payload.get("slide_images")
+        entries = payload.get("slide_images")
         warnings = payload.get("warnings", ())
         if not isinstance(renderer_id, str) or not renderer_id.strip():
             return None
         if not isinstance(renderer_version, str) or not renderer_version.strip():
             return None
-        if isinstance(names, (str, bytes)) or not isinstance(names, list) or not names:
-            return None
-        if len(names) != expected_slide_count:
-            return None
-        if len(names) != len(
-            {name.casefold() for name in names if isinstance(name, str)}
+        if (
+            isinstance(entries, (str, bytes))
+            or not isinstance(entries, list)
+            or not entries
         ):
+            return None
+        if len(entries) != expected_slide_count:
+            return None
+        names = [
+            item if isinstance(item, str) else item.get("name")
+            for item in entries
+            if isinstance(item, (str, Mapping))
+        ]
+        if len(names) != len(entries) or not all(isinstance(name, str) for name in names):
+            return None
+        string_names = [str(name) for name in names]
+        if len(string_names) != len({name.casefold() for name in string_names}):
             return None
         if isinstance(warnings, (str, bytes)) or not isinstance(warnings, list):
             return None
         images: list[Path] = []
         cache_root = cache_dir.resolve()
-        for name in names:
-            if not isinstance(name, str) or Path(name).name != name:
+        for index, name in enumerate(string_names):
+            if Path(name).name != name:
                 return None
             image = (cache_dir / name).resolve()
             if not image.is_relative_to(cache_root):
                 return None
             if not image.is_file() or image.stat().st_size <= 0:
                 return None
+            if schema_version == "1.1":
+                entry = entries[index]
+                if not isinstance(entry, Mapping):
+                    return None
+                expected_sha256 = entry.get("sha256")
+                expected_size = entry.get("size_bytes")
+                if (
+                    not isinstance(expected_sha256, str)
+                    or sha256_file(image) != expected_sha256
+                    or isinstance(expected_size, bool)
+                    or not isinstance(expected_size, int)
+                    or image.stat().st_size != expected_size
+                ):
+                    return None
             images.append(image)
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return None
@@ -558,9 +920,8 @@ def build_runtime_from_environment(
     environment: Mapping[str, str] | None = None,
     workspace_root: str | Path | None = None,
     slide_renderer: SlideRenderer | None = None,
-    model_source_roots: Sequence[str | Path] | str | Path | None = None,
 ) -> LocalEvaluationRuntime:
-    """Create the opt-in infrastructure-aware runtime used by CLI/API/worker.
+    """Create the opt-in infrastructure-aware runtime used by CLI and API.
 
     This is deliberately separate from ``LocalEvaluationRuntime.__init__`` so
     direct construction remains offline and deterministic.  Presence of
@@ -568,9 +929,8 @@ def build_runtime_from_environment(
     qwen3.8-flash primary tier.  The independent ``ZAI_API_KEY`` (or ignored
     local BigModel key file) enables glm-5.3-flash criterion-isomorphic
     fallback.  Each provider has its own kill switch, endpoint and timeout.
-    Local ``source_materials`` files remain unavailable to remote model audits
-    unless their parent root is explicitly supplied through
-    ``model_source_roots`` or ``PPT_EVAL_MODEL_SOURCE_ROOTS``.
+    Current VLM requests contain rendered pages plus bounded case text; local
+    source files are never opened or uploaded by the model-audit path.
     """
 
     env = dict(os.environ if environment is None else environment)
@@ -588,77 +948,51 @@ def build_runtime_from_environment(
         for secret in (qwen_settings.api_key, zhipu_settings.api_key)
         if secret
     )
-    flash, _legacy_qwen_advanced = qwen_settings.providers(
+    flash = qwen_settings.provider(
         protected_secrets=protected_model_credentials,
     )
     advanced = zhipu_settings.provider(
         protected_secrets=protected_model_credentials,
     )
     data_root = root if root is not None else env.get("PPT_EVAL_DATA_DIR", "var")
-    source_roots = _configured_model_source_roots(
-        model_source_roots,
-        environment=env,
-        workspace_root=project_root,
-    )
-    key_file_value = str(
-        env.get("PPT_EVAL_DASHSCOPE_API_KEY_FILE") or DEFAULT_QWEN_KEY_FILE
-    ).strip()
-    key_file = Path(key_file_value)
-    if not key_file.is_absolute():
-        key_file = project_root / key_file
-    zhipu_key_file_value = str(
-        env.get("PPT_EVAL_ZHIPU_API_KEY_FILE") or DEFAULT_ZHIPU_KEY_FILE
-    ).strip()
-    zhipu_key_file = Path(zhipu_key_file_value)
-    if not zhipu_key_file.is_absolute():
-        zhipu_key_file = project_root / zhipu_key_file
     return LocalEvaluationRuntime(
         data_root,
-        llm_provider=flash,
         vlm_provider=flash,
-        advanced_llm_provider=advanced,
         advanced_vlm_provider=advanced,
         slide_renderer=slide_renderer,
-        model_source_roots=source_roots,
-        model_source_denied_paths=(
-            project_root / "api",
-            project_root / ".git",
-            project_root / ".env",
-            key_file,
-            zhipu_key_file,
+        review_rendering=_environment_flag(
+            env.get("PPT_EVAL_REVIEW_RENDERING_ENABLED"),
+            default=False,
         ),
     )
 
 
-def _configured_model_source_roots(
-    explicit: Sequence[str | Path] | str | Path | None,
-    *,
-    environment: Mapping[str, str],
-    workspace_root: Path,
-) -> tuple[Path, ...]:
-    if explicit is None:
-        raw = str(environment.get("PPT_EVAL_MODEL_SOURCE_ROOTS") or "").strip()
-        values: Sequence[str | Path] = tuple(
-            part.strip() for part in raw.split(os.pathsep) if part.strip()
+def _validate_runtime_profile(profile: EvalProfile) -> None:
+    """Keep the release runtime on the single supported write contract."""
+
+    if profile.version != "8.3":
+        raise ValueError(
+            "the release runtime accepts only Profile version 8.3; "
+            "use archive/v8.3-pre-release for historical replay"
         )
-    else:
-        values = _path_values(explicit)
-
-    roots: list[Path] = []
-    for value in values:
-        path = Path(value)
-        if not path.is_absolute():
-            path = workspace_root / path
-        roots.append(path.resolve(strict=False))
-    return tuple(roots)
+    pipeline_nodes = profile.metadata.get("pipeline_nodes")
+    if (
+        isinstance(pipeline_nodes, (str, bytes))
+        or not isinstance(pipeline_nodes, Sequence)
+        or not pipeline_nodes
+    ):
+        raise ValueError("Profile 8.3 requires a non-empty pipeline_nodes DAG")
 
 
-def _path_values(
-    values: Sequence[str | Path] | str | Path,
-) -> tuple[str | Path, ...]:
-    if isinstance(values, (str, Path)):
-        return (values,)
-    return tuple(values)
+def _environment_flag(value: object, *, default: bool) -> bool:
+    if value is None or not str(value).strip():
+        return default
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError("PPT_EVAL_REVIEW_RENDERING_ENABLED must be a boolean")
 
 
 def _find_workspace_root(value: str | Path | None) -> Path:
@@ -691,6 +1025,23 @@ def _observation_summary(
         "by_scope": dict(sorted(by_scope.items())),
         "by_status": dict(sorted(by_status.items())),
     }
+
+
+def _artifact_digest(report: Mapping[str, Any], field: str) -> str | None:
+    reference = report.get(field)
+    if not isinstance(reference, Mapping):
+        return None
+    digest = reference.get("sha256")
+    return str(digest) if isinstance(digest, str) and digest else None
+
+
+def _with_integrity_error(
+    report: Mapping[str, Any], error_code: str
+) -> dict[str, Any]:
+    copied = {str(key): value for key, value in report.items()}
+    errors = [str(item) for item in report.get("errors", ())]
+    copied["errors"] = list(dict.fromkeys([*errors, error_code]))
+    return copied
 
 
 _runtime: LocalEvaluationRuntime | None = None

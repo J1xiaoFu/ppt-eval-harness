@@ -1,3 +1,13 @@
+FROM node:22-alpine AS ui-builder
+
+WORKDIR /ui
+RUN corepack enable
+COPY ui/package.json ui/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY ui/index.html ui/tsconfig.json ui/vite.config.ts ./
+COPY ui/src ./src
+RUN pnpm build
+
 FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -13,7 +23,8 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' \
 
 WORKDIR /app
 COPY . /app
-RUN pip install --no-cache-dir ".[api,worker,storage]"
+COPY --from=ui-builder /ui/dist /app/ui/dist
+RUN pip install --no-cache-dir ".[api]"
 
 EXPOSE 8000
 CMD ["uvicorn", "ppt_eval.api:app", "--host", "0.0.0.0", "--port", "8000"]

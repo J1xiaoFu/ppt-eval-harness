@@ -1,10 +1,12 @@
 """Public agentic Harness application API."""
 
 from .audit import AuditLog, InMemoryAuditLog
-from .model_escalation import (
-    ModelAuditEscalationPolicy,
-    ModelAuditTier,
-    ModelEscalationOutcome,
+from .audit_projection import (
+    TRIAGE_POLICY_VERSION,
+    audit_task_sort_key,
+    build_attention_projection,
+    build_review_task_summary,
+    normalize_review_payload,
 )
 from .oracle import (
     BaselinePptQualityOracle,
@@ -31,9 +33,6 @@ __all__ = [
     "ExecutionContext",
     "InMemoryAuditLog",
     "MetricDefinition",
-    "ModelAuditEscalationPolicy",
-    "ModelAuditTier",
-    "ModelEscalationOutcome",
     "Oracle",
     "OracleDescriptor",
     "OracleExecutionOutput",
@@ -42,4 +41,9 @@ __all__ = [
     "RunSupervisor",
     "SchedulerOutcome",
     "SupervisionOutcome",
+    "TRIAGE_POLICY_VERSION",
+    "audit_task_sort_key",
+    "build_attention_projection",
+    "build_review_task_summary",
+    "normalize_review_payload",
 ]

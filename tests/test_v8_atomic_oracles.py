@@ -7,9 +7,9 @@ from PIL import Image, ImageDraw
 
 from ppt_eval.adapters import PptxAdapter
 from ppt_eval.application.oracle import EvaluationContext
+from ppt_eval.config import default_profile
 from ppt_eval.domain import (
     EvalCase,
-    EvalProfile,
     EvaluationScope,
     MetricStatus,
     SceneType,
@@ -58,7 +58,7 @@ def _context(
         assets=assets,
         metadata=metadata or {},
     )
-    return EvaluationContext(case=case, profile=EvalProfile.default(scene))
+    return EvaluationContext(case=case, profile=default_profile(scene))
 
 
 def _ooxml() -> PptxAdapter:

@@ -468,8 +468,6 @@ class V8TieredVisualCriterionOracle:
         flash_provider: ModelAuditProvider | None,
         advanced_provider: ModelAuditProvider | None,
         adapter: PptxAdapter | None = None,
-        *,
-        source_access_policy: Any = None,
     ) -> None:
         if criterion_id not in V8_VISUAL_CRITERION_IDS:
             raise ValueError(f"unknown v8 visual criterion {criterion_id!r}")
@@ -480,14 +478,12 @@ class V8TieredVisualCriterionOracle:
             criterion_id,
             flash_provider,
             adapter,
-            source_access_policy=source_access_policy,
         )
         self._advanced = (
             GroundedSingleCriterionVlmOracle(
                 criterion_id,
                 advanced_provider,
                 adapter,
-                source_access_policy=source_access_policy,
             )
             if advanced_provider is not None
             else None
@@ -512,7 +508,11 @@ class V8TieredVisualCriterionOracle:
             ("FLASH", self._flash, flash)
         ]
         reason: str | None = None
-        if flash.metric_status != MetricStatus.SCORED:
+        if flash.metadata.get("reason_code") == (
+            "CRITERION_CONFIDENCE_BELOW_PROFILE_FLOOR"
+        ):
+            reason = "FLASH_LOW_CONFIDENCE"
+        elif flash.metric_status != MetricStatus.SCORED:
             reason = "FLASH_UNRESOLVED"
         elif flash.confidence < 0.60:
             reason = "FLASH_LOW_CONFIDENCE"
@@ -637,8 +637,6 @@ class V8RasterTextObservationOracle:
         flash_provider: ModelAuditProvider | None,
         advanced_provider: ModelAuditProvider | None,
         adapter: PptxAdapter | None = None,
-        *,
-        source_access_policy: Any = None,
     ) -> None:
         if criterion_id not in V8_RASTER_TEXT_CRITERION_IDS:
             raise ValueError(f"unknown v8 raster text criterion {criterion_id!r}")
@@ -653,14 +651,12 @@ class V8RasterTextObservationOracle:
             criterion_id,
             flash_provider,
             self.adapter,
-            source_access_policy=source_access_policy,
         )
         self._advanced = (
             GroundedSingleCriterionVlmOracle(
                 criterion_id,
                 advanced_provider,
                 self.adapter,
-                source_access_policy=source_access_policy,
             )
             if advanced_provider is not None
             else None
@@ -707,7 +703,11 @@ class V8RasterTextObservationOracle:
             tuple[str, GroundedSingleCriterionVlmOracle, OracleResult]
         ] = [("FLASH", self._flash, flash)]
         reason: str | None = None
-        if flash.metric_status != MetricStatus.SCORED:
+        if flash.metadata.get("reason_code") == (
+            "CRITERION_CONFIDENCE_BELOW_PROFILE_FLOOR"
+        ):
+            reason = "FLASH_LOW_CONFIDENCE"
+        elif flash.metric_status != MetricStatus.SCORED:
             reason = "FLASH_UNRESOLVED"
         elif flash.confidence < 0.60:
             reason = "FLASH_LOW_CONFIDENCE"

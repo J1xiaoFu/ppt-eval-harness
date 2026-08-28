@@ -16,15 +16,15 @@ from ppt_eval.adapters import (
     PromptSpec,
 )
 from ppt_eval.infrastructure import (
-    QWEN_ADVANCED_MODEL,
-    QWEN_FLASH_MODEL,
-    QWEN_LEGACY_PLUS_MODEL,
+    QWEN_PRIMARY_MODEL,
     QwenModelAuditProvider,
     QwenModelAuditProviderError,
     QwenOpenAICompatibleProvider,
     qwen_model_audits,
 )
 from tests.fixtures.pptx_factory import PNG_1X1
+
+QWEN_FLASH_MODEL = QWEN_PRIMARY_MODEL
 
 
 def _request(
@@ -34,7 +34,7 @@ def _request(
 ) -> ModelAuditRequest:
     return ModelAuditRequest(
         audit_id="audit-content",
-        metric_id="llm_content_quality_audit",
+        metric_id="structured_vlm_composition_layout",
         modality=modality,
         prompt=PromptSpec(
             prompt_id="test-prompt",
@@ -62,7 +62,7 @@ def _request(
 
 def _vendor_response(
     *,
-    model: str = "qwen3.7-flash-2026-08-01",
+    model: str = "qwen3.8-flash-2026-08-01",
     reasoning: str = "private chain of thought that must not be retained",
 ) -> Mapping[str, Any]:
     result = {
@@ -171,7 +171,7 @@ def test_fake_transport_builds_non_streaming_structured_llm_request() -> None:
     assert body["max_tokens"] == 4096
     assert body["response_format"] == {"type": "json_object"}
     assert isinstance(body["messages"][1]["content"], str)
-    assert response.model.model_id == "qwen3.7-flash-2026-08-01"
+    assert response.model.model_id == "qwen3.8-flash-2026-08-01"
     assert response.model.version == "fp-qwen-20260801"
     assert response.usage.input_tokens == 321
     assert response.usage.output_tokens == 45
@@ -242,7 +242,7 @@ def test_qwen_adapter_drops_null_or_blank_optional_ids_with_audit_marker() -> No
     provider = QwenOpenAICompatibleProvider(
         "fake-api-key",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        QWEN_ADVANCED_MODEL,
+        QWEN_PRIMARY_MODEL,
     )
     with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
         payload = provider.audit(request)
@@ -539,7 +539,7 @@ def test_qwen_adapter_preserves_first_usage_when_retry_transport_fails() -> None
 def test_qwen_adapter_preserves_usage_when_retry_model_mismatches() -> None:
     invalid = json.loads(json.dumps(_vendor_response()))
     invalid["choices"][0]["message"]["content"] = "not-json"
-    mismatched = _vendor_response(model="qwen3.8-flash")
+    mismatched = _vendor_response(model="qwen-max")
     responses = iter((invalid, mismatched))
 
     def fake_urlopen(http_request, *, timeout):
@@ -602,7 +602,7 @@ def test_provider_rejects_actual_model_from_another_configured_tier() -> None:
     def fake_urlopen(http_request, *, timeout):
         del http_request, timeout
         return _FakeHttpResponse(
-            _vendor_response(model="qwen3.8-flash-2026-08-01")
+            _vendor_response(model="qwen-max-2026-08-01")
         )
 
     provider = QwenOpenAICompatibleProvider(
@@ -616,26 +616,6 @@ def test_provider_rejects_actual_model_from_another_configured_tier() -> None:
             lambda: provider.audit(_request()),
             contains="outside the configured audit tier",
         )
-
-
-def test_provider_can_explicitly_replay_legacy_qwen37_plus() -> None:
-    def fake_urlopen(http_request, *, timeout):
-        del http_request, timeout
-        return _FakeHttpResponse(
-            _vendor_response(model="qwen3.7-plus-2026-08-01")
-        )
-
-    provider = QwenOpenAICompatibleProvider(
-        "fake-api-key",
-        "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        QWEN_LEGACY_PLUS_MODEL,
-    )
-    request = _request()
-    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
-        payload = provider.audit(request)
-
-    response = ModelAuditResponse.from_mapping(payload, request=request)
-    assert response.model.model_id == "qwen3.7-plus-2026-08-01"
 
 
 def test_vlm_images_are_integrity_checked_and_sent_as_data_uris(
@@ -655,7 +635,7 @@ def test_vlm_images_are_integrity_checked_and_sent_as_data_uris(
     provider = QwenOpenAICompatibleProvider(
         "fake-api-key",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        QWEN_ADVANCED_MODEL,
+        QWEN_PRIMARY_MODEL,
     )
 
     with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
@@ -696,7 +676,7 @@ def test_vlm_rejects_changed_image_before_network_call(tmp_path) -> None:
     provider = QwenOpenAICompatibleProvider(
         "fake-api-key",
         "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        QWEN_ADVANCED_MODEL,
+        QWEN_PRIMARY_MODEL,
     )
 
     with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
