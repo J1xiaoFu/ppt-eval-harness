@@ -23,6 +23,7 @@
 - [Oracle、模型与数据卡](../reports/02_development/05_oracle_model_data_cards.md)
 - [单机发布收敛记录](../reports/02_development/07_single_node_release.md)
 - [批处理 API 设计](../reports/02_development/08_batch_api.md)
+- [预发布稳定性收敛](../reports/02_development/09_prerelease_stabilization.md)
 
 ## 可审计研发过程
 
@@ -35,6 +36,7 @@
 - [v8.3 三主题真实切片](../reports/03_evaluation/13_v83_three_topic_replay.md)
 - [单机发布最终验证](../reports/03_evaluation/14_single_node_release_validation.md)
 - [0.8.5 批处理 API 验证](../reports/03_evaluation/15_batch_api_release_validation.md)
+- [0.8.6 预发布稳定性验证](../reports/03_evaluation/16_prerelease_stabilization_validation.md)
 
 ## 历史复现
 

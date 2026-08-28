@@ -2,7 +2,7 @@
 
 ## 产品边界
 
-当前审计平台属于 PPT Eval Harness 产品发布 `0.8.5`，但它消费的默认评测 Profile 仍为
+当前审计平台属于 PPT Eval Harness 产品发布 `0.8.6`，但它消费的默认评测 Profile 仍为
 `8.3` / `PRE_RESEARCH`，持久化 EvalReport/Audit schema 仍为 `1.0`，HTTP 命名空间仍为 `/v1`。
 产品版本只表达软件能力发布，不得被当作 Profile 或报告 schema 版本。
 
@@ -73,7 +73,7 @@ PASS 不会从系统中消失。“审计队列”默认隐藏无疑点 P3 PASS�
 
 ## 优先级
 
-`audit-attention@0.8.4` 不读取任何 GT 或人类标签。主 Attention 首先按以下信号形成
+`audit-attention@0.8.6` 不读取任何 GT 或人类标签。主 Attention 首先按以下信号形成
 语义候选，再合并到 8 个稳定质量族：
 
 ```text
@@ -85,6 +85,8 @@ Harness ERROR / 未解决 required metric / 未恢复 Provider 错误
 
 原子规则不直接生成主卡；已恢复的 Provider 尝试也只留在完整审计。页面布局与
 文字可读性等同类问题合并后，主区仅展示语义标题、共识、聚焦页和最多三条判断依据。
+同一具体 `semantic_code` 若在不同 Composite/family 中绑定完全相同的受影响页集，主区只保留
+一张 primary-owner 卡；各条 metric、family、raw issue 和 candidate 仍全部进入 lineage，不通过去重删除事实。
 原始 metric/Oracle/observation ID、Gate、Reducer 和全量 Observation 在“完整审计事实”中保留。
 
 Coverage 非 FULL 会提升队列优先级，但不会凭空生成一张局部问题卡。同级只使用审计状态、

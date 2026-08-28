@@ -13,14 +13,15 @@ PowerPoint 渲染、本地内容寻址存储与哈希链均可直接使用。默
 
 | 层级 | 当前值 | 何时变更 |
 |---|---|---|
-| 产品/软件发布 | `0.8.5` | 服务、CLI、UI 或运维能力发布 |
+| 产品/软件发布 | `0.8.6` | 服务、CLI、UI 或运维能力发布 |
 | Evaluation Profile | `8.3` / `PRE_RESEARCH` | 评分公式、权重、DAG 或准入语义改变 |
 | EvalReport / Audit schema | `1.0` | 持久化 JSON 出现不兼容变更 |
 | HTTP API namespace | `/v1` | 接口合同出现破坏性变更 |
 
-产品版本与评测 Profile 是两个独立版本轴。产品升到 `0.8.5` 不改变 Profile、
+产品版本与评测 Profile 是两个独立版本轴。产品升到 `0.8.6` 不改变 Profile、
 Oracle/Prompt 版本、schema 或 `/v1`，历史 `8.3`/`1.0` run 仍可读取。本仓库在此前使用过
-`0.1.0` 打包占位值；`0.8.4` 开始统一产品版本出口，`0.8.5` 新增了正式批处理 API。
+`0.1.0` 打包占位值；`0.8.4` 开始统一产品版本出口，`0.8.5` 新增正式批处理 API，
+`0.8.6` 收敛跨 Composite 审计去重与冷构建锁定。
 
 ## 1. 能做什么
 
@@ -375,6 +376,10 @@ docker compose config --quiet
 docker compose build api
 ```
 
+第二条 runner 会在自身进程内提供仅支持当前 `raises / approx / importorskip` 用法的严格
+pytest facade。因此精简生产镜像没有 pytest 时也能运行 plain-assert 测试；缺失 `httpx`
+等可选测试传输时会显式记为 `SKIP`，不会以早退冒充 `PASS`。
+
 测试覆盖 Harness、当前 Profile/Oracle/Reducer、PPTX 安全、模型合同、artifact 完整性、审计
 队列、Review 幂等性和 UI 构建。旧合同的原始测试随 archive tag 保存。
 
@@ -411,6 +416,8 @@ tests/                 单元、属性、集成和端到端测试
 - 审计平台应保持绑定 localhost；部署给团队前必须补身份与权限控制。
 - Docker 包含完整审计 UI；普通 wheel 从仓库外运行 `ppt-eval serve` 只保证 API，除非另行提供
   `PPT_EVAL_UI_DIR` 或使用 Docker 镜像。
+- Docker 基础镜像、Node/pnpm 与 Linux/Python 运行依赖已锁定；Debian apt 仍使用移动安全仓库，
+  因此属于功能可复现，尚不是字节级 hermetic build。首次获取缺失的基础镜像仍需 Docker Hub 可达。
 - benchmark 结果只用于 Oracle/Profile 研发，不能作为生产人工标签或队列排序依据。
 
 进一步阅读：

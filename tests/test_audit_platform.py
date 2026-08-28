@@ -19,6 +19,7 @@ from ppt_eval.cli import build_parser
 from ppt_eval.domain import EvalCase, SceneType
 from ppt_eval.infrastructure import JsonRunRepository, LocalArtifactStore
 from ppt_eval.runtime import LocalEvaluationRuntime
+from tests.fixtures.api_client import make_test_client
 from tests.fixtures.pptx_factory import PNG_1X1, build_pptx
 
 
@@ -174,10 +175,6 @@ def test_cli_writes_only_current_review_contract() -> None:
 def test_review_api_serves_queue_slides_artifacts_and_idempotent_history(
     tmp_path: Path,
 ) -> None:
-    fastapi = pytest.importorskip("fastapi")
-    del fastapi
-    from fastapi.testclient import TestClient
-
     deck = build_pptx(tmp_path / "audit-source.pptx")
     runtime = LocalEvaluationRuntime(
         tmp_path / "var",
@@ -191,10 +188,10 @@ def test_review_api_serves_queue_slides_artifacts_and_idempotent_history(
             pptx_path=str(deck),
         )
     )
-    client = TestClient(create_app(runtime))
-    assert report["service_version"] == "0.8.5"
-    assert client.app.version == "0.8.5"
-    assert client.get("/healthz").json()["service_version"] == "0.8.5"
+    client = make_test_client(lambda: create_app(runtime))
+    assert report["service_version"] == "0.8.6"
+    assert client.app.version == "0.8.6"
+    assert client.get("/healthz").json()["service_version"] == "0.8.6"
 
     queue = client.get("/v1/review/tasks?view=all").json()
     assert queue["total"] == 1
@@ -307,10 +304,6 @@ def test_review_api_serves_queue_slides_artifacts_and_idempotent_history(
 def test_legacy_review_idempotency_precedes_current_issue_validation(
     tmp_path: Path,
 ) -> None:
-    fastapi = pytest.importorskip("fastapi")
-    del fastapi
-    from fastapi.testclient import TestClient
-
     runtime = LocalEvaluationRuntime(tmp_path / "var")
     run_id = "run-legacy-idempotent-review"
     runtime.repository.save(
@@ -348,7 +341,7 @@ def test_legacy_review_idempotency_precedes_current_issue_validation(
             "triage_policy_version": "audit-attention@1.0.0",
         }
     )
-    client = TestClient(create_app(runtime))
+    client = make_test_client(lambda: create_app(runtime))
     payload = {
         "run_id": run_id,
         "reviewer_id": "reviewer-legacy",
@@ -382,10 +375,6 @@ def test_legacy_review_idempotency_precedes_current_issue_validation(
 def test_full_audit_distinguishes_missing_and_corrupt_observation_artifacts(
     tmp_path: Path,
 ) -> None:
-    fastapi = pytest.importorskip("fastapi")
-    del fastapi
-    from fastapi.testclient import TestClient
-
     runtime = LocalEvaluationRuntime(tmp_path / "var")
     missing_run = "run-missing-observations"
     runtime.repository.save(
@@ -409,7 +398,7 @@ def test_full_audit_distinguishes_missing_and_corrupt_observation_artifacts(
     )
     observation_path = Path(corrupt_report["observation_artifact"]["uri"])
     observation_path.write_text("{not-json", encoding="utf-8")
-    client = TestClient(create_app(runtime))
+    client = make_test_client(lambda: create_app(runtime))
 
     missing = client.get(f"/v1/review/tasks/{missing_run}/audit").json()[
         "observation_artifact"

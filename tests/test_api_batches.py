@@ -10,6 +10,7 @@ from typing import Any
 from ppt_eval.api import BatchCaseSubmission, LocalJobManager, create_app
 from ppt_eval.domain import EvalCase, EvalProfile, SceneType
 from ppt_eval.runtime import LocalEvaluationRuntime
+from tests.fixtures.api_client import make_test_client
 from tests.fixtures.pptx_factory import build_pptx
 
 
@@ -74,17 +75,11 @@ def _client(
     *,
     job_manager: LocalJobManager | None = None,
     max_request_body_bytes: int | None = None,
-) -> Any | None:
-    try:
-        import python_multipart
-        from fastapi.testclient import TestClient
-    except ImportError:
-        return None
-    del python_multipart
+) -> Any:
     kwargs: dict[str, Any] = {"job_manager": job_manager}
     if max_request_body_bytes is not None:
         kwargs["max_request_body_bytes"] = max_request_body_bytes
-    return TestClient(create_app(runtime, **kwargs))
+    return make_test_client(lambda: create_app(runtime, **kwargs))
 
 
 def _presentation(deck: Path, name: str) -> tuple[str, bytes, str]:
@@ -144,8 +139,6 @@ def test_batch_upload_completes_in_order_and_survives_as_runs(
     second_deck = build_pptx(tmp_path / "second.pptx")
     runtime = LocalEvaluationRuntime(tmp_path / "var")
     client = _client(runtime)
-    if client is None:
-        return
 
     response = _submit_batch(
         client,
@@ -206,8 +199,6 @@ def test_batch_runtime_failure_is_isolated_and_aggregated(tmp_path: Path) -> Non
     deck = build_pptx(tmp_path / "deck.pptx")
     runtime = SelectiveRuntime(tmp_path / "var")
     client = _client(runtime)
-    if client is None:
-        return
 
     response = _submit_batch(
         client,
@@ -238,8 +229,6 @@ def test_batch_all_runtime_failures_reach_failed_terminal_state(
     deck = build_pptx(tmp_path / "deck.pptx")
     runtime = SelectiveRuntime(tmp_path / "var")
     client = _client(runtime)
-    if client is None:
-        return
 
     response = _submit_batch(
         client,
@@ -259,8 +248,6 @@ def test_batch_preflight_and_capacity_rejection_are_atomic(tmp_path: Path) -> No
     runtime = ImmediateBatchRuntime(tmp_path / "preflight-var")
     manager = LocalJobManager(runtime, workers=1, max_active_jobs=2)
     client = _client(runtime, job_manager=manager)
-    if client is None:
-        return
 
     malformed = client.post(
         "/v1/evaluation-batches/upload",
@@ -293,7 +280,6 @@ def test_batch_preflight_and_capacity_rejection_are_atomic(tmp_path: Path) -> No
     )
     assert started.wait(timeout=1)
     capacity_client = _client(blocking, job_manager=capacity_manager)
-    assert capacity_client is not None
     rejected = _submit_batch(
         capacity_client,
         [(deck, "one.pptx"), (deck, "two.pptx")],
@@ -324,8 +310,6 @@ def test_batch_idempotency_binds_ordered_content_and_cleans_retries(
     second_deck = build_pptx(tmp_path / "second.pptx")
     runtime = ImmediateBatchRuntime(tmp_path / "var")
     client = _client(runtime)
-    if client is None:
-        return
     headers = {"Idempotency-Key": "batch-request-1"}
     decks = [(first_deck, "first.pptx"), (second_deck, "second.pptx")]
     case_ids = ["first", "second"]
@@ -356,8 +340,6 @@ def test_batch_contract_rejects_ambiguous_or_unbounded_inputs(tmp_path: Path) ->
     deck = build_pptx(tmp_path / "deck.pptx")
     runtime = ImmediateBatchRuntime(tmp_path / "var")
     client = _client(runtime)
-    if client is None:
-        return
 
     empty = client.post(
         "/v1/evaluation-batches/upload",
@@ -434,8 +416,6 @@ def test_batch_terminal_snapshot_outlives_child_job_eviction(tmp_path: Path) -> 
         max_terminal_batches=2,
     )
     client = _client(runtime, job_manager=manager)
-    if client is None:
-        return
 
     response = _submit_batch(
         client,
@@ -495,8 +475,6 @@ def test_concurrent_fast_batches_return_before_terminal_retention_eviction(
 def test_dynamic_openapi_exposes_bounded_async_batch_contract(tmp_path: Path) -> None:
     runtime = ImmediateBatchRuntime(tmp_path / "var")
     client = _client(runtime)
-    if client is None:
-        return
     document = client.app.openapi()
     operation = document["paths"]["/v1/evaluation-batches/upload"]["post"]
     schema_ref = operation["requestBody"]["content"]["multipart/form-data"][

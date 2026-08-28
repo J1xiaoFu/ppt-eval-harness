@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: PPT Eval Harness
-  version: 0.8.5
+  version: 0.8.6
   description: >-
-    Product release 0.8.5 with Evaluation Profile 8.3, persisted schema 1.0 and API namespace /v1.
+    Product release 0.8.6 with Evaluation Profile 8.3, persisted schema 1.0 and API namespace /v1.
     These version axes evolve independently. Every write request has a 202 MiB pre-parser body
     limit. If a browser supplies Origin, only localhost or 127.0.0.1 origins are accepted; trusted
     local CLI clients without Origin remain supported.
@@ -439,7 +439,7 @@ components:
       required: [status, service_version, audit_chain_valid, broken_event]
       properties:
         status: { type: string, enum: [ok, degraded] }
-        service_version: { const: "0.8.5" }
+        service_version: { const: "0.8.6" }
         audit_chain_valid: { type: boolean }
         broken_event: { type: [string, "null"] }
       additionalProperties: false

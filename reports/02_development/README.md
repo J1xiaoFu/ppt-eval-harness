@@ -5,4 +5,5 @@
 
 当前单机发布的运行路径收敛、Profile 打包、审计平台合同和已删除骨架记录见
 `07_single_node_release.md`；正式批处理 API 的原子准入、并发共享与终态快照设计见
-`08_batch_api.md`。
+`08_batch_api.md`；跨 Composite 审计去重、依赖无关测试和冷构建锁定见
+`09_prerelease_stabilization.md`。

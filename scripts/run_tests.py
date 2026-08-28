@@ -8,17 +8,94 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import math
+import re
 import sys
 import tempfile
 import traceback
 from pathlib import Path
+from types import ModuleType
+from unittest import SkipTest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
 
-def load_module(path: Path):
+class _Raises:
+    def __init__(
+        self,
+        expected: type[BaseException] | tuple[type[BaseException], ...],
+        *,
+        match: str | None = None,
+    ) -> None:
+        self.expected = expected
+        self.match = match
+        self.value: BaseException | None = None
+
+    def __enter__(self) -> _Raises:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback_value: object,
+    ) -> bool:
+        del traceback_value
+        if exc_type is None or exc is None:
+            raise AssertionError(f"did not raise {self.expected!r}")
+        if not issubclass(exc_type, self.expected):
+            return False
+        if self.match is not None and re.search(self.match, str(exc)) is None:
+            raise AssertionError(
+                f"exception message {str(exc)!r} does not match {self.match!r}"
+            )
+        self.value = exc
+        return True
+
+
+class _Approx:
+    def __init__(self, expected: int | float) -> None:
+        if isinstance(expected, bool) or not isinstance(expected, (int, float)):
+            raise TypeError("dependency-free pytest.approx supports only scalar numbers")
+        self.expected = float(expected)
+
+    def __eq__(self, actual: object) -> bool:
+        if isinstance(actual, bool) or not isinstance(actual, (int, float)):
+            return False
+        value = float(actual)
+        if value == self.expected:
+            return True
+        if math.isnan(value) or math.isnan(self.expected):
+            return False
+        if math.isinf(value) or math.isinf(self.expected):
+            return False
+        tolerance = max(1e-12, 1e-6 * abs(self.expected))
+        return abs(value - self.expected) <= tolerance
+
+    def __repr__(self) -> str:
+        return f"approx({self.expected!r})"
+
+
+def _importorskip(name: str) -> ModuleType:
+    try:
+        return importlib.import_module(name)
+    except ModuleNotFoundError as exc:
+        if exc.name == name or name.startswith(f"{exc.name}."):
+            raise SkipTest(f"optional dependency {name!r} is unavailable") from exc
+        raise
+
+
+def _install_pytest_facade() -> None:
+    facade = ModuleType("pytest")
+    facade.approx = _Approx  # type: ignore[attr-defined]
+    facade.importorskip = _importorskip  # type: ignore[attr-defined]
+    facade.raises = _Raises  # type: ignore[attr-defined]
+    sys.modules["pytest"] = facade
+
+
+def load_module(path: Path) -> ModuleType:
     name = f"local_tests.{path.stem}"
     spec = importlib.util.spec_from_file_location(name, path)
     if spec is None or spec.loader is None:
@@ -30,12 +107,32 @@ def load_module(path: Path):
 
 
 def main() -> int:
+    _install_pytest_facade()
     failures: list[str] = []
     passed = 0
+    skipped = 0
     for path in sorted((ROOT / "tests").glob("test_*.py")):
-        module = load_module(path)
+        try:
+            module = load_module(path)
+        except SkipTest as exc:
+            skipped += 1
+            print(f"SKIP {path.name}: {exc}")
+            continue
+        except Exception:
+            failures.append(f"{path.name}::<module>\n{traceback.format_exc()}")
+            print(f"FAIL {path.name}::<module>")
+            continue
         for name, function in sorted(vars(module).items()):
             if not name.startswith("test_") or not callable(function):
+                continue
+            if (
+                inspect.iscoroutinefunction(function)
+                or inspect.isgeneratorfunction(function)
+                or inspect.isasyncgenfunction(function)
+            ):
+                failures.append(
+                    f"{path.name}::{name}: async/generator tests are unsupported"
+                )
                 continue
             signature = inspect.signature(function)
             unknown = set(signature.parameters) - {"tmp_path"}
@@ -48,10 +145,13 @@ def main() -> int:
                     function(**kwargs)
                 passed += 1
                 print(f"PASS {path.name}::{name}")
+            except SkipTest as exc:
+                skipped += 1
+                print(f"SKIP {path.name}::{name}: {exc}")
             except Exception:
                 failures.append(f"{path.name}::{name}\n{traceback.format_exc()}")
                 print(f"FAIL {path.name}::{name}")
-    print(f"\n{passed} passed, {len(failures)} failed")
+    print(f"\n{passed} passed, {skipped} skipped, {len(failures)} failed")
     if failures:
         print("\n\n".join(failures))
         return 1

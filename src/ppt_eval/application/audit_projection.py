@@ -13,7 +13,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence, cast
 
-TRIAGE_POLICY_VERSION = "audit-attention@0.8.4"
+TRIAGE_POLICY_VERSION = "audit-attention@0.8.6"
 _PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 _SEVERITY_ORDER = {"CRITICAL": 0, "MAJOR": 1, "MINOR": 2, "INFO": 3}
 _LEGACY_RESOLVED_VERDICTS = {"APPROVE", "REJECT"}
@@ -466,6 +466,23 @@ _DEFECT_PRIORITY = {
         )
     )
 }
+_CONCRETE_SEMANTIC_CODES = frozenset(
+    semantic_code for semantic_code, _title in _DEFECT_SEMANTICS.values()
+)
+_SEMANTIC_CODE_PRIMARY_FAMILY = {
+    "COLOR_CONTRAST": "VISUAL_LAYOUT_READABILITY",
+    "TEXT_CUTOFF": "VISUAL_LAYOUT_READABILITY",
+    "ELEMENT_OVERLAP": "VISUAL_LAYOUT_READABILITY",
+    "ELEMENT_MISALIGNMENT": "VISUAL_LAYOUT_READABILITY",
+    "SMALL_TEXT": "VISUAL_LAYOUT_READABILITY",
+    "TYPE_LEGIBILITY": "VISUAL_LAYOUT_READABILITY",
+    "MIXED_LANGUAGE": "CONTENT_EXPRESSION",
+    "GARBLED_TEXT": "CONTENT_EXPRESSION",
+    "MISSING_TITLE_ANCHOR": "CONTENT_EXPRESSION",
+    "MISSING_SOURCE_REFERENCE": "TASK_FIDELITY",
+    "TEMPLATE_ROUTINE": "AUTHORSHIP",
+    "GENERIC_COPY": "AUTHORSHIP",
+}
 
 
 def build_attention_projection(
@@ -694,10 +711,7 @@ def build_attention_projection(
     grouped: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
     for item in candidates:
         grouped[str(item["family"])].append(item)
-    semantic_issues = [
-        _semantic_issue(run_id, family, grouped[family])
-        for family in sorted(grouped, key=lambda value: _SEMANTIC_FAMILY_ORDER[value])
-    ]
+    semantic_issues = _deduplicate_semantic_issues(run_id, grouped)
     semantic_issues.sort(key=_semantic_issue_sort_key)
     required = [
         item for item in semantic_issues if item.get("priority") in {"P0", "P1"}
@@ -796,6 +810,72 @@ def build_attention_projection(
         },
         "attention_details": details,
     }
+
+
+def _deduplicate_semantic_issues(
+    run_id: str,
+    grouped: Mapping[str, Sequence[Mapping[str, Any]]],
+) -> list[dict[str, Any]]:
+    records: list[tuple[str, Sequence[Mapping[str, Any]], dict[str, Any]]] = []
+    for family in sorted(grouped, key=lambda value: _SEMANTIC_FAMILY_ORDER[value]):
+        candidates = grouped[family]
+        records.append((family, candidates, _semantic_issue(run_id, family, candidates)))
+
+    concrete_buckets: dict[
+        tuple[str, tuple[int, ...]],
+        list[tuple[str, Sequence[Mapping[str, Any]], dict[str, Any]]],
+    ] = defaultdict(list)
+    issues: list[dict[str, Any]] = []
+    for family, candidates, issue in records:
+        semantic_code = str(issue.get("semantic_code") or "")
+        lineage = _mapping(issue.get("lineage"))
+        all_pages = tuple(
+            sorted(int(page) for page in lineage.get("all_page_numbers", ()))
+        )
+        if semantic_code not in _CONCRETE_SEMANTIC_CODES:
+            issues.append(issue)
+            continue
+        concrete_buckets[(semantic_code, all_pages)].append(
+            (family, candidates, issue)
+        )
+
+    for (semantic_code, _all_pages), bucket in sorted(
+        concrete_buckets.items(),
+        key=lambda item: (item[0][0], item[0][1]),
+    ):
+        if len(bucket) == 1:
+            family, _candidates, issue = bucket[0]
+            lineage = dict(_mapping(issue.get("lineage")))
+            lineage["primary_owner"] = family
+            lineage["contributing_families"] = [family]
+            issue["lineage"] = lineage
+            issues.append(issue)
+            continue
+        contributing_families = sorted(
+            {family for family, _candidates, _issue in bucket},
+            key=lambda family: _SEMANTIC_FAMILY_ORDER[family],
+        )
+        mapped_owner = _SEMANTIC_CODE_PRIMARY_FAMILY.get(semantic_code)
+        primary_owner = (
+            mapped_owner
+            if mapped_owner in contributing_families
+            else contributing_families[0]
+        )
+        combined_candidates = sorted(
+            (
+                candidate
+                for _family, candidates, _issue in bucket
+                for candidate in candidates
+            ),
+            key=_semantic_candidate_sort_key,
+        )
+        merged = _semantic_issue(run_id, primary_owner, combined_candidates)
+        lineage = dict(_mapping(merged.get("lineage")))
+        lineage["primary_owner"] = primary_owner
+        lineage["contributing_families"] = contributing_families
+        merged["lineage"] = lineage
+        issues.append(merged)
+    return issues
 
 
 def _semantic_issue(
@@ -939,7 +1019,7 @@ def _semantic_issue(
         "policy_version": TRIAGE_POLICY_VERSION,
         "semantic_family": family,
         "semantic_codes": [item[0] for item in semantic_defects],
-        "focus_pages": focus_pages,
+        "all_pages": all_pages,
     }
     digest = hashlib.sha256(
         json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
@@ -1039,6 +1119,7 @@ def _semantic_candidate_sort_key(item: Mapping[str, Any]) -> tuple[Any, ...]:
     return (
         _PRIORITY_ORDER.get(str(item.get("priority") or "P3"), 4),
         _SEVERITY_ORDER.get(str(item.get("severity") or "INFO"), 4),
+        str(item.get("family") or ""),
         tuple(sorted(str(metric) for metric in item.get("metrics", ()))),
         tuple(sorted(int(page) for page in item.get("pages", ()) if int(page) > 0)),
         str(item.get("rationale") or ""),
@@ -1067,6 +1148,7 @@ def _semantic_candidate_detail(item: Mapping[str, Any]) -> dict[str, Any]:
             projected["affected_page_numbers"] = sorted(set(affected_pages))
         evidence.append(projected)
     return {
+        "semantic_family": item.get("family"),
         "priority": item.get("priority"),
         "severity": item.get("severity"),
         "rationale": item.get("rationale"),

@@ -11,15 +11,17 @@ from pathlib import Path
 import pytest
 
 from ppt_eval import __version__
+from ppt_eval.application import TRIAGE_POLICY_VERSION
 from ppt_eval.cli import build_parser
 from ppt_eval.config import default_profile
 from ppt_eval.domain import SceneType
 from ppt_eval.domain.models import SCHEMA_VERSION
 from ppt_eval.oracles.v8_composites import V8_QUALITY_VERSION
 from ppt_eval.runtime import LocalEvaluationRuntime
+from tests.fixtures.api_client import make_test_client
 
 ROOT = Path(__file__).resolve().parents[1]
-PRODUCT_VERSION = "0.8.5"
+PRODUCT_VERSION = "0.8.6"
 
 
 def test_product_release_metadata_is_consistent() -> None:
@@ -32,7 +34,7 @@ def test_product_release_metadata_is_consistent() -> None:
     assert distribution_version("ppt-eval-harness") == PRODUCT_VERSION
     assert project["project"]["version"] == PRODUCT_VERSION
     assert ui_package["version"] == PRODUCT_VERSION
-    assert re.search(r"(?m)^  version: 0\.8\.5$", info)
+    assert re.search(r"(?m)^  version: 0\.8\.6$", info)
 
 
 def test_cli_reports_product_release_without_constructing_runtime() -> None:
@@ -45,6 +47,7 @@ def test_cli_reports_product_release_without_constructing_runtime() -> None:
 
 
 def test_product_bump_does_not_change_evaluation_contract_versions() -> None:
+    assert TRIAGE_POLICY_VERSION == "audit-attention@0.8.6"
     assert SCHEMA_VERSION == "1.0"
     assert V8_QUALITY_VERSION == "8.3.0"
     for scene in SceneType:
@@ -54,12 +57,6 @@ def test_product_bump_does_not_change_evaluation_contract_versions() -> None:
 
 
 def test_api_release_surface_and_legacy_run_read_compatibility(tmp_path: Path) -> None:
-    try:
-        import python_multipart
-        from fastapi.testclient import TestClient
-    except ImportError:
-        return
-    del python_multipart
     from ppt_eval.api import create_app
 
     runtime = LocalEvaluationRuntime(tmp_path / "var")
@@ -81,7 +78,7 @@ def test_api_release_surface_and_legacy_run_read_compatibility(tmp_path: Path) -
         "results": [],
     }
     runtime.repository.save(legacy)
-    client = TestClient(create_app(runtime))
+    client = make_test_client(lambda: create_app(runtime))
 
     assert client.app.version == PRODUCT_VERSION
     health = client.get("/healthz")

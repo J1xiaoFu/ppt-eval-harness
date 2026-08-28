@@ -3,6 +3,20 @@
 本文档只记录产品/软件发布版本。Evaluation Profile、Oracle/Prompt 和持久化 schema
 有独立版本，不会随产品版本自动变更。
 
+## 0.8.6 - 2026-08-28
+
+- 按“具体 `semantic_code` + 完整受影响页”合并跨 Composite 重复主卡，同一页的
+  `COLOR_CONTRAST` 不再同时以交付完整性和视觉可读性各呈现一次。
+- Attention issue ID 改为绑定完整页集与 primary owner，策略版本升为
+  `audit-attention@0.8.6`，完整 lineage 仍保留所有贡献 family/metric/candidate。
+- `scripts/run_tests.py` 增加严格的内建 pytest facade，在没有 pytest 的精简环境也能执行
+  plain-assert 测试，并将缺失的可选 HTTP 测试依赖明确记为 SKIP。
+- Docker 基础镜像锁定 digest，pnpm 与所有 Node 直接依赖锁定精确版本，Linux/Python 3.11
+  运行依赖由 `constraints/docker-py311-linux.txt` 锁定并通过 `pip check`。
+
+Evaluation Profile 仍为 `8.3 / PRE_RESEARCH`，Composite 仍为 `8.3.0`，EvalReport/Audit schema 仍为
+`1.0`，HTTP namespace 仍为 `/v1`。
+
 ## 0.8.5 - 2026-08-28
 
 - 新增 `POST /v1/evaluation-batches/upload` 与 `GET /v1/evaluation-batches/{batch_id}`。

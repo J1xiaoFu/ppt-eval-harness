@@ -9,7 +9,7 @@
 | REQ-AUDIT-001 | ADR-006 | AuditLog / Outbox / Manifest | `test_review_and_run_export_*` | AUDIT-MVP-001 | REL-PENDING |
 | REQ-REVIEW-001 | ADR-006 | ReviewService | `test_review_and_run_export_*` | EXP-HUMAN-001 | REL-PENDING |
 | REQ-FLYWHEEL-001 | ADR-008 | CandidatePipeline | `test_flywheel.py` | EXP-SHADOW-001 | REL-PENDING |
-| REQ-API-001 | ADR-010 | EvaluationService/API/CLI | TST-API-001 / TST-API-BATCH-001 | EXP-LOAD-001 | REL-0.8.5 |
+| REQ-API-001 | ADR-010 | EvaluationService/API/CLI | TST-API-001 / TST-API-BATCH-001 | EXP-LOAD-001 | REL-0.8.6 |
 
 ## 完整性规则
 

@@ -5,12 +5,15 @@ import re
 import subprocess
 from pathlib import Path
 from types import ModuleType
+from unittest import SkipTest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def _tracked_paths() -> tuple[Path, ...]:
+    if not (ROOT / ".git").exists():
+        raise SkipTest("repository metadata is unavailable in the runtime image")
     completed = subprocess.run(
         ["git", "-C", str(ROOT), "ls-files", "-z"],
         check=True,

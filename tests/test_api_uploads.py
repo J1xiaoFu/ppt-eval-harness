@@ -21,6 +21,7 @@ from ppt_eval.api import (
 from ppt_eval.domain import EvalCase, EvalProfile, SceneType
 from ppt_eval.infrastructure.uploads import LocalUploadStore
 from ppt_eval.runtime import LocalEvaluationRuntime
+from tests.fixtures.api_client import make_test_client
 from tests.fixtures.pptx_factory import PNG_1X1, build_pptx
 
 
@@ -119,20 +120,14 @@ def _client(
     upload_store: LocalUploadStore | None = None,
     job_manager: LocalJobManager | None = None,
     max_request_body_bytes: int | None = None,
-) -> Any | None:
-    try:
-        import python_multipart
-        from fastapi.testclient import TestClient
-    except ImportError:
-        return None
-    del python_multipart
+) -> Any:
     kwargs: dict[str, Any] = {
         "upload_store": upload_store,
         "job_manager": job_manager,
     }
     if max_request_body_bytes is not None:
         kwargs["max_request_body_bytes"] = max_request_body_bytes
-    return TestClient(create_app(runtime, **kwargs))
+    return make_test_client(lambda: create_app(runtime, **kwargs))
 
 
 def _presentation_file(deck: Path, name: str = "market-research.pptx") -> tuple[str, bytes, str]:
@@ -153,8 +148,6 @@ def test_multipart_async_upload_reaches_review_with_sources_assets_and_no_paths(
         review_rendering=True,
     )
     client = _client(runtime)
-    if client is None:
-        return
 
     response = client.post(
         "/v1/evaluations/upload?async=true",
@@ -256,8 +249,6 @@ def test_multipart_sync_and_legacy_json_api_use_public_projection(tmp_path: Path
     deck = build_pptx(tmp_path / "deck.pptx")
     runtime = LocalEvaluationRuntime(tmp_path / "var")
     client = _client(runtime)
-    if client is None:
-        return
 
     upload_schema = client.app.openapi()["components"]["schemas"][
         "Body_create_uploaded_evaluation_v1_evaluations_upload_post"
@@ -308,8 +299,6 @@ def test_upload_rejects_wrong_suffix_dangerous_filename_and_invalid_zip(
 ) -> None:
     runtime = LocalEvaluationRuntime(tmp_path / "var")
     client = _client(runtime)
-    if client is None:
-        return
     for filename, content in (
         ("deck.pdf", b"not a presentation"),
         ("../deck.pptx", b"not a presentation"),
@@ -400,8 +389,6 @@ def test_origin_and_request_body_guards_run_before_multipart(tmp_path: Path) -> 
     deck = build_pptx(tmp_path / "guarded.pptx")
     runtime = LocalEvaluationRuntime(tmp_path / "var")
     client = _client(runtime, max_request_body_bytes=64)
-    if client is None:
-        return
     forbidden = client.post(
         "/v1/evaluations/upload",
         data={"case_id": "origin", "scene": "ready_made"},
@@ -479,8 +466,6 @@ def test_upload_rejects_oversize_and_unsafe_ooxml(tmp_path: Path) -> None:
         max_presentation_bytes=64,
     )
     client = _client(runtime, upload_store=constrained)
-    if client is None:
-        return
     oversized = client.post(
         "/v1/evaluations/upload",
         data={"case_id": "oversized", "scene": "ready_made"},
@@ -495,7 +480,6 @@ def test_upload_rejects_oversize_and_unsafe_ooxml(tmp_path: Path) -> None:
         runtime.paths.root / "uploads-normal",
     )
     unsafe_client = _client(runtime, upload_store=normal_store)
-    assert unsafe_client is not None
     rejected = unsafe_client.post(
         "/v1/evaluations/upload",
         data={"case_id": "unsafe", "scene": "ready_made"},
@@ -511,8 +495,6 @@ def test_upload_idempotency_reuses_same_job_and_conflicts_on_changed_input(
     deck = build_pptx(tmp_path / "deck.pptx")
     runtime = LocalEvaluationRuntime(tmp_path / "var")
     client = _client(runtime)
-    if client is None:
-        return
     headers = {"Idempotency-Key": "upload-request-1"}
 
     def submit(case_id: str) -> Any:
@@ -543,8 +525,6 @@ def test_job_failure_and_bounded_queue_do_not_expose_workspace_paths(tmp_path: P
     deck = build_pptx(tmp_path / "deck.pptx")
     failing = FailingRuntime(tmp_path / "failing-var")
     client = _client(failing)
-    if client is None:
-        return
     submitted = client.post(
         "/v1/evaluations/upload",
         data={"case_id": "failure", "scene": "ready_made"},
@@ -575,7 +555,6 @@ def test_job_failure_and_bounded_queue_do_not_expose_workspace_paths(tmp_path: P
     queue_jobs = LocalJobManager(second_runtime, workers=1, max_active_jobs=1)
     queue_jobs.submit_case(case, fingerprint="c" * 64)
     queue_client = _client(second_runtime, job_manager=queue_jobs)
-    assert queue_client is not None
     queue_full = queue_client.post(
         "/v1/evaluations/upload",
         data={"case_id": "queue-full", "scene": "ready_made"},

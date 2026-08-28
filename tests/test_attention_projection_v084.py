@@ -324,6 +324,136 @@ def test_duplicate_semantic_evidence_selection_is_order_independent() -> None:
     assert first["items"][0]["evidence"][0]["evidence_id"] == "a-critical"
 
 
+def test_same_contrast_defect_from_gate_and_composite_is_presented_once() -> None:
+    observation = {
+        "observation_id": "obs-contrast-page-1",
+        "oracle_id": "v8.pixel_contrast_proxy",
+        "metric_id": "slide_pixel_contrast",
+        "scope": "PAGE",
+        "unit_key": "page:1",
+        "metric_status": "SCORED",
+        "local_score": 0.25,
+        "confidence": 0.72,
+        "severity": "CRITICAL",
+        "evidence": [
+            {
+                "evidence_id": "contrast-page-1",
+                "kind": "pixel_contrast_proxy",
+                "message": "Worst rendered-region luminance ratio is 1.00:1.",
+                "page_number": 1,
+                "object_id": "3",
+            }
+        ],
+    }
+    results = [
+        {
+            "metric_id": "structured_vlm_color_contrast",
+            "metric_status": "NA",
+            "severity": "INFO",
+            "metadata": {
+                "criterion_id": "color_contrast",
+                "reason_code": "MODEL_PROVIDER_UNCONFIGURED",
+            },
+            "evidence": [
+                {
+                    "evidence_id": "model-unconfigured",
+                    "kind": "insufficient_evidence",
+                    "message": "No model audit provider is configured.",
+                    "page_number": None,
+                }
+            ],
+        },
+        {
+            "metric_id": "v8_functional_integrity",
+            "metric_status": "NA",
+            "score_role": "BASE_MULTIPLIER",
+            "severity": "INFO",
+            "metadata": {
+                "reason_code": "GATE_AUDIT_UNRESOLVED",
+                "gate_verdicts": [
+                    {
+                        "metric_id": "slide_pixel_contrast",
+                        "rule_severity": "CRITICAL",
+                        "verdict": "UNRESOLVED",
+                        "model_metric_id": "structured_vlm_color_contrast",
+                        "model_severity": None,
+                        "observation_ids": ["obs-contrast-page-1"],
+                    }
+                ],
+            },
+            "evidence": list(observation["evidence"]),
+        },
+    ]
+    report = _report(results=results)
+    report["score_breakdown"]["unresolved_metric_ids"] = [
+        "v8_functional_integrity"
+    ]
+
+    first = build_attention_projection(report, [observation])
+    reordered = deepcopy(report)
+    reordered["results"] = list(reversed(reordered["results"]))
+    second = build_attention_projection(reordered, [observation])
+
+    assert first == second
+    contrast = [
+        item for item in first["items"] if item["semantic_code"] == "COLOR_CONTRAST"
+    ]
+    assert len(contrast) == 1
+    issue = contrast[0]
+    assert issue["semantic_family"] == "VISUAL_LAYOUT_READABILITY"
+    assert issue["page_numbers"] == [1]
+    assert issue["detail_count"] == 2
+    assert issue["consensus"]["status"] == "INSUFFICIENT"
+    assert issue["consensus"]["sources"] == ["REDUCER", "RULE"]
+    assert len(issue["evidence"]) == 1
+    detail = next(
+        item
+        for item in first["attention_details"]
+        if item["semantic_issue_id"] == issue["issue_id"]
+    )
+    assert detail["metric_ids"] == [
+        "slide_pixel_contrast",
+        "v8_functional_integrity",
+    ]
+    assert detail["raw_candidate_count"] == 2
+    assert {
+        candidate["semantic_family"] for candidate in detail["semantic_candidates"]
+    } == {"DELIVERY_INTEGRITY", "VISUAL_LAYOUT_READABILITY"}
+
+
+def test_issue_identity_uses_complete_affected_page_set() -> None:
+    def issue_for(affected_pages: list[int]) -> dict[str, Any]:
+        report = _report(
+            results=[
+                {
+                    "metric_id": "structured_vlm_authorship_specificity",
+                    "metric_status": "SCORED",
+                    "metadata": {"criterion_id": "authorship_specificity"},
+                    "evidence": [
+                        {
+                            "evidence_id": "authorship-deck",
+                            "kind": "criterion_summary",
+                            "message": "Repeated template silhouette.",
+                            "page_number": 1,
+                            "payload": {
+                                "severity": "MAJOR",
+                                "defect_codes": ["mechanical_cardization"],
+                                "affected_page_numbers": affected_pages,
+                            },
+                        }
+                    ],
+                }
+            ]
+        )
+        return build_attention_projection(report)["items"][0]
+
+    seventh = issue_for([1, 2, 3, 4, 5, 6, 7])
+    eighth = issue_for([1, 2, 3, 4, 5, 6, 8])
+
+    assert seventh["page_numbers"] == eighth["page_numbers"] == [1, 2, 3, 4, 5, 6]
+    assert seventh["issue_id"] != eighth["issue_id"]
+
+
 def test_semantic_budget_has_exactly_eight_families_and_degraded_is_p1() -> None:
     metric_ids = [
         "harness_system_integrity",
@@ -384,7 +514,7 @@ def test_new_and_legacy_reports_project_service_versions(tmp_path: Path) -> None
             pptx_path=str(deck),
         )
     )
-    assert report["service_version"] == "0.8.5"
+    assert report["service_version"] == "0.8.6"
 
     legacy = runtime.repository.get(report["run_id"])
     legacy.pop("service_version", None)
