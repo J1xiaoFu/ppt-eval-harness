@@ -225,12 +225,21 @@ Coverage/审计链异常
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[dev,api]"
-python examples/generate_demo.py
 
 ppt-eval run examples/demo/case_ready_made.json
 ppt-eval audit verify
 ppt-eval serve --host 127.0.0.1 --port 8000
 ```
+
+`examples/demo/` 是已跟踪、可移植的烟测输入；case 内的 `./...` 路径相对各自 JSON
+解析，新人 clone 后可直接运行，不需要先重新生成。如需制作一份可修改变体，可选执行：
+
+```powershell
+python examples/generate_demo.py
+```
+
+生成器默认只写入被忽略的 `var/demo-generated/`；即使显式指定输出，项目约定也只允许
+`var/` 下的目录。它不覆盖 tracked demo，正常使用后 `git status` 应保持干净。
 
 默认四场景 v8.3 Profile 已作为 package data 打进 wheel，不依赖当前工作目录。历史 v1–v7
 Profile、旧 Oracle 入口和同期方法文档保存在不可变 tag `archive/v8.3-pre-release`。需要复现时
@@ -308,6 +317,11 @@ git worktree add ..\ppt-eval-legacy archive/v8.3-pre-release
 不会被误认为仍受支持的第二条产品线；需要修复历史版本时，从 tag 临时创建 `codex/...`
 分支并在独立 worktree 中工作，完成后再用新的归档 tag 固化。`main` 因而始终代表唯一当前
 写合同，而 Git 历史与 tag 继续承担完整追溯。
+
+路径卫生也是发布门禁：主线自有示例和新生成 provenance 只能保存 manifest-relative/
+repo-relative 路径、内容 hash 或 opaque ID，禁止提交开发机盘符、用户名和组织目录。唯一类精确例外是
+vendored 上游源码本身硬编码的私有路径：它必须被明确标注为 upstream 不可复现证据，不得出现在
+本机运行命令或新的输出制品中。
 
 ## 11. 发布验证
 

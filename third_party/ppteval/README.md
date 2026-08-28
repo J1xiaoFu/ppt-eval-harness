@@ -12,6 +12,10 @@ PPTAgent, rather than treating the moving `main` branch as the paper baseline.
 - Paper experiment snapshot: `paper_experiment/`, downloaded byte-for-byte from the pinned commit.
 - Public metadata corpus: [Forceless/Zenodo10K](https://huggingface.co/datasets/Forceless/Zenodo10K), 10,448 records. Licensing is per Zenodo item, not one blanket dataset license.
 
+Reproduction JSON stores repository inputs as repo-relative POSIX paths and external inputs as
+`<external>/basename`; hashes, byte counts, commits and timestamps remain the authoritative
+provenance. Host usernames and checkout roots are deliberately not persisted.
+
 The published evaluator uses `gpt-4o-2024-08-06` for both slide description and
 judging. Content and design are scored per slide on a 1-5 scale and averaged;
 coherence is scored once for the whole deck; the reported overall score is the
@@ -23,7 +27,7 @@ Use a Python environment containing `python-pptx` (the Codex bundled Python in
 this workspace already contains it). First run the credential-free preflight:
 
 ```powershell
-$Python = 'C:\Users\DiegoWang\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
+$Python = (Get-Command python).Source
 & $Python third_party/ppteval/run_ppteval.py `
   --pptx third_party/ppteval/upstream/resource/build_effective_agents/build_effective_agents.pptx `
   --slides third_party/ppteval/upstream/resource/build_effective_agents `

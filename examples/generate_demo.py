@@ -1,17 +1,21 @@
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 
 from pptx import Presentation
 from pptx.enum.text import PP_ALIGN
+from pptx.slide import Slide
 from pptx.util import Inches, Pt
 
 ROOT = Path(__file__).resolve().parent
-OUT = ROOT / "demo"
+REPOSITORY_ROOT = ROOT.parent
+VAR_ROOT = REPOSITORY_ROOT / "var"
+DEFAULT_OUTPUT_DIR = VAR_ROOT / "demo-generated"
 
 
-def add_title(slide, title: str, subtitle: str) -> None:
+def add_title(slide: Slide, title: str, subtitle: str) -> None:
     title_box = slide.shapes.add_textbox(Inches(0.75), Inches(0.55), Inches(11.7), Inches(0.7))
     run = title_box.text_frame.paragraphs[0].add_run()
     run.text = title
@@ -25,7 +29,7 @@ def add_title(slide, title: str, subtitle: str) -> None:
     subtitle_run.font.size = Pt(11)
 
 
-def add_bullets(slide, items: list[str]) -> None:
+def add_bullets(slide: Slide, items: list[str]) -> None:
     box = slide.shapes.add_textbox(Inches(0.85), Inches(1.85), Inches(7.1), Inches(4.6))
     frame = box.text_frame
     frame.clear()
@@ -48,8 +52,9 @@ def add_bullets(slide, items: list[str]) -> None:
     p.alignment = PP_ALIGN.CENTER
 
 
-def generate() -> None:
-    OUT.mkdir(parents=True, exist_ok=True)
+def generate(output_dir: str | Path | None = None) -> Path:
+    destination = _resolved_output_dir(output_dir)
+    destination.mkdir(parents=True, exist_ok=True)
     presentation = Presentation()
     presentation.slide_width = Inches(13.333)
     presentation.slide_height = Inches(7.5)
@@ -66,15 +71,15 @@ def generate() -> None:
         add_title(slide, title, subtitle)
         add_bullets(slide, bullets)
 
-    deck_path = OUT / "aurora_demo.pptx"
-    presentation.save(deck_path)
+    deck_path = destination / "aurora_demo.pptx"
+    presentation.save(str(deck_path))
 
-    (OUT / "source.txt").write_text(
+    (destination / "source.txt").write_text(
         "Project Aurora 目标是缩短内容生产周期。试点预计将周期缩短35%。"
         "系统采用结构化生成、自动质量门禁和人工复核。",
         encoding="utf-8",
     )
-    common = {"pptx_path": str(deck_path.resolve()), "audience": "项目评审委员会"}
+    common = {"pptx_path": "./aurora_demo.pptx", "audience": "项目评审委员会"}
     cases = {
         "ready_made": {"case_id": "demo-ready-made", "scene": "ready_made", **common},
         "text_to_ppt": {
@@ -87,7 +92,7 @@ def generate() -> None:
             "case_id": "demo-project-summary",
             "scene": "project_summary",
             "request": "总结项目目标、系统方案和量化收益。",
-            "source_materials": [str((OUT / "source.txt").resolve())],
+            "source_materials": ["./source.txt"],
             **common,
         },
         "multimodal": {
@@ -99,11 +104,38 @@ def generate() -> None:
         },
     }
     for name, payload in cases.items():
-        (OUT / f"case_{name}.json").write_text(
+        (destination / f"case_{name}.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+    return deck_path
+
+
+def _resolved_output_dir(output_dir: str | Path | None) -> Path:
+    requested = Path(output_dir) if output_dir is not None else DEFAULT_OUTPUT_DIR
+    candidate = requested if requested.is_absolute() else REPOSITORY_ROOT / requested
+    destination = candidate.resolve()
+    allowed_root = VAR_ROOT.resolve()
+    if destination == allowed_root or not destination.is_relative_to(allowed_root):
+        raise ValueError("demo output directory must be a child of the repository var directory")
+    return destination
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Generate portable PPT evaluation demo inputs.")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Output directory (default: ignored var/demo-generated).",
+    )
+    args = parser.parse_args()
+    try:
+        deck_path = generate(args.output_dir)
+    except ValueError as exc:
+        parser.error(str(exc))
     print(deck_path)
+    return 0
 
 
 if __name__ == "__main__":
-    generate()
+    raise SystemExit(main())

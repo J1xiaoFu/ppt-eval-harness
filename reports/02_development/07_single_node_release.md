@@ -49,9 +49,27 @@ README 已改写为用户与开发者的唯一入口，覆盖 Docker、容器路
 CLI、API、数据目录、安全、历史回放和当前边界。过时的新员工交接手册与面试演示脚本已删除；
 研发 provenance 和外部基线快照继续保留；可执行历史合同迁入 archive tag。
 
+## 冷启动与路径可移植性补充
+
+本轮从远端 `main` 建立隔离 clone 做静态发布审查，不依赖原工作区的 Git 状态。检查暴露出
+tracked demo manifest 保存旧机器绝对路径的可移植性问题，因此将发布合同收紧为：
+
+- 四份 tracked case 使用 manifest-relative `./...` 路径，clone 后可直接加载/运行；
+- Demo generator 只生成 ignored `var/` 下的变体，不覆盖 `examples/demo/`，也不应改变
+  tracked 文件 hash 或 Git 状态；
+- 发布路径扫描拒绝项目自有代码、文档和新 provenance 中的个性化宿主机路径；只对精确标注的
+  vendored upstream 硬编码路径放行，以保留“上游为何不可复现”的原始证据。
+
+对应专项验证已纳入发布门禁；最终工作区的 pytest 与 dependency-free runner 均为
+`177 passed`，路径卫生、生成器 containment、JSON、PowerShell、Ruff 与 strict mypy 检查均通过。
+
+Docker 冷启动审计也区分了代码失败与外部环境：要求重新拉取的 `--pull` 流程曾受 registry
+DNS/代理可达性影响，该现象记为外部依赖问题，不伪装成代码编译失败。使用已解析的固定
+digest 基础层进行 no-cache 构建已成功，并完成容器健康、浏览器上传、审计事件和重启持久性验证。
+
 ## 明确不声称的能力
 
 - v8.3 权重仍处于 PRE_RESEARCH，不代表生产校准完成。
-- 当前没有认证、RBAC、浏览器上传、多审计员 lease 或远端对象存储。
+- 当前已有本机浏览器上传闭环，但没有认证、RBAC、多审计员 lease、持久 Job 或远端对象存储。
 - 进程内异步 Job 在 API 重启后不会恢复。
 - 完整 Web UI 以 Docker 为交付入口；普通 wheel 保证 CLI/API 与 bundled Profile。

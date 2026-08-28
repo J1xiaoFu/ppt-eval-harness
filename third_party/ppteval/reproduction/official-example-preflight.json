@@ -6,58 +6,58 @@
     "selected_model": "gpt-4o-2024-08-06",
     "transport_deviation": "public synchronous Chat Completions; paper code uses OpenAI Batch",
     "pptx": {
-      "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\upstream\\resource\\build_effective_agents\\build_effective_agents.pptx",
+      "path": "third_party/ppteval/upstream/resource/build_effective_agents/build_effective_agents.pptx",
       "sha256": "217bd88104b68f927901ac29e2a61ab057fd2b820d96b842f222bb1d3a7eb382",
       "slides": 10
     },
     "slide_images": [
       {
-        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\upstream\\resource\\build_effective_agents\\0001.jpg",
+        "path": "third_party/ppteval/upstream/resource/build_effective_agents/0001.jpg",
         "sha256": "55d6a3c3c218f438c04e3e3b7aa124838189801426d43ecbc69a23abdee979bc",
         "bytes": 216525
       },
       {
-        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\upstream\\resource\\build_effective_agents\\0002.jpg",
+        "path": "third_party/ppteval/upstream/resource/build_effective_agents/0002.jpg",
         "sha256": "2f9df0bb0f1908a3de35abbc82fce38b2255bfaf8f972858ab96fb159de80cb5",
         "bytes": 315434
       },
       {
-        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\upstream\\resource\\build_effective_agents\\0003.jpg",
+        "path": "third_party/ppteval/upstream/resource/build_effective_agents/0003.jpg",
         "sha256": "702f171c3f76b891ddb7db8b5cb5dd9093600d85c4b2cdc61d0bc423fdd7fdcb",
         "bytes": 362676
       },
       {
-        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\upstream\\resource\\build_effective_agents\\0004.jpg",
+        "path": "third_party/ppteval/upstream/resource/build_effective_agents/0004.jpg",
         "sha256": "8d8dd00c7afb3154ae032ced884a1cea1781f9921fe269fec798d01b847996a2",
         "bytes": 345905
       },
       {
-        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\upstream\\resource\\build_effective_agents\\0005.jpg",
+        "path": "third_party/ppteval/upstream/resource/build_effective_agents/0005.jpg",
         "sha256": "b64d4151b32b43a7f4b463ce3960003e2955c6e7906082e90f2aa872c963119d",
         "bytes": 348591
       },
       {
-        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\upstream\\resource\\build_effective_agents\\0006.jpg",
+        "path": "third_party/ppteval/upstream/resource/build_effective_agents/0006.jpg",
         "sha256": "9e9340de4c4f73920df528596531f52f7c36e443877cddba61434caf90ebb323",
         "bytes": 448599
       },
       {
-        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\upstream\\resource\\build_effective_agents\\0007.jpg",
+        "path": "third_party/ppteval/upstream/resource/build_effective_agents/0007.jpg",
         "sha256": "5fc3bd6b2787ad0b32ebf9eca1a877aae50ff95c19cc5aaf9a58afaa01b2aab1",
         "bytes": 276485
       },
       {
-        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\upstream\\resource\\build_effective_agents\\0008.jpg",
+        "path": "third_party/ppteval/upstream/resource/build_effective_agents/0008.jpg",
         "sha256": "401b3601d0a4a511e4d1d7696f9651a752081f3692e2e472f85f0b447f98034d",
         "bytes": 286596
       },
       {
-        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\upstream\\resource\\build_effective_agents\\0009.jpg",
+        "path": "third_party/ppteval/upstream/resource/build_effective_agents/0009.jpg",
         "sha256": "5a32b486a9743de9f303e455cc876c4324d8a13a5cb788635e83f603d706f5fe",
         "bytes": 356799
       },
       {
-        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\upstream\\resource\\build_effective_agents\\0010.jpg",
+        "path": "third_party/ppteval/upstream/resource/build_effective_agents/0010.jpg",
         "sha256": "a74b3e293af5d42db205eafaf46ea61118d39d3a882da071ad86c3c3d81ad04c",
         "bytes": 169546
       }
@@ -65,27 +65,27 @@
     "presentation_text_chars": 2771,
     "prompt_files": [
       {
-        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\paper_experiment\\prompts\\ppteval_coherence.txt",
+        "path": "third_party/ppteval/paper_experiment/prompts/ppteval_coherence.txt",
         "sha256": "b651c05fdda9170d8e4ba8966cd13ebec9f5498aeb5f9686db9aab4141097cff"
       },
       {
-        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\paper_experiment\\prompts\\ppteval_content.txt",
+        "path": "third_party/ppteval/paper_experiment/prompts/ppteval_content.txt",
         "sha256": "5a4c0f0117b9a0e8ca3ac50d3b488eef02c73ef63832732748ad5cb56d4139ce"
       },
       {
-        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\paper_experiment\\prompts\\ppteval_describe_content.txt",
+        "path": "third_party/ppteval/paper_experiment/prompts/ppteval_describe_content.txt",
         "sha256": "99da00aba585b86336fabc0d63066796471f6ff240daceaf7551b74217c65c17"
       },
       {
-        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\paper_experiment\\prompts\\ppteval_describe_style.txt",
+        "path": "third_party/ppteval/paper_experiment/prompts/ppteval_describe_style.txt",
         "sha256": "0cdd1bc052fabb8cb27cb1bdaef17c3ff920820a85db5f064b1668d66c794b20"
       },
       {
-        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\paper_experiment\\prompts\\ppteval_extract.txt",
+        "path": "third_party/ppteval/paper_experiment/prompts/ppteval_extract.txt",
         "sha256": "345374e6be8915ce9b63ba7032e38ac296f2f0b8d29620158301ea0e8133f694"
       },
       {
-        "path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\paper_experiment\\prompts\\ppteval_style.txt",
+        "path": "third_party/ppteval/paper_experiment/prompts/ppteval_style.txt",
         "sha256": "4a7d9f12d79d950a295d74a8b881c9be434c09970109b538f1a56da087dbf67b"
       }
     ],

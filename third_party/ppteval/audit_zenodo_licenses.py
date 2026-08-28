@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 
-from run_ppteval import sha256
+from run_ppteval import portable_path, sha256
 
 RECORD_PATTERN = re.compile(r"/records/(\d+)")
 
@@ -60,7 +60,7 @@ def main() -> int:
         records = list(executor.map(fetch_record, record_ids))
     output = {
         "checked_at_utc": datetime.now(timezone.utc).isoformat(),
-        "manifest": str(args.manifest.resolve()),
+        "manifest": portable_path(args.manifest),
         "manifest_sha256": sha256(args.manifest),
         "manifest_files": len(rows),
         "unique_zenodo_records": len(records),

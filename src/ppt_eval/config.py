@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 from importlib.resources import files
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Mapping
+from urllib.parse import urlsplit
 
 from ppt_eval.domain import EvalCase, EvalProfile, SceneType
 
@@ -62,8 +63,46 @@ def case_from_mapping(payload: Mapping[str, Any]) -> EvalCase:
 
 
 def load_case(path: str | Path) -> EvalCase:
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    manifest_path = Path(path).resolve()
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, Mapping):
+        raise ValueError("case manifest must contain a JSON object")
+    base = manifest_path.parent
+    normalized = dict(payload)
+    normalized["pptx_path"] = _manifest_path(
+        payload["pptx_path"],
+        base=base,
+        explicit_only=False,
+    )
+    normalized["source_materials"] = [
+        _manifest_path(item, base=base, explicit_only=True)
+        for item in payload.get("source_materials", ())
+    ]
+    normalized["assets"] = [
+        _manifest_path(item, base=base, explicit_only=True)
+        for item in payload.get("assets", ())
+    ]
+    payload = normalized
     return case_from_mapping(payload)
+
+
+def _manifest_path(
+    value: object,
+    *,
+    base: Path,
+    explicit_only: bool,
+) -> str:
+    text = str(value)
+    parsed = urlsplit(text)
+    if parsed.scheme in {"http", "https", "urn", "data", "file"}:
+        return text
+    candidate = Path(text)
+    if candidate.is_absolute() or PureWindowsPath(text).is_absolute():
+        return text
+    explicit = text.startswith(("./", "../", ".\\", "..\\"))
+    if explicit_only and not explicit:
+        return text
+    return str((base / candidate).resolve())
 
 
 def profile_from_mapping(payload: Mapping[str, Any]) -> EvalProfile:

@@ -6,6 +6,8 @@ AutoPresent 训练/推理和 585 例全量评测，无法仅靠当前公开产�
 数字或本次 smoke 输出标成“本项目复现结果”。
 
 结构化结论见 `reproduction-manifest.json`，原始输出见 `evidence/`。
+证据日志保留原始错误、版本、退出语义与数值，但将执行主机前缀确定性归一为
+`<repo>/`、`<python-stdlib>/` 或 `<local-editable:...>`，避免把个人目录误当成复现合同。
 
 ## 1. 官方来源与版本
 

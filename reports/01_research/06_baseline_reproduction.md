@@ -22,7 +22,7 @@
 - 可重跑适配器：`third_party/ppteval/run_ppteval.py`；完整来源、Prompt hash 与证据见 `third_party/ppteval/`。
 
 ```powershell
-$Python = "C:\Users\DiegoWang\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
+$Python = (Get-Command python).Source
 & $Python third_party/ppteval/run_ppteval.py `
   --pptx examples/demo/aurora_demo.pptx `
   --slides third_party/ppteval/reproduction/aurora_slides `
@@ -56,4 +56,3 @@ $Python = "C:\Users\DiegoWang\.cache\codex-runtimes\codex-primary-runtime\depend
 - PPTAgent/PPTEval：<https://aclanthology.org/2025.emnlp-main.728/>、<https://github.com/icip-cas/PPTAgent>
 - AutoPresent/SlidesBench：<https://arxiv.org/abs/2501.00912>、<https://github.com/para-lost/AutoPresent>
 - 详细复现报告：`third_party/ppteval/REPRODUCTION_REPORT.md`、`third_party/slidesbench/README.md`
-

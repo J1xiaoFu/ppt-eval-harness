@@ -27,6 +27,7 @@ from typing import Any
 UPSTREAM_COMMIT = "88c29f045ab5b7db331bd8b76cf6efc5f9ea7eee"
 PAPER_MODEL = "gpt-4o-2024-08-06"
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 
 
 def sha256(path: Path) -> str:
@@ -35,6 +36,16 @@ def sha256(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def portable_path(path: Path, *, repository_root: Path = REPOSITORY_ROOT) -> str:
+    """Return stable evidence paths without persisting the runner host root."""
+
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(repository_root.resolve()).as_posix()
+    except ValueError:
+        return f"<external>/{resolved.name}"
 
 
 def natural_key(path: Path) -> list[int | str]:
@@ -148,7 +159,10 @@ def chat_completion(
         try:
             with urllib.request.urlopen(request, timeout=360) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-            return payload["choices"][0]["message"]["content"]
+            content = payload["choices"][0]["message"]["content"]
+            if not isinstance(content, str):
+                raise TypeError("model response content must be a string")
+            return content
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, KeyError) as exc:
             last_error = exc
             if attempt < 5:
@@ -188,14 +202,23 @@ def build_preflight(
         "paper_model": PAPER_MODEL,
         "selected_model": model,
         "transport_deviation": "public synchronous Chat Completions; paper code uses OpenAI Batch",
-        "pptx": {"path": str(pptx_path), "sha256": sha256(pptx_path), "slides": slide_count},
+        "pptx": {
+            "path": portable_path(pptx_path),
+            "sha256": sha256(pptx_path),
+            "slides": slide_count,
+        },
         "slide_images": [
-            {"path": str(path), "sha256": sha256(path), "bytes": path.stat().st_size}
+            {
+                "path": portable_path(path),
+                "sha256": sha256(path),
+                "bytes": path.stat().st_size,
+            }
             for path in slide_images
         ],
         "presentation_text_chars": len(text),
         "prompt_files": [
-            {"path": str(path), "sha256": sha256(path)} for path in sorted(prompt_dir.glob("ppteval_*.txt"))
+            {"path": portable_path(path), "sha256": sha256(path)}
+            for path in sorted(prompt_dir.glob("ppteval_*.txt"))
         ],
         "expected_model_calls": 4 * len(slide_images) + 2,
         "aggregation": "mean slide content; mean slide design; one deck coherence; arithmetic mean of dimensions",

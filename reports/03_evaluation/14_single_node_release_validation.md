@@ -12,7 +12,10 @@
 - 精简后的单服务 Docker 镜像
 - `archive/v8.3-pre-release` 历史 worktree 可检出性
 
-## 自动门禁
+## 自动门禁（既有发布检查点）
+
+下表是此前单机发布检查点的已存记录，不是本轮 demo/上传与冷启动修改后的最终数字。
+本轮最终结果待合并后全量门禁确认，不在此预写。
 
 | 门禁 | 结果 |
 |---|---|
@@ -27,6 +30,39 @@
 
 FastAPI TestClient 产生一条上游 `StarletteDeprecationWarning`，不影响功能或测试结论；项目代码
 无 warning/error。
+
+## 本轮冷启动增量（最终门禁）
+
+本轮从远端 `main` 创建隔离 clone，分开核对 Git 完整性、README 冷启动合同、Compose/OpenAPI、
+默认无 Key 降级与 demo 可移植性。本轮增量门禁要求：
+
+- 四份 tracked manifest 使用相对 JSON 所在目录的 `./...` 路径，在任意 clone 位置都能直接加载并运行；
+- 默认 Demo generator 只向 ignored `var/demo-generated/` 写入，执行前后 tracked demo hash 和
+  `git status` 不变；
+- 个性化 host-path 扫描覆盖示例、研发文档与外部基线文本制品；本项目生成的路径必须相对化/
+  脱敏，只允许精确标注的 vendored upstream 硬编码路径作为不可复现证据保留。
+
+最终结果：
+
+| 门禁 | 结果 |
+|---|---|
+| 全量 pytest | `177 passed`；仅一条既有 Starlette/httpx2 迁移提示 |
+| dependency-free runner | `177 passed, 0 failed` |
+| 四份 tracked case | 全部从 manifest-relative 路径加载并完成运行 |
+| Demo generator | 只允许 ignored `var/` 子目录；外部绝对路径与 `../` 逃逸被拒绝 |
+| 路径卫生 | 个性化用户目录、开发机根、编码本地 URL 残留为 0 |
+| 制品格式 | 4 份 Demo JSON 与 4 份 reproduction JSON 解析通过；SlidesBench PowerShell 语法通过 |
+| 代码与 UI | Ruff、触及文件 strict mypy、TypeScript/Vite、Compose 与 diff check 通过 |
+
+另从仓库外工作目录分别运行 tracked `case_ready_made.json` 与 generator 产出的相同 case，
+两者均得到合法 `REVIEW/DEGRADED` 结果；生成 JSON 保持 `./aurora_demo.pptx` 和
+`./source.txt`，执行前后 tracked Git 状态不变。测试数据随后从精确的 ignored 目录清理。
+
+Docker `--pull` 尝试曾被外部 registry DNS/代理可达性阻断；该结果只证明当时无法刷新远程
+基础层，不证明项目代码构建失败。随后使用已解析的固定 digest 基础层完成 no-cache 构建，
+说明 Dockerfile/依赖和 UI 构建链在可用基础层上成立。隔离容器随后完成健康检查、浏览器上传、
+4 页渲染、57 条 AtomicObservation、完整制品 hash、`REQUEST_MORE_EVIDENCE` 人审事件与重启恢复；
+进程内 Job 在重启后返回 404，符合已声明的非持久 Job 合同。
 
 ## 包与容器
 

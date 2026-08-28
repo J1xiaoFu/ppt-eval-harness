@@ -4,6 +4,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$repoRoot = (Resolve-Path (Join-Path $root "..\..")).Path
 $upstream = Join-Path $root "upstream"
 $commit = "98e0c012e89469863d9c3c8bc87eac967d82b2e6"
 
@@ -21,6 +22,13 @@ if (-not (Test-Path $Python)) {
     throw "Python environment not found: $Python"
 }
 $Python = (Resolve-Path $Python).Path
+$pythonDirectory = Split-Path -Parent $Python
+$pythonEnvironment = if ((Split-Path -Leaf $pythonDirectory) -in @("Scripts", "bin")) {
+    Split-Path -Parent $pythonDirectory
+}
+else {
+    $pythonDirectory
+}
 
 & $Python (Join-Path $root "audit_dataset.py") `
     --upstream $upstream `
@@ -36,14 +44,24 @@ $unusedOutput = Join-Path $root "evidence\upstream-output-path-bug.json"
 
 Push-Location $evaluate
 try {
-    & $Python page_eval.py `
+    $rawOutput = & $Python page_eval.py `
         --generated_pptx $deck `
         --generated_page 1 `
         --reference_pptx $deck `
         --reference_page 1 `
-        --output_path $unusedOutput 2>&1 | Tee-Object -FilePath $log
-    if ($LASTEXITCODE -ne 0) {
-        throw "SlidesBench page evaluator failed with exit code $LASTEXITCODE"
+        --output_path $unusedOutput 2>&1
+    $exitCode = $LASTEXITCODE
+    $portableOutput = @(
+        $rawOutput | ForEach-Object {
+            ([string]$_).Replace($repoRoot, "<repo>").Replace(
+                $pythonEnvironment,
+                "<python-env>"
+            ).Replace("\", "/")
+        }
+    )
+    $portableOutput | Tee-Object -FilePath $log
+    if ($exitCode -ne 0) {
+        throw "SlidesBench page evaluator failed with exit code $exitCode"
     }
 }
 finally {

@@ -3,8 +3,8 @@
   "scene": "project_summary",
   "request": "总结项目目标、系统方案和量化收益。",
   "source_materials": [
-    "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\examples\\demo\\source.txt"
+    "./source.txt"
   ],
-  "pptx_path": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\examples\\demo\\aurora_demo.pptx",
+  "pptx_path": "./aurora_demo.pptx",
   "audience": "项目评审委员会"
 }

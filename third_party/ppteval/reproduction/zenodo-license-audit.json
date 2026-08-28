@@ -1,6 +1,6 @@
 {
   "checked_at_utc": "2026-08-26T06:34:27.171860+00:00",
-  "manifest": "D:\\Campus study\\实习\\腾讯优图\\入职面试\\PPT自动评测基线\\third_party\\ppteval\\paper_experiment\\resource\\dataset.jsonl",
+  "manifest": "third_party/ppteval/paper_experiment/resource/dataset.jsonl",
   "manifest_sha256": "da8568988585301a43b6ab596b3ef34367405c1790c7812354a01b9bbe7b4d41",
   "manifest_files": 100,
   "unique_zenodo_records": 90,

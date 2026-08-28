@@ -57,7 +57,7 @@ JPG，提取文本 2,771 字符，六个 Prompt 均通过占位符检查，预�
 `reproduction/aurora-ppteval.json`。
 
 ```powershell
-$Python = 'C:\Users\DiegoWang\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe'
+$Python = (Get-Command python).Source
 & $Python third_party/ppteval/run_ppteval.py `
   --pptx examples/demo/aurora_demo.pptx `
   --slides third_party/ppteval/reproduction/aurora_slides `

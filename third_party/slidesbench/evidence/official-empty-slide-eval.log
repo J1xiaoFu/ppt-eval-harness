@@ -1,11 +1,11 @@
-D:\Campus study\实习\腾讯优图\入职面试\PPT自动评测基线\third_party\slidesbench\.venv\lib\site-packages\huggingface_hub\file_download.py:949: FutureWarning: `resume_download` is deprecated and will be removed in version 1.0.0. Downloads always resume when possible. If you want to force a new download, use `force_download=True`.
+<repo>/third_party/slidesbench/.venv/lib/site-packages/huggingface_hub/file_download.py:949: FutureWarning: `resume_download` is deprecated and will be removed in version 1.0.0. Downloads always resume when possible. If you want to force a new download, use `force_download=True`.
   warnings.warn(
 Traceback (most recent call last):
 # of blocks 0 generated 0 reference
-  File "D:\Campus study\实习\腾讯优图\入职面试\PPT自动评测基线\third_party\slidesbench\upstream\evaluate\page_eval.py", line 184, in <module>
+  File "<repo>/third_party/slidesbench/upstream/evaluate/page_eval.py", line 184, in <module>
     main()
-  File "D:\Campus study\实习\腾讯优图\入职面试\PPT自动评测基线\third_party\slidesbench\upstream\evaluate\page_eval.py", line 114, in main
+  File "<repo>/third_party/slidesbench/upstream/evaluate/page_eval.py", line 114, in main
     scores_dict = {"match": block_match_score(gen_blocks, ref_blocks, matching)}
-  File "D:\Campus study\实习\腾讯优图\入职面试\PPT自动评测基线\third_party\slidesbench\upstream\evaluate\page_eval.py", line 96, in block_match_score
+  File "<repo>/third_party/slidesbench/upstream/evaluate/page_eval.py", line 96, in block_match_score
     return matched_area / sum_area
 ZeroDivisionError: division by zero

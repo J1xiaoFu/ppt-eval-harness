@@ -1,4 +1,4 @@
 Traceback (most recent call last):
-  File "D:\Campus study\实习\腾讯优图\入职面试\PPT自动评测基线\third_party\slidesbench\upstream\autopresent\train.py", line 1, in <module>
+  File "<repo>/third_party/slidesbench/upstream/autopresent/train.py", line 1, in <module>
     from unsloth import FastLanguageModel
 ModuleNotFoundError: No module named 'unsloth'
