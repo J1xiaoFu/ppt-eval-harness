@@ -61,6 +61,20 @@ def test_preflight_reports_active_content_and_external_links_without_fetching() 
     }
 
 
+def test_preflight_does_not_treat_empty_embedding_directory_as_active_content(
+    tmp_path: Path,
+) -> None:
+    path = build_pptx(tmp_path / "directory-only.pptx")
+    with zipfile.ZipFile(path, "a") as archive:
+        archive.writestr("ppt/embeddings/", b"")
+
+    report = PptxAdapter().preflight(path)
+
+    assert report.is_safe
+    assert report.has_macros is False
+    assert "active_content_present" not in {item.code for item in report.findings}
+
+
 def test_preflight_blocks_path_traversal() -> None:
     with tempfile.TemporaryDirectory() as directory:
         path = build_pptx(Path(directory) / "unsafe.pptx")

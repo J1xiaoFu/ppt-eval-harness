@@ -346,7 +346,7 @@ class PptxAdapter:
                             limit=self.limits.max_compression_ratio,
                         )
                     )
-                if _is_active_content_name(lower):
+                if not info.is_dir() and _is_active_content_name(lower):
                     has_macros = True
 
             if total > self.limits.max_total_uncompressed_bytes:
