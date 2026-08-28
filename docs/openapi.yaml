@@ -2,7 +2,10 @@ openapi: 3.1.0
 info:
   title: PPT Eval Harness
   version: 0.1.0
-  description: Deterministic PPT evaluation, review, and audit API.
+  description: >-
+    Deterministic PPT evaluation, review, and audit API. Every write request has a 202 MiB
+    pre-parser body limit. If a browser supplies Origin, only localhost or 127.0.0.1 origins are
+    accepted; trusted local CLI clients without Origin remain supported.
 paths:
   /healthz:
     get:
@@ -13,10 +16,18 @@ paths:
   /v1/evaluations:
     post:
       operationId: createEvaluation
+      description: >-
+        Trusted-local compatibility entry point for a caller-managed, server-visible PPTX path.
+        It must not be exposed to untrusted users. Browser and ordinary user submissions use
+        /v1/evaluations/upload.
       parameters:
         - in: query
           name: async
           schema: { type: boolean, default: true }
+        - in: header
+          name: Idempotency-Key
+          description: Reusing a key with identical content returns the original Job.
+          schema: { type: string, maxLength: 128 }
       requestBody:
         required: true
         content:
@@ -30,6 +41,50 @@ paths:
       responses:
         "200":
           description: Newest evaluation reports first.
+  /v1/evaluations/upload:
+    post:
+      operationId: uploadEvaluation
+      description: >-
+        Recommended browser entry point. A 202 MiB ASGI body guard runs before multipart parsing;
+        the handler then streams each bounded file through filename, media-type, ZIP and OOXML
+        validation. Repeated source_materials and assets fields upload real auxiliary files; they
+        never name server filesystem paths. Browser-originated writes are accepted only from a
+        localhost or 127.0.0.1 UI. Uploaded sources, reports and audit artifacts remain local;
+        configured model providers receive only selected rendered pixels and bounded context.
+      parameters:
+        - in: query
+          name: async
+          schema: { type: boolean, default: true }
+        - in: header
+          name: Idempotency-Key
+          description: Reusing a key with identical uploaded content returns the original Job.
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/EvaluationUpload" }
+            encoding:
+              source_materials: { style: form, explode: true }
+              assets: { style: form, explode: true }
+      responses:
+        "200":
+          description: Complete report when async=false.
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        "202":
+          description: Process-local asynchronous job accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EvaluationJob" }
+        "400": { $ref: "#/components/responses/InvalidRequestBody" }
+        "403": { $ref: "#/components/responses/OriginForbidden" }
+        "413": { $ref: "#/components/responses/UploadTooLarge" }
+        "422": { $ref: "#/components/responses/UnsafePresentation" }
+        "429": { $ref: "#/components/responses/JobQueueFull" }
+        "409": { $ref: "#/components/responses/IdempotencyConflict" }
+        "503": { $ref: "#/components/responses/StorageUnavailable" }
   /v1/jobs/{job_id}:
     get:
       operationId: getEvaluationJob
@@ -39,8 +94,17 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        "200": { description: Job state. }
-        "404": { description: Job not found. }
+        "200":
+          description: >-
+            Current process-local state. COMPLETED includes run_id and review_url. Job identifiers
+            are not durable across API process restarts; persisted runs remain available.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EvaluationJob" }
+        "404":
+          description: >-
+            Job not found after process restart or bounded terminal-job eviction. A persisted run,
+            if already created, remains available from the review task list.
   /v1/evaluations/{run_id}:
     get:
       operationId: getEvaluation
@@ -93,7 +157,9 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: One task with attention issues, slide links, score lineage, routes, artifacts, and review history.
+          description: >-
+            Lightweight task with attention issues, slide links, training tracks, artifacts and
+            review history. Matrix, gates, routes and Manifest are loaded from the audit endpoint.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ReviewTaskDetail" }
@@ -118,7 +184,11 @@ paths:
           required: true
           schema: { type: string }
       responses:
-        "200": { description: Full audit facts for the selected run. }
+        "200":
+          description: Full audit facts for the selected run.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FullAuditPayload" }
         "404": { description: Run not found. }
   /v1/review/tasks/{run_id}/slides/{page_number}:
     get:
@@ -156,6 +226,35 @@ paths:
         "200": { description: Run-scoped, manifest-verified artifact. }
         "404": { description: Artifact unavailable. }
         "409": { description: Artifact integrity mismatch. }
+  /v1/review/tasks/{run_id}/inputs/{role}/{index}:
+    get:
+      operationId: getReviewInputArtifact
+      description: >-
+        Download one run-bound source material or asset after role, index, Manifest hash and CAS
+        content hash verification. This endpoint never accepts a filesystem path or global digest.
+      parameters:
+        - in: path
+          name: run_id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: role
+          required: true
+          schema: { type: string, enum: [source_material, asset] }
+        - in: path
+          name: index
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        "200":
+          description: Manifest-verified input artifact download.
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/octet-stream:
+              schema: { type: string, contentEncoding: binary }
+        "404": { description: Run or indexed input artifact unavailable. }
+        "409": { description: Input artifact lineage or integrity mismatch. }
   /v1/review/tasks/{run_id}/reviews:
     get:
       operationId: listRunReviews
@@ -235,7 +334,102 @@ paths:
       responses:
         "200": { description: Approval event; two distinct approvals produce a release candidate only. }
 components:
+  responses:
+    InvalidRequestBody:
+      description: Content-Length is malformed or negative.
+      content:
+        application/json: { schema: { $ref: "#/components/schemas/ApiError" } }
+    OriginForbidden:
+      description: A browser-originated write did not come from the local review UI.
+      content:
+        application/json: { schema: { $ref: "#/components/schemas/ApiError" } }
+    UploadTooLarge:
+      description: The complete write request or an individual uploaded file exceeds its limit.
+      content:
+        application/json: { schema: { $ref: "#/components/schemas/ApiError" } }
+    UnsafePresentation:
+      description: Multipart fields, filename, extension, ZIP or OOXML preflight are invalid.
+      content:
+        application/json: { schema: { $ref: "#/components/schemas/ApiError" } }
+    JobQueueFull:
+      description: The bounded process-local job queue has no capacity.
+      headers:
+        Retry-After: { schema: { type: integer, minimum: 1 } }
+      content:
+        application/json: { schema: { $ref: "#/components/schemas/ApiError" } }
+    StorageUnavailable:
+      description: The local upload or artifact store is unavailable.
+      content:
+        application/json: { schema: { $ref: "#/components/schemas/ApiError" } }
+    IdempotencyConflict:
+      description: The Idempotency-Key was reused with different input.
+      content:
+        application/json: { schema: { $ref: "#/components/schemas/ApiError" } }
   schemas:
+    ApiError:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          oneOf:
+            - { type: string }
+            - $ref: "#/components/schemas/UploadErrorDetail"
+    UploadErrorDetail:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+    EvaluationUpload:
+      type: object
+      required: [presentation, case_id, scene]
+      properties:
+        presentation:
+          type: string
+          format: binary
+          contentMediaType: application/vnd.openxmlformats-officedocument.presentationml.presentation
+          description: >-
+            One .pptx up to 100 MiB. The original filename is at most 120 characters,
+            is display metadata only, and never becomes a caller-selected storage path.
+        case_id: { type: string, minLength: 1, maxLength: 128 }
+        scene:
+          type: string
+          enum: [text_to_ppt, project_summary, multimodal, ready_made]
+        request: { type: [string, "null"], maxLength: 20000 }
+        audience: { type: [string, "null"], maxLength: 2000 }
+        source_materials:
+          type: array
+          maxItems: 16
+          items: { type: string, format: binary }
+          description: >-
+            Repeat to upload source files; each is at most 25 MiB. Supported suffixes are .txt,
+            .md, .csv, .tsv, .json, .yaml and .yml; path strings are forbidden.
+        assets:
+          type: array
+          maxItems: 32
+          items: { type: string, format: binary }
+          description: Repeat to upload asset files; each is at most 25 MiB and path strings are forbidden.
+      additionalProperties: false
+    EvaluationJob:
+      type: object
+      required: [job_id, status, stage, created_at]
+      properties:
+        job_id: { type: string }
+        status: { type: string, enum: [PENDING, RUNNING, COMPLETED, FAILED] }
+        stage: { type: string, enum: [QUEUED, EVALUATING, READY_FOR_REVIEW, FAILED] }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        input_sha256: { type: [string, "null"], pattern: "^[0-9a-f]{64}$" }
+        size_bytes: { type: [integer, "null"], minimum: 0 }
+        run_id: { type: [string, "null"] }
+        evaluation_url: { type: [string, "null"] }
+        review_task_url: { type: [string, "null"] }
+        review_url:
+          type: [string, "null"]
+          description: Present with run_id after successful completion.
+        error_code: { type: [string, "null"] }
+      additionalProperties: false
     EvaluationSubmission:
       type: object
       required: [case]
@@ -367,7 +561,7 @@ components:
         lineage: { type: object, additionalProperties: true }
     ReviewTaskSummary:
       type: object
-      required: [run_id, case_id, scenario, decision, coverage, priority, priority_reason, issue_count, page_count, review_state]
+      required: [run_id, case_id, scenario, decision, coverage, priority, priority_reason, issue_count, page_count, review_state, training_tracks, triage_policy_version]
       properties:
         run_id: { type: string }
         case_id: { type: string }
@@ -383,21 +577,99 @@ components:
         created_at: { type: [string, "null"], format: date-time }
         profile_id: { type: [string, "null"] }
         profile_version: { type: [string, "null"] }
+        training_tracks:
+          type: array
+          items: { $ref: "#/components/schemas/TrainingTrack" }
+        latest_review:
+          oneOf:
+            - { $ref: "#/components/schemas/ReviewEvent" }
+            - { type: "null" }
+        triage_policy_version: { type: string }
     ReviewTaskDetail:
       allOf:
         - { $ref: "#/components/schemas/ReviewTaskSummary" }
         - type: object
-          required: [triage_policy_version, issues, slides, training_tracks, results, gate_results, model_routes, artifacts, reviews]
+          required: [review_reasons, issues, slides, inputs, audit_url, artifacts, reviews, audit_integrity]
           properties:
-            triage_policy_version: { type: string }
+            report_hash: { type: [string, "null"] }
+            observation_hash: { type: [string, "null"] }
+            review_reasons: { type: array, items: { type: string } }
             issues: { type: array, items: { $ref: "#/components/schemas/AttentionIssue" } }
-            slides: { type: array, items: { type: object, additionalProperties: true } }
-            training_tracks: { type: array, items: { type: object, additionalProperties: true } }
-            results: { type: array, items: { type: object, additionalProperties: true } }
-            gate_results: { type: array, items: { type: object, additionalProperties: true } }
-            model_routes: { type: array, items: { type: object, additionalProperties: true } }
-            artifacts: { type: object, additionalProperties: true }
-            reviews: { type: array, items: { type: object, additionalProperties: true } }
+            slides: { type: array, items: { $ref: "#/components/schemas/SlideRef" } }
+            inputs: { type: array, items: { $ref: "#/components/schemas/ReviewInputArtifact" } }
+            audit_url: { type: string }
+            artifacts: { $ref: "#/components/schemas/ReviewArtifactLinks" }
+            reviews: { type: array, items: { $ref: "#/components/schemas/ReviewEvent" } }
+            audit_integrity: { $ref: "#/components/schemas/AuditIntegrity" }
+      unevaluatedProperties: false
+    TrainingTrack:
+      type: object
+      required: [track, status, reason_codes]
+      properties:
+        track: { type: string, enum: [visual, layout, content, full_deck] }
+        status: { type: string, enum: [TRAIN, REVIEW, REJECT] }
+        score: { type: [number, "null"] }
+        reason_codes: { type: array, items: { type: string } }
+    SlideRef:
+      type: object
+      required: [page_number, available]
+      properties:
+        page_number: { type: integer, minimum: 1 }
+        available: { type: boolean }
+        image_url: { type: [string, "null"] }
+        thumbnail_url: { type: [string, "null"] }
+    ReviewArtifactLinks:
+      type: object
+      required: [report_url]
+      properties:
+        report_url: { type: string }
+        observations_url: { type: [string, "null"] }
+        source_pptx_url: { type: [string, "null"] }
+        render_manifest_url: { type: [string, "null"] }
+      additionalProperties: true
+    ReviewInputArtifact:
+      type: object
+      required: [role, index, original_name, media_type, size_bytes, sha256, available, download_url]
+      properties:
+        role: { type: string, enum: [source_material, asset] }
+        index: { type: integer, minimum: 1 }
+        original_name: { type: string }
+        media_type: { type: string }
+        size_bytes: { type: [integer, "null"], minimum: 0 }
+        sha256: { type: [string, "null"], pattern: "^[0-9a-f]{64}$" }
+        available: { type: boolean }
+        download_url: { type: [string, "null"] }
+      additionalProperties: false
+    ReviewEvent:
+      type: object
+      required: [review_id, run_id, reviewer_id, verdict, created_at]
+      properties:
+        review_id: { type: string }
+        run_id: { type: string }
+        reviewer_id: { type: string }
+        verdict:
+          type: string
+          enum: [CONFIRM_SYSTEM_DECISION, OVERRIDE_DECISION, REQUEST_MORE_EVIDENCE, APPROVE, REJECT]
+        note: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        issue_resolutions: { type: array, items: { $ref: "#/components/schemas/IssueResolution" } }
+    AuditIntegrity:
+      type: object
+      required: [chain_valid]
+      properties:
+        chain_valid: { type: boolean }
+        observation_artifact_valid: { type: [boolean, "null"] }
+    FullAuditPayload:
+      type: object
+      required: [run_id, results, gate_results, model_routes, manifest, reviews, audit_integrity]
+      properties:
+        run_id: { type: string }
+        results: { type: array, items: { type: object, additionalProperties: true } }
+        gate_results: { type: array, items: { type: object, additionalProperties: true } }
+        model_routes: { type: array, items: { type: object, additionalProperties: true } }
+        manifest: { type: object, additionalProperties: true }
+        reviews: { type: array, items: { $ref: "#/components/schemas/ReviewEvent" } }
+        audit_integrity: { $ref: "#/components/schemas/AuditIntegrity" }
     ReviewQueue:
       type: object
       required: [items, total, limit, offset, triage_policy_version]

@@ -8,6 +8,27 @@ export type ReviewVerdict =
   | "CONFIRM_SYSTEM_DECISION"
   | "OVERRIDE_DECISION"
   | "REQUEST_MORE_EVIDENCE";
+export type EvaluationScene =
+  | "ready_made"
+  | "text_to_ppt"
+  | "project_summary"
+  | "multimodal";
+export type EvaluationJobStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+
+export interface EvaluationJob {
+  job_id: string;
+  status: EvaluationJobStatus;
+  stage?: string;
+  run_id?: string;
+  review_url?: string;
+  review_task_url?: string;
+  evaluation_url?: string;
+  error?: string;
+  error_code?: string;
+  created_at?: string;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
 
 export interface EvidenceRef {
   evidence_id?: string;
@@ -89,6 +110,16 @@ export interface ReviewTaskDetail extends ReviewTaskSummary {
   review_reasons: string[];
   issues: AttentionIssue[];
   slides: SlideRef[];
+  inputs?: Array<{
+    role: string;
+    index: number;
+    original_name: string;
+    media_type: string;
+    size_bytes?: number | null;
+    sha256?: string | null;
+    available: boolean;
+    download_url?: string | null;
+  }>;
   training_tracks: TrainingTrack[];
   audit_url: string;
   artifacts: {

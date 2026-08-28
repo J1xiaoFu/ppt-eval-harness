@@ -80,20 +80,55 @@ class LocalArtifactStore:
     def __init__(self, root: str | Path = "var/artifacts") -> None:
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.RLock()
 
-    def put(self, source: str | Path, *, media_type: str = "application/octet-stream") -> dict[str, Any]:
+    def put(
+        self,
+        source: str | Path,
+        *,
+        media_type: str = "application/octet-stream",
+        original_name: str | None = None,
+        expected_sha256: str | None = None,
+    ) -> dict[str, Any]:
+        """Atomically copy a file into the content-addressed store.
+
+        ``expected_sha256`` closes the gap between streamed upload validation
+        and durable storage.  The source is never moved or deleted here; its
+        owner remains responsible for any quarantine/workspace cleanup.
+        """
+
         source_path = Path(source)
+        if not source_path.is_file():
+            raise FileNotFoundError(source_path.name)
         digest = sha256_file(source_path)
+        if expected_sha256 is not None and digest != validated_sha256(expected_sha256):
+            raise ValueError("artifact content changed before durable storage")
         destination = self.root / digest[:2] / digest
         destination.parent.mkdir(parents=True, exist_ok=True)
-        if not destination.exists():
-            shutil.copy2(source_path, destination)
+        with self._lock:
+            if destination.exists():
+                if sha256_file(destination) != digest:
+                    raise ValueError("content-addressed artifact failed integrity validation")
+            else:
+                temporary = destination.parent / f".{uuid.uuid4().hex}.tmp"
+                try:
+                    with source_path.open("rb") as source_stream, temporary.open(
+                        "xb"
+                    ) as destination_stream:
+                        shutil.copyfileobj(source_stream, destination_stream, 1024 * 1024)
+                        destination_stream.flush()
+                        os.fsync(destination_stream.fileno())
+                    if sha256_file(temporary) != digest:
+                        raise ValueError("artifact copy failed integrity validation")
+                    os.replace(temporary, destination)
+                finally:
+                    temporary.unlink(missing_ok=True)
         return {
             "sha256": digest,
             "uri": str(destination.resolve()),
             "size_bytes": source_path.stat().st_size,
             "media_type": media_type,
-            "original_name": source_path.name,
+            "original_name": original_name or source_path.name,
         }
 
     def put_bytes(
@@ -108,13 +143,20 @@ class LocalArtifactStore:
         digest = hashlib.sha256(data).hexdigest()
         destination = self.root / digest[:2] / digest
         destination.parent.mkdir(parents=True, exist_ok=True)
-        if not destination.exists():
-            # Keep the atomic sibling name short.  Appending a UUID to the
-            # 64-character digest can cross the legacy Windows MAX_PATH
-            # boundary even when the final content-addressed path is valid.
-            temporary = destination.parent / f".{uuid.uuid4().hex}.tmp"
-            temporary.write_bytes(data)
-            os.replace(temporary, destination)
+        with self._lock:
+            if destination.exists():
+                if sha256_file(destination) != digest:
+                    raise ValueError("content-addressed artifact failed integrity validation")
+            else:
+                # Keep the atomic sibling name short.  Appending a UUID to the
+                # 64-character digest can cross the legacy Windows MAX_PATH
+                # boundary even when the final content-addressed path is valid.
+                temporary = destination.parent / f".{uuid.uuid4().hex}.tmp"
+                try:
+                    temporary.write_bytes(data)
+                    os.replace(temporary, destination)
+                finally:
+                    temporary.unlink(missing_ok=True)
         return {
             "sha256": digest,
             "uri": str(destination.resolve()),

@@ -44,37 +44,62 @@ docker compose up -d --build
 没有模型 Key 时，确定性 Oracle、评分、制品存储和审计平台仍可运行；模型相关 required
 metric 会按合同返回 N/A，并把 Coverage 降级为 REVIEW，而不是伪造零分。
 
-### 提交一个 PPTX
+### 从浏览器完成一次评测与人审
 
-当前 API 接受的是**服务端可见路径**，不是浏览器上传。Compose 只挂载宿主机 `var/` 到容器
-`/var/lib/ppt-eval/`，因此先把文件放进 `var/`：
+推荐工作流是在审计平台点击“新建评测”，选择 `.pptx`、场景和可选上下文后提交。页面会
+创建进程内 Job，轮询显示 `PENDING → RUNNING → COMPLETED/FAILED`；成功后按
+`review_url` 进入该 run 的 Attention 审计页，最后提交不可变 `ReviewEvent`。
+
+同一路径可用 multipart API 调用：
 
 ```powershell
-New-Item -ItemType Directory -Force var/inbox | Out-Null
-Copy-Item C:\path\to\sample.pptx var/inbox/sample.pptx
-
-$body = @{
-  case = @{
-    case_id = "sample-001"
-    scene = "ready_made"
-    pptx_path = "/var/lib/ppt-eval/inbox/sample.pptx"
-  }
-} | ConvertTo-Json -Depth 5
-
-Invoke-RestMethod `
-  -Method Post `
-  -Uri "http://127.0.0.1:8000/v1/evaluations?async=false" `
-  -ContentType "application/json" `
-  -Body $body
+curl.exe -X POST "http://127.0.0.1:8000/v1/evaluations/upload?async=true" `
+  -F "presentation=@C:\path\to\sample.pptx;type=application/vnd.openxmlformats-officedocument.presentationml.presentation" `
+  -F "case_id=sample-001" `
+  -F "scene=ready_made" `
+  -F "request=请评估这份市场调研汇报"
 ```
 
-刷新审计平台即可看到新任务。停止服务：
+异步提交返回 HTTP `202` 和 `job_id`。用下列接口轮询；`COMPLETED` 结果会同时给出
+`run_id` 与 `review_url`：
+
+```powershell
+Invoke-RestMethod "http://127.0.0.1:8000/v1/jobs/job-..."
+```
+
+上传只接受有限大小的 `.pptx`。文件名、MIME 和 multipart 字段都是不可信输入；服务端使用
+不可猜测的本地名称、ZIP/OOXML 安全预检与原子工作区。所有写请求在 multipart 解析/落 spool
+前有 202 MiB 总 body 硬上限，同时保留逐文件的二次流式限制。路径穿越、加密条目、重复条目、
+ZIP bomb、DTD/entity 或缺少必要 OOXML part 的包会被拒绝。`source_materials` 和
+`assets` 是可选的真实文件字段，不是服务端文件路径；多份文件使用重复的 multipart 字段提交，
+并与主 PPTX 一样接受文件名、大小、落盘和清理约束。
+
+单份 PPTX 上限为 100 MiB；每份 source/asset 上限为 25 MiB，附件合计上限为 100 MiB，
+`source_materials` 最多 16 份、`assets` 最多 32 份。文件名最长 120 个字符，不得包含路径分隔符、
+控制字符或 Windows 保留名；主文件只允许 `.pptx`。当前 source 仅接受可直接提取的文本后缀
+`.txt/.md/.csv/.tsv/.json/.yaml/.yml`；PDF、DOCX 和 XLSX 需要专用解析器，本版不会假装已解析。
+asset 按图像、视频、PDF 或表格后缀白名单验证。
+
+对带 `Origin` 的浏览器写请求，服务端只允许 `localhost` 或 `127.0.0.1` 的同机 UI；来自其他
+网站的上传/审计写入返回 `403 ORIGIN_FORBIDDEN`。本机 CLI/curl 通常不带 Origin，仍可调用。
+
+`POST /v1/evaluations` 的 JSON `pptx_path` 仍保留给受信本机管理员和自动化，调用方负责
+提供服务端可见路径；该接口不得向不可信用户暴露，也不是浏览器或远程用户的推荐入口。
+
+停止服务：
 
 ```powershell
 docker compose down
 ```
 
-`var/` 中的运行、审计和制品不会因容器停止而删除。
+`var/` 中已完成的运行、审计和制品不会因容器停止而删除。Job 状态仅存在于当前 API
+进程：重启后未完成的 `PENDING/RUNNING` Job 不会自动续跑；终态 Job 也只保留最近的有界数量。
+`GET /v1/jobs/{job_id}` 返回 404 时，浏览器会清除失效 Job、停止轮询，并提示到“全部运行”确认
+是否已产生 run。
+
+正常完成、失败或取消的工作区会精确清理；进程/主机崩溃可能在 `var/uploads/work/` 留下
+`upload-*` 或隐藏 draft。为避免新进程误删另一实例仍在使用的文件，启动时不跨进程自动清理；
+单机运维应在停止 API 后核对并清理孤儿工作区。自动 TTL/lease 清理属于后续生产控制面。
 
 ## 3. 启用模型审计
 
@@ -96,8 +121,9 @@ PPT_EVAL_ZHIPU_MODEL=glm-5.3-flash
 - BigModel：`https://open.bigmodel.cn/api/paas/v4`
 
 不要提交 `.env`、`api/` 或任何真实凭证。当前远程模型请求只包含渲染页像素、有限的幻灯片
-对象上下文和有长度上限的 request/audience 文本；`source_materials` 中的本地文件路径不会被
-模型审计链打开或上传。
+对象上下文和有长度上限的 request/audience 文本；不会把原 PPTX 或服务端路径发给模型。
+但上传的 PPTX、页图和证据会落在本机 `var/`，启用模型时被选中页的像素会发给所配置 Provider；
+不应上传未获授权的敏感材料。
 
 ## 4. 运行架构
 
@@ -155,6 +181,17 @@ S_full = 100 × product(base multipliers) × product(scene multipliers)
 
 ## 6. 审计平台工作流
 
+真实用户闭环为：
+
+```text
+新建评测（multipart PPTX）
+→ Job 进度
+→ EvalReport / Observation / Render Manifest 落盘
+→ review_url 进入 Attention 审计
+→ 问题级 resolution
+→ 幂等追加 ReviewEvent
+```
+
 队列按系统事实产生 P0–P3，不使用人类标签：
 
 ```text
@@ -179,6 +216,8 @@ Coverage/审计链异常
 
 确认或覆盖最终结论前，所有 P0/P1 问题必须有问题级判断。`Idempotency-Key` 防止网络重试重复
 写入。历史 `APPROVE/REJECT` 事件仍可读取，但新写入只接受上述三种运行级 verdict。
+上传的 source/asset 与 run Manifest 绑定后，会在完整审计抽屉中作为可下载的输入制品，
+人审无需依赖服务端路径即可对照来源和指定素材。
 
 ## 7. CLI 与本地开发
 
@@ -216,12 +255,15 @@ bundle 不包含 demo 数据。
 
 | Endpoint | 用途 |
 |---|---|
-| `POST /v1/evaluations` | 创建同步或进程内异步评测 |
+| `POST /v1/evaluations/upload` | 推荐：multipart 上传 PPTX，创建同步或进程内异步评测 |
+| `GET /v1/jobs/{job_id}` | 读取进度；完成后返回 `run_id` 与 `review_url` |
+| `POST /v1/evaluations` | 受信本机兼容：管理员/自动化提供服务端可见 PPTX 路径 |
 | `GET /v1/review/tasks` | 读取精简审计队列 |
 | `GET /v1/review/tasks/{run_id}` | Attention、页图和训练轨详情 |
 | `GET /v1/review/tasks/{run_id}/audit` | 按需加载 Matrix、路由与 Manifest |
 | `GET /v1/review/tasks/{run_id}/slides/{page}` | 读取校验后的页图 |
 | `GET /v1/review/tasks/{run_id}/artifacts/{role}` | 读取 run 绑定制品 |
+| `GET /v1/review/tasks/{run_id}/inputs/{role}/{index}` | 下载 Manifest 绑定的 source/asset 输入 |
 | `POST /v1/reviews` | 幂等追加人工 ReviewEvent |
 | `GET /healthz` | 服务与哈希链状态 |
 
@@ -231,6 +273,7 @@ bundle 不包含 demo 数据。
 
 ```text
 var/
+├─ uploads/work/                 进程内上传工作区（崩溃孤儿需停服务后人工清理）
 ├─ runs/                         EvalReport、RunManifest、reviews.jsonl
 ├─ audit/events.jsonl            全局 append-only SHA-256 链
 ├─ artifacts/                    内容寻址 PPTX / Observation / render manifest
@@ -239,8 +282,10 @@ var/
 └─ proposals/                    参数提案事件
 ```
 
-不要手工编辑 JSONL。报告中的本机 URI 不会发送给审计前端；artifact 下载必须同时匹配 run、
-固定 role 与 Manifest hash。
+不要手工编辑 JSONL，也不要在 Job 运行期间删除 `uploads/work/` 工作文件。报告中的本机 URI 不会
+发送给审计前端；artifact 下载必须同时匹配 run、固定 role 与 Manifest hash。原 PPTX 作为
+内容寻址制品按审计保留；source/asset 也只在 run 产生后进入 CAS 并写入 Manifest。
+上传工作副本不是归档。
 
 ## 10. 开发过程审计与历史复现
 
@@ -303,8 +348,11 @@ tests/                 单元、属性、集成和端到端测试
 ## 13. 当前边界
 
 - 默认 v8.3 权重仍处于预研阶段，尚未通过大规模人类金标完成生产校准。
-- 当前发布版是单机运行时；异步 Job 在 API 进程内，服务重启后未完成 Job 不保留。
-- 尚无浏览器上传、认证、RBAC、多审计员 claim lease 或远端对象存储。
+- 当前发布版是单机运行时；异步 Job 在 API 进程内，不是持久任务队列。进程重启后旧
+  `job_id` 与未完成 Job 不保留，已落盘 run 和 ReviewEvent 保留。
+- 上传工作区没有跨进程 lease/TTL；崩溃孤儿需单机运维清理，服务不会在启动时自动删除。
+- 已有浏览器上传的单机闭环，但尚无认证、RBAC、多审计员 claim lease、持久 Job 或远端
+  对象存储。
 - 审计平台应保持绑定 localhost；部署给团队前必须补身份与权限控制。
 - Docker 包含完整审计 UI；普通 wheel 从仓库外运行 `ppt-eval serve` 只保证 API，除非另行提供
   `PPT_EVAL_UI_DIR` 或使用 Docker 镜像。

@@ -13,6 +13,7 @@ import {
   History,
   Layers3,
   LoaderCircle,
+  Plus,
   RefreshCw,
   Route,
   Search,
@@ -21,6 +22,7 @@ import {
   X,
 } from "lucide-react";
 import { getReviewAudit, getReviewTask, listReviewTasks, submitReview } from "./api";
+import NewEvaluationWorkspace from "./NewEvaluationWorkspace";
 import type {
   AttentionIssue,
   Decision,
@@ -35,6 +37,22 @@ import type {
 const DEMO_MODE = import.meta.env.DEV && import.meta.env.VITE_DEMO_MODE === "true";
 const priorityLabel = { P0: "立即处理", P1: "优先复核", P2: "质量抽查", P3: "常规抽查" };
 const viewLabel = { queue: "审计队列", all: "全部运行", completed: "已完成" };
+type ReviewView = keyof typeof viewLabel;
+
+function locationSelection(): { view: ReviewView; runId: string } {
+  const params = new URLSearchParams(window.location.search);
+  const rawView = params.get("view");
+  const view: ReviewView = rawView === "all" || rawView === "completed" ? rawView : "queue";
+  return { view, runId: params.get("run")?.trim() ?? "" };
+}
+
+function updateLocation(view: ReviewView, runId: string, mode: "push" | "replace") {
+  const url = new URL(window.location.href);
+  url.searchParams.set("view", view);
+  if (runId) url.searchParams.set("run", runId);
+  else url.searchParams.delete("run");
+  window.history[mode === "push" ? "pushState" : "replaceState"]({}, "", url);
+}
 
 function QueueRow({
   task,
@@ -226,6 +244,18 @@ function FullAuditDrawer({
           {task.artifacts.observations_url && <a href={task.artifacts.observations_url} target="_blank" rel="noreferrer"><Download size={15} />完整 Observation</a>}
           {task.artifacts.render_manifest_url && <a href={task.artifacts.render_manifest_url} target="_blank" rel="noreferrer"><Download size={15} />Render Manifest</a>}
           {task.artifacts.source_pptx_url && <a href={task.artifacts.source_pptx_url}><Download size={15} />原始 PPTX</a>}
+          {task.inputs?.filter((input) => input.role === "source_material" || input.role === "asset").map((input) => {
+            const label = `${input.role === "source_material" ? "来源" : "素材"}：${input.original_name}`;
+            return input.available && input.download_url ? (
+              <a key={`${input.role}-${input.index}-${input.sha256 ?? "missing"}`} href={input.download_url} download>
+                <Download size={15} />{label}
+              </a>
+            ) : (
+              <span className="artifact-unavailable" key={`${input.role}-${input.index}-${input.sha256 ?? "missing"}`}>
+                <AlertCircle size={15} />{label}（不可用）
+              </span>
+            );
+          })}
         </footer>
       </aside>
     </div>
@@ -233,10 +263,13 @@ function FullAuditDrawer({
 }
 
 export default function App() {
-  const [view, setView] = React.useState<"queue" | "all" | "completed">("queue");
+  const initialSelection = React.useMemo(locationSelection, []);
+  const [workspace, setWorkspace] = React.useState<"review" | "create">("review");
+  const [view, setView] = React.useState<ReviewView>(initialSelection.view);
   const [query, setQuery] = React.useState("");
   const [tasks, setTasks] = React.useState<ReviewTaskSummary[]>([]);
-  const [activeRun, setActiveRun] = React.useState("");
+  const [activeRun, setActiveRun] = React.useState(initialSelection.runId);
+  const [liveRunId, setLiveRunId] = React.useState("");
   const [task, setTask] = React.useState<ReviewTaskDetail | null>(null);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState("");
@@ -259,13 +292,13 @@ export default function App() {
     setLoading(true);
     setError("");
     try {
-      if (DEMO_MODE) {
+      if (DEMO_MODE && !liveRunId) {
         const { demoTasks } = await import("./demo");
         const filtered = demoTasks.filter((item) =>
           `${item.case_id} ${item.run_id} ${item.scenario}`.toLowerCase().includes(query.toLowerCase()),
         );
         setTasks(view === "completed" ? [] : filtered);
-        if (!activeRun && filtered[0]) setActiveRun(filtered[0].run_id);
+        setActiveRun((current) => current || filtered[0]?.run_id || "");
       } else {
         const params = new URLSearchParams({ view });
         if (query.trim()) params.set("query", query.trim());
@@ -278,12 +311,28 @@ export default function App() {
     } finally {
       setLoading(false);
     }
-  }, [activeRun, query, view]);
+  }, [liveRunId, query, view]);
 
   React.useEffect(() => {
+    if (workspace !== "review") return;
     const timer = window.setTimeout(() => void loadTasks(), 180);
     return () => window.clearTimeout(timer);
-  }, [loadTasks]);
+  }, [loadTasks, workspace]);
+
+  React.useEffect(() => {
+    if (workspace === "review") updateLocation(view, activeRun, "replace");
+  }, [activeRun, view, workspace]);
+
+  React.useEffect(() => {
+    const restoreLocation = () => {
+      const restored = locationSelection();
+      setWorkspace("review");
+      setView(restored.view);
+      setActiveRun(restored.runId);
+    };
+    window.addEventListener("popstate", restoreLocation);
+    return () => window.removeEventListener("popstate", restoreLocation);
+  }, []);
 
   React.useEffect(() => {
     if (!activeRun) {
@@ -294,7 +343,7 @@ export default function App() {
     setError("");
     const load = async () => {
       try {
-        const detail = DEMO_MODE
+        const detail = DEMO_MODE && !liveRunId
           ? (await import("./demo")).demoDetailForRun(activeRun)
           : await getReviewTask(activeRun);
         if (cancelled) return;
@@ -312,7 +361,7 @@ export default function App() {
     };
     void load();
     return () => { cancelled = true; };
-  }, [activeRun]);
+  }, [activeRun, liveRunId]);
 
   React.useEffect(() => {
     if (reviewer.trim()) localStorage.setItem("ppt-eval-reviewer", reviewer.trim());
@@ -335,13 +384,33 @@ export default function App() {
     if (nextIssue.page_numbers[0]) setPage(nextIssue.page_numbers[0]);
   }
 
+  function selectView(nextView: ReviewView) {
+    setWorkspace("review");
+    setView(nextView);
+    setActiveRun("");
+    updateLocation(nextView, "", "push");
+  }
+
+  function selectRun(runId: string, nextView: ReviewView = view) {
+    setWorkspace("review");
+    setView(nextView);
+    setActiveRun(runId);
+    updateLocation(nextView, runId, "push");
+  }
+
+  function enterCreatedRun(runId: string) {
+    setLiveRunId(runId);
+    setQuery("");
+    selectRun(runId, "all");
+  }
+
   async function openAudit() {
     if (!task) return;
     setDrawerOpen(true);
     if (audit?.run_id === task.run_id) return;
     setAuditLoading(true);
     try {
-      const payload = DEMO_MODE
+      const payload = DEMO_MODE && !liveRunId
         ? (await import("./demo")).demoAudit
         : await getReviewAudit(task.run_id);
       setAudit({ ...payload, run_id: task.run_id });
@@ -368,14 +437,15 @@ export default function App() {
         issue_resolutions: Object.entries(resolutions).map(([issue_id, resolution]) => ({ issue_id, resolution })),
         track_resolutions: Object.fromEntries(task.training_tracks.map((track) => [track.track, track.status])),
       };
-      if (DEMO_MODE) {
+      if (DEMO_MODE && !liveRunId) {
         await new Promise((resolve) => window.setTimeout(resolve, 350));
       } else {
         await submitReview(payload);
       }
       requestId.current = crypto.randomUUID();
+      setAudit(null);
       setNotice(verdict === "REQUEST_MORE_EVIDENCE" ? "补证请求已写入审计事件" : "审计结论已不可变追加");
-      if (!DEMO_MODE) {
+      if (!DEMO_MODE || liveRunId) {
         setTask(await getReviewTask(task.run_id));
         await loadTasks();
       }
@@ -387,27 +457,30 @@ export default function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${workspace === "create" ? "evaluation-mode" : ""}`}>
       <header className="topbar">
         <div className="brand"><span className="brand-mark"><Layers3 size={18} /></span><div><strong>PPT Eval</strong><small>审计控制台</small></div></div>
         <nav aria-label="主导航">
+          <button className={workspace === "create" ? "active" : ""} onClick={() => setWorkspace("create")} aria-current={workspace === "create" ? "page" : undefined}><Plus size={15} />新建评测</button>
           {(["queue", "all", "completed"] as const).map((item) => (
-            <button key={item} className={view === item ? "active" : ""} onClick={() => { setView(item); setActiveRun(""); }}>{viewLabel[item]}</button>
+            <button key={item} className={workspace === "review" && view === item ? "active" : ""} onClick={() => selectView(item)} aria-current={workspace === "review" && view === item ? "page" : undefined}>{viewLabel[item]}</button>
           ))}
         </nav>
         <div className="top-status">
-          <span className={task?.audit_integrity?.chain_valid === false ? "bad" : ""}><ShieldCheck size={15} />{task?.audit_integrity?.chain_valid === false ? "审计链异常" : "审计链正常"}</span>
+          <span className={workspace === "review" && task?.audit_integrity?.chain_valid === false ? "bad" : ""}><ShieldCheck size={15} />{workspace === "create" ? "真实评测入口" : task?.audit_integrity?.chain_valid === false ? "审计链异常" : "审计链正常"}</span>
+          <button className="mobile-workspace-toggle" onClick={() => setWorkspace(workspace === "create" ? "review" : "create")}><Plus size={15} />{workspace === "create" ? "返回审计" : "新建评测"}</button>
           <label className="reviewer-input"><CircleUserRound size={17} /><input value={reviewer} onChange={(event) => setReviewer(event.target.value)} placeholder="审核员 ID" aria-label="审核员 ID" /></label>
         </div>
       </header>
 
+      {workspace === "create" ? <NewEvaluationWorkspace onEnterAudit={enterCreatedRun} onOpenAll={() => selectView("all")} /> : <>
       <aside className="queue-panel">
         <div className="queue-heading"><div><span>{viewLabel[view]}</span><strong>{tasks.length}</strong></div><button aria-label="刷新队列" onClick={() => void loadTasks()}><RefreshCw size={16} /></button></div>
         <label className="search"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索 case / run" /></label>
-        <div className="queue-tabs"><button className={view === "queue" ? "active" : ""} onClick={() => setView("queue")}>待处理</button><button className={view === "completed" ? "active" : ""} onClick={() => setView("completed")}>已结案</button><button className={view === "all" ? "active" : ""} onClick={() => setView("all")}>全部</button></div>
+        <div className="queue-tabs"><button className={view === "queue" ? "active" : ""} onClick={() => selectView("queue")}>待处理</button><button className={view === "completed" ? "active" : ""} onClick={() => selectView("completed")}>已结案</button><button className={view === "all" ? "active" : ""} onClick={() => selectView("all")}>全部</button></div>
         {loading && <div className="queue-message"><LoaderCircle className="spin" size={18} />加载队列</div>}
         {!loading && tasks.length === 0 && <div className="queue-message"><Filter size={18} />当前筛选没有任务</div>}
-        <div className="queue-list">{tasks.map((item) => <QueueRow key={item.run_id} task={item} active={activeRun === item.run_id} onSelect={() => setActiveRun(item.run_id)} />)}</div>
+        <div className="queue-list">{tasks.map((item) => <QueueRow key={item.run_id} task={item} active={activeRun === item.run_id} onSelect={() => selectRun(item.run_id)} />)}</div>
       </aside>
 
       <section className="review-workspace">
@@ -451,7 +524,8 @@ export default function App() {
           </>
         )}
       </section>
-      {task && drawerOpen && <FullAuditDrawer task={task} audit={audit} loading={auditLoading} tab={drawerTab} onTab={setDrawerTab} onClose={() => setDrawerOpen(false)} />}
+      </>}
+      {workspace === "review" && task && drawerOpen && <FullAuditDrawer task={task} audit={audit} loading={auditLoading} tab={drawerTab} onTab={setDrawerTab} onClose={() => setDrawerOpen(false)} />}
     </main>
   );
 }

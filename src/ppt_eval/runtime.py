@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import builtins
 import json
+import mimetypes
 import os
 import shutil
 import tempfile
@@ -166,32 +167,15 @@ class LocalEvaluationRuntime:
             run_id=run_id,
         )
         artifact_hashes = dict(outcome.manifest.artifact_hashes)
-        source_artifact: Mapping[str, Any] | None = None
-        source_path = Path(case.pptx_path)
-        try:
-            if source_path.is_file():
-                source_artifact = self.artifacts.put(
-                    source_path,
-                    media_type=(
-                        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                    ),
-                )
-                artifact_hashes["source_pptx"] = str(source_artifact["sha256"])
-                self.audit_log.append(
-                    run_id=outcome.report.run_id,
-                    event_type="SOURCE_PRESENTATION_STORED",
-                    actor="local-runtime",
-                    payload={
-                        "sha256": source_artifact["sha256"],
-                        "size_bytes": source_artifact["size_bytes"],
-                        "media_type": source_artifact["media_type"],
-                    },
-                )
-        except OSError:
-            # The machine report must remain available even if the audit copy
-            # cannot be persisted.  The review projection exposes the missing
-            # source artifact explicitly instead of leaking a local path.
-            source_artifact = None
+        input_artifacts, input_hashes = self._persist_case_inputs(
+            case,
+            run_id=outcome.report.run_id,
+        )
+        artifact_hashes.update(input_hashes)
+        source_reference = input_artifacts.get("source_pptx")
+        source_artifact = (
+            source_reference if isinstance(source_reference, Mapping) else None
+        )
 
         observation_artifact: Mapping[str, Any] | None = None
         if outcome.observations:
@@ -254,6 +238,7 @@ class LocalEvaluationRuntime:
         payload = normalized_report_payload(outcome)
         if source_artifact is not None:
             payload["source_artifact"] = dict(source_artifact)
+        payload["input_artifacts"] = input_artifacts
         if observation_artifact is not None:
             payload["observation_artifact"] = dict(observation_artifact)
             payload["observation_summary"] = _observation_summary(
@@ -279,6 +264,126 @@ class LocalEvaluationRuntime:
         with self._lock:
             self.repository.save(payload)
         return payload
+
+    def _persist_case_inputs(
+        self,
+        case: EvalCase,
+        *,
+        run_id: str,
+    ) -> tuple[dict[str, Any], dict[str, str]]:
+        """Bind every file-backed evaluation input to CAS after an outcome exists."""
+
+        configured = case.metadata.get("artifact_hashes")
+        expected_hashes = configured if isinstance(configured, Mapping) else {}
+        artifact_hashes: dict[str, str] = {}
+
+        def persist(
+            path_value: str,
+            *,
+            role: str,
+            index: int | None,
+            media_type: str | None = None,
+            original_name: str | None = None,
+        ) -> dict[str, Any] | None:
+            artifact_role = role if index is None else f"{role}/{index}"
+            expected = str(expected_hashes.get(artifact_role) or "")
+            source = Path(path_value)
+            try:
+                available = source.is_file()
+            except OSError:
+                available = False
+            if not available:
+                if expected:
+                    raise ValueError(
+                        "run input artifact is unavailable before persistence"
+                    )
+                return None
+            resolved_media_type = media_type or (
+                mimetypes.guess_type(source.name)[0] or "application/octet-stream"
+            )
+            stored = self.artifacts.put(
+                source,
+                media_type=resolved_media_type,
+                original_name=_safe_artifact_name(
+                    original_name or source.name,
+                    fallback=(
+                        "presentation.pptx"
+                        if index is None
+                        else f"{role}-{index}.bin"
+                    ),
+                ),
+                expected_sha256=expected or None,
+            )
+            digest = str(stored["sha256"])
+            artifact_hashes[artifact_role] = digest
+            return {
+                **dict(stored),
+                "role": role,
+                "index": index,
+            }
+
+        source_pptx = persist(
+            case.pptx_path,
+            role="source_pptx",
+            index=None,
+            media_type=(
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            ),
+            original_name=str(case.metadata.get("source_pptx_original_name") or ""),
+        )
+        source_materials = [
+            reference
+            for index, value in enumerate(case.source_materials, start=1)
+            if (
+                reference := persist(
+                    value,
+                    role="source_material",
+                    index=index,
+                )
+            )
+            is not None
+        ]
+        assets = [
+            reference
+            for index, value in enumerate(case.assets, start=1)
+            if (
+                reference := persist(
+                    value,
+                    role="asset",
+                    index=index,
+                )
+            )
+            is not None
+        ]
+        input_artifacts = {
+            "schema_version": "1.0",
+            "source_pptx": source_pptx,
+            "source_materials": source_materials,
+            "assets": assets,
+        }
+        if source_pptx is not None:
+            self.audit_log.append(
+                run_id=run_id,
+                event_type="SOURCE_PRESENTATION_STORED",
+                actor="local-runtime",
+                payload={
+                    "sha256": source_pptx["sha256"],
+                    "size_bytes": source_pptx["size_bytes"],
+                    "media_type": source_pptx["media_type"],
+                },
+            )
+        self.audit_log.append(
+            run_id=run_id,
+            event_type="RUN_INPUT_ARTIFACTS_STORED",
+            actor="local-runtime",
+            payload={
+                "source_material_hashes": [
+                    item["sha256"] for item in source_materials
+                ],
+                "asset_hashes": [item["sha256"] for item in assets],
+            },
+        )
+        return input_artifacts, artifact_hashes
 
     def _prepare_model_artifacts(
         self,
@@ -525,6 +630,96 @@ class LocalEvaluationRuntime:
         }
         return path, metadata
 
+    def review_input_artifact(
+        self,
+        run_id: str,
+        role: str,
+        index: int,
+    ) -> tuple[Path, Mapping[str, Any]]:
+        if role not in {"source_material", "asset"}:
+            raise KeyError(role)
+        if isinstance(index, bool) or not isinstance(index, int) or index < 1:
+            raise KeyError(index)
+        report = self.repository.get(run_id)
+        inputs = report.get("input_artifacts")
+        inputs = inputs if isinstance(inputs, Mapping) else {}
+        field = "source_materials" if role == "source_material" else "assets"
+        values = inputs.get(field)
+        if not isinstance(values, list) or index > len(values):
+            raise FileNotFoundError(f"{role}/{index}")
+        reference = values[index - 1]
+        if not isinstance(reference, Mapping):
+            raise ValueError("stored input artifact reference is invalid")
+        if reference.get("role") != role or reference.get("index") != index:
+            raise ValueError("stored input artifact lineage is invalid")
+        digest = str(reference.get("sha256") or "")
+        manifest = report.get("manifest")
+        manifest = manifest if isinstance(manifest, Mapping) else {}
+        hashes = manifest.get("artifact_hashes")
+        hashes = hashes if isinstance(hashes, Mapping) else {}
+        if hashes.get(f"{role}/{index}") != digest:
+            raise ValueError("input artifact hash does not match the run manifest")
+        path = self.artifacts.resolve(digest)
+        if sha256_file(path) != digest:
+            raise ValueError("input artifact content hash verification failed")
+        return path, {
+            "role": role,
+            "index": index,
+            "sha256": digest,
+            "size_bytes": path.stat().st_size,
+            "media_type": str(
+                reference.get("media_type") or "application/octet-stream"
+            ),
+            "original_name": _safe_artifact_name(
+                reference.get("original_name"),
+                fallback=f"{role}-{index}.bin",
+            ),
+        }
+
+    def review_inputs(
+        self, run_id: str
+    ) -> dict[str, builtins.list[dict[str, Any]]]:
+        report = self.repository.get(run_id)
+        inputs = report.get("input_artifacts")
+        inputs = inputs if isinstance(inputs, Mapping) else {}
+        result: dict[str, builtins.list[dict[str, Any]]] = {
+            "source_materials": [],
+            "assets": [],
+        }
+        for role, field in (
+            ("source_material", "source_materials"),
+            ("asset", "assets"),
+        ):
+            values = inputs.get(field)
+            if not isinstance(values, list):
+                continue
+            for index, reference in enumerate(values, start=1):
+                raw = reference if isinstance(reference, Mapping) else {}
+                try:
+                    _path, metadata = self.review_input_artifact(
+                        run_id,
+                        role,
+                        index,
+                    )
+                    item = {**dict(metadata), "available": True}
+                except (OSError, ValueError, FileNotFoundError):
+                    item = {
+                        "role": role,
+                        "index": index,
+                        "sha256": str(raw.get("sha256") or "") or None,
+                        "original_name": _safe_artifact_name(
+                            raw.get("original_name"),
+                            fallback=f"{role}-{index}.bin",
+                        ),
+                        "media_type": str(
+                            raw.get("media_type") or "application/octet-stream"
+                        ),
+                        "size_bytes": raw.get("size_bytes"),
+                        "available": False,
+                    }
+                result[field].append(item)
+        return result
+
     def list_review_tasks(
         self,
         *,
@@ -682,6 +877,7 @@ class LocalEvaluationRuntime:
             "model_routes": model_routes,
             "manifest": manifest,
             "artifacts": artifacts,
+            "inputs": self.review_inputs(run_id),
             "reviews": reviews,
             "audit_integrity": {
                 "chain_valid": self.audit_log.verify()[0],
@@ -1033,6 +1229,19 @@ def _artifact_digest(report: Mapping[str, Any], field: str) -> str | None:
         return None
     digest = reference.get("sha256")
     return str(digest) if isinstance(digest, str) and digest else None
+
+
+def _safe_artifact_name(value: object, *, fallback: str) -> str:
+    name = Path(str(value or "")).name.strip()
+    if (
+        not name
+        or len(name) > 200
+        or any(ord(character) < 32 or ord(character) == 127 for character in name)
+        or "/" in name
+        or "\\" in name
+    ):
+        return fallback
+    return name
 
 
 def _with_integrity_error(
