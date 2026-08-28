@@ -2,7 +2,7 @@
 
 ## 产品边界
 
-当前审计平台属于 PPT Eval Harness 产品发布 `0.8.4`，但它消费的默认评测 Profile 仍为
+当前审计平台属于 PPT Eval Harness 产品发布 `0.8.5`，但它消费的默认评测 Profile 仍为
 `8.3` / `PRE_RESEARCH`，持久化 EvalReport/Audit schema 仍为 `1.0`，HTTP 命名空间仍为 `/v1`。
 产品版本只表达软件能力发布，不得被当作 Profile 或报告 schema 版本。
 
@@ -38,9 +38,17 @@ observation hash、triage policy 版本和问题级判断。
 `POST /v1/evaluations` 中的 `pptx_path` 仅是受信本机管理员/自动化兼容入口；调用方负责
 服务端可见路径，不得将该入口暴露给不可信用户。
 
-异步 Job 是进程内状态，不是持久任务队列。API 进程重启后，未完成 Job 不续跑；终态 Job
+`POST /v1/evaluation-batches/upload` 是文件夹型存量 PPT 的正式批处理入口。它接受 1–16 个
+重复 `presentations` 字段与等长、同序的 `case_ids`，整批只支持 `ready_made`。所有文件
+先完成安全预检，随后在同一 `LocalJobManager` 内原子预留 N 个 active slot；任一预检失败或
+容量不足时整批拒绝并清理 workspace。202 接收后，每项的运行失败互不影响，批次可进入
+`COMPLETED / PARTIALLY_FAILED / FAILED`。当前批量入口显式拒绝 source/assets；需要逐项附件时
+应拆分单任务，不根据文件名或数组位置猜测归属。
+
+异步 Job 与 Batch 都是进程内状态，不是持久任务队列。API 进程重启后，未完成 Job 不续跑；终态 Job
 也只保留最近的有界数量。轮询返回 404 时，前端清除 sessionStorage 中的失效 Job、停止重试，
-并提示用户到“全部运行”确认是否已产生 run。已持久的 run、制品、审计链和 ReviewEvent 不受影响。
+并提示用户到“全部运行”确认是否已产生 run。Batch 也使用独立有界终态快照；重启或淘汰后
+`GET /v1/evaluation-batches/{batch_id}` 返回 404，但已持久的 run、制品、审计链和 ReviewEvent 不受影响。
 
 ## 人审工作台
 

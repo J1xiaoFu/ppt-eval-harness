@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: PPT Eval Harness
-  version: 0.8.4
+  version: 0.8.5
   description: >-
-    Product release 0.8.4 with Evaluation Profile 8.3, persisted schema 1.0 and API namespace /v1.
+    Product release 0.8.5 with Evaluation Profile 8.3, persisted schema 1.0 and API namespace /v1.
     These version axes evolve independently. Every write request has a 202 MiB pre-parser body
     limit. If a browser supplies Origin, only localhost or 127.0.0.1 origins are accepted; trusted
     local CLI clients without Origin remain supported.
@@ -89,6 +89,70 @@ paths:
         "429": { $ref: "#/components/responses/JobQueueFull" }
         "409": { $ref: "#/components/responses/IdempotencyConflict" }
         "503": { $ref: "#/components/responses/StorageUnavailable" }
+  /v1/evaluation-batches/upload:
+    post:
+      operationId: uploadEvaluationBatch
+      description: >-
+        Process-local asynchronous batch entry point for 1-16 ready-made PPTX files. Repeated
+        presentations and case_ids fields are paired by order and must have equal lengths. Every
+        file passes the same filename, media-type, ZIP and OOXML checks as a single upload before
+        the shared JobManager atomically reserves capacity for the whole batch. Admission failure
+        rejects the whole request; after HTTP 202, an individual evaluation failure does not stop
+        the other items. source_materials and assets are not supported by this endpoint. The
+        complete multipart request remains subject to the 202 MiB pre-parser body limit.
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          description: >-
+            Binds the ordered case IDs, safe filenames, content hashes and shared fields to one
+            process-local Batch. Identical retries reuse it; any change returns 409.
+          schema: { type: string, maxLength: 128 }
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema: { $ref: "#/components/schemas/EvaluationBatchUpload" }
+            encoding:
+              presentations: { style: form, explode: true }
+              case_ids: { style: form, explode: true }
+      responses:
+        "202":
+          description: Entire batch accepted into the bounded local queue.
+          headers:
+            Location:
+              schema: { type: string }
+              description: Batch status URL.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EvaluationBatch" }
+        "400": { $ref: "#/components/responses/InvalidRequestBody" }
+        "403": { $ref: "#/components/responses/OriginForbidden" }
+        "409": { $ref: "#/components/responses/IdempotencyConflict" }
+        "413": { $ref: "#/components/responses/UploadTooLarge" }
+        "422": { $ref: "#/components/responses/UnsafePresentation" }
+        "429": { $ref: "#/components/responses/JobQueueFull" }
+        "503": { $ref: "#/components/responses/StorageUnavailable" }
+  /v1/evaluation-batches/{batch_id}:
+    get:
+      operationId: getEvaluationBatch
+      description: >-
+        Process-local ordered Batch snapshot. Batch state disappears after API restart or bounded
+        terminal-batch eviction; completed EvalReports and review tasks remain persisted.
+      parameters:
+        - in: path
+          name: batch_id
+          required: true
+          schema: { type: string, pattern: "^batch-[0-9a-f]{32}$" }
+      responses:
+        "200":
+          description: Current aggregate and per-item status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EvaluationBatch" }
+        "404":
+          description: Batch not found after restart or bounded retention eviction.
+        "422":
+          description: Batch identifier has an invalid format.
   /v1/jobs/{job_id}:
     get:
       operationId: getEvaluationJob
@@ -375,7 +439,7 @@ components:
       required: [status, service_version, audit_chain_valid, broken_event]
       properties:
         status: { type: string, enum: [ok, degraded] }
-        service_version: { const: "0.8.4" }
+        service_version: { const: "0.8.5" }
         audit_chain_valid: { type: boolean }
         broken_event: { type: [string, "null"] }
       additionalProperties: false
@@ -422,6 +486,101 @@ components:
           maxItems: 32
           items: { type: string, format: binary }
           description: Repeat to upload asset files; each is at most 25 MiB and path strings are forbidden.
+      additionalProperties: false
+    EvaluationBatchUpload:
+      type: object
+      required: [presentations, case_ids]
+      description: >-
+        presentations and case_ids are ordered arrays with equal runtime-validated lengths.
+        Non-empty source_materials or assets fields are rejected with BATCH_INVALID.
+      properties:
+        presentations:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items:
+            type: string
+            format: binary
+            contentMediaType: application/vnd.openxmlformats-officedocument.presentationml.presentation
+        case_ids:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { type: string, minLength: 1, maxLength: 128 }
+        scene: { const: ready_made, default: ready_made }
+        request: { type: [string, "null"], maxLength: 20000 }
+        audience: { type: [string, "null"], maxLength: 2000 }
+      additionalProperties: false
+    EvaluationBatchSummary:
+      type: object
+      required: [total, pending, running, completed, failed]
+      properties:
+        total: { type: integer, minimum: 1, maximum: 16 }
+        pending: { type: integer, minimum: 0, maximum: 16 }
+        running: { type: integer, minimum: 0, maximum: 16 }
+        completed: { type: integer, minimum: 0, maximum: 16 }
+        failed: { type: integer, minimum: 0, maximum: 16 }
+      additionalProperties: false
+    EvaluationBatchItem:
+      type: object
+      required:
+        - index
+        - case_id
+        - original_name
+        - input_sha256
+        - size_bytes
+        - job_id
+        - status
+        - stage
+        - created_at
+        - started_at
+        - completed_at
+      properties:
+        index: { type: integer, minimum: 1, maximum: 16 }
+        case_id: { type: string, minLength: 1, maxLength: 128 }
+        original_name: { type: string }
+        input_sha256: { type: string, pattern: "^[0-9a-f]{64}$" }
+        size_bytes: { type: integer, minimum: 1 }
+        job_id: { type: string, pattern: "^job-[0-9a-f]{32}$" }
+        status: { type: string, enum: [PENDING, RUNNING, COMPLETED, FAILED] }
+        stage: { type: string, enum: [QUEUED, EVALUATING, READY_FOR_REVIEW, FAILED] }
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        run_id: { type: string }
+        evaluation_url: { type: string }
+        review_task_url: { type: string }
+        review_url: { type: string }
+        error_code: { type: string, enum: [EVALUATION_FAILED, JOB_SCHEDULING_FAILED] }
+      additionalProperties: false
+    EvaluationBatch:
+      type: object
+      required:
+        - batch_id
+        - status
+        - stage
+        - created_at
+        - started_at
+        - completed_at
+        - summary
+        - items
+      properties:
+        batch_id: { type: string, pattern: "^batch-[0-9a-f]{32}$" }
+        status:
+          type: string
+          enum: [PENDING, RUNNING, COMPLETED, PARTIALLY_FAILED, FAILED]
+        stage:
+          type: string
+          enum: [QUEUED, EVALUATING, READY_FOR_REVIEW, PARTIALLY_READY_FOR_REVIEW, FAILED]
+        created_at: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        completed_at: { type: [string, "null"], format: date-time }
+        summary: { $ref: "#/components/schemas/EvaluationBatchSummary" }
+        items:
+          type: array
+          minItems: 1
+          maxItems: 16
+          items: { $ref: "#/components/schemas/EvaluationBatchItem" }
       additionalProperties: false
     EvaluationJob:
       type: object

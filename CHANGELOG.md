@@ -3,6 +3,17 @@
 本文档只记录产品/软件发布版本。Evaluation Profile、Oracle/Prompt 和持久化 schema
 有独立版本，不会随产品版本自动变更。
 
+## 0.8.5 - 2026-08-28
+
+- 新增 `POST /v1/evaluation-batches/upload` 与 `GET /v1/evaluation-batches/{batch_id}`。
+- 一个批次可原子接收 1–16 份 `ready_made` PPTX，各项在同一进程内 JobManager
+  中独立执行并使用现有并发上限。
+- 新增批次级有序幂等、队列容量原子预留、单项失败隔离、终态快照与有界保留。
+- 批量入口复用单任务的文件名、MIME、ZIP/OOXML、Origin、请求体与工作区清理边界。
+
+本次仅升级产品版本。Evaluation Profile 仍为 `8.3 / PRE_RESEARCH`，Composite 仍为
+`8.3.0`，EvalReport/Audit schema 仍为 `1.0`，Attention 投影策略仍为 `audit-attention@0.8.4`。
+
 ## 0.8.4 - 2026-08-28
 
 产品从内部 `0.8.3` 预研基线进入 `0.8.4`，并将此前的 `0.1.0` 打包占位值收敛为统一

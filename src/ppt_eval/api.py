@@ -8,9 +8,10 @@ import threading
 import uuid
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PureWindowsPath
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Literal, Mapping, Sequence
 from urllib.parse import urlsplit
 
 from ppt_eval.config import case_from_mapping, parse_scene, profile_from_mapping
@@ -41,10 +42,146 @@ class JobIdempotencyConflictError(ValueError):
     """An idempotency key was reused for a different evaluation input."""
 
 
+class BatchValidationError(ValueError):
+    """A batch submission does not satisfy the bounded public contract."""
+
+
 DEFAULT_MAX_REQUEST_BODY_BYTES = (
     MAX_PRESENTATION_UPLOAD_BYTES + MAX_ATTACHMENT_TOTAL_BYTES + 2 * 1024 * 1024
 )
+MAX_BATCH_PRESENTATIONS = 16
 _WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+
+
+def _batch_openapi_schema() -> dict[str, Any]:
+    item_properties: dict[str, Any] = {
+        "index": {"type": "integer", "minimum": 1, "maximum": 16},
+        "case_id": {"type": "string", "minLength": 1, "maxLength": 128},
+        "original_name": {"type": "string"},
+        "input_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 1},
+        "job_id": {"type": "string", "pattern": "^job-[0-9a-f]{32}$"},
+        "status": {
+            "type": "string",
+            "enum": ["PENDING", "RUNNING", "COMPLETED", "FAILED"],
+        },
+        "stage": {
+            "type": "string",
+            "enum": ["QUEUED", "EVALUATING", "READY_FOR_REVIEW", "FAILED"],
+        },
+        "created_at": {"type": "string", "format": "date-time"},
+        "started_at": {
+            "anyOf": [
+                {"type": "string", "format": "date-time"},
+                {"type": "null"},
+            ]
+        },
+        "completed_at": {
+            "anyOf": [
+                {"type": "string", "format": "date-time"},
+                {"type": "null"},
+            ]
+        },
+        "run_id": {"type": "string"},
+        "evaluation_url": {"type": "string"},
+        "review_task_url": {"type": "string"},
+        "review_url": {"type": "string"},
+        "error_code": {
+            "type": "string",
+            "enum": ["EVALUATION_FAILED", "JOB_SCHEDULING_FAILED"],
+        },
+    }
+    return {
+        "type": "object",
+        "required": [
+            "batch_id",
+            "status",
+            "stage",
+            "created_at",
+            "started_at",
+            "completed_at",
+            "summary",
+            "items",
+        ],
+        "properties": {
+            "batch_id": {
+                "type": "string",
+                "pattern": "^batch-[0-9a-f]{32}$",
+            },
+            "status": {
+                "type": "string",
+                "enum": [
+                    "PENDING",
+                    "RUNNING",
+                    "COMPLETED",
+                    "PARTIALLY_FAILED",
+                    "FAILED",
+                ],
+            },
+            "stage": {
+                "type": "string",
+                "enum": [
+                    "QUEUED",
+                    "EVALUATING",
+                    "READY_FOR_REVIEW",
+                    "PARTIALLY_READY_FOR_REVIEW",
+                    "FAILED",
+                ],
+            },
+            "created_at": {"type": "string", "format": "date-time"},
+            "started_at": {
+                "anyOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]
+            },
+            "completed_at": {
+                "anyOf": [{"type": "string", "format": "date-time"}, {"type": "null"}]
+            },
+            "summary": {
+                "type": "object",
+                "required": ["total", "pending", "running", "completed", "failed"],
+                "properties": {
+                    "total": {"type": "integer", "minimum": 1, "maximum": 16},
+                    **{
+                        name: {"type": "integer", "minimum": 0, "maximum": 16}
+                        for name in ("pending", "running", "completed", "failed")
+                    },
+                },
+                "additionalProperties": False,
+            },
+            "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 16,
+                "items": {
+                    "type": "object",
+                    "required": [
+                        "index",
+                        "case_id",
+                        "original_name",
+                        "input_sha256",
+                        "size_bytes",
+                        "job_id",
+                        "status",
+                        "stage",
+                        "created_at",
+                        "started_at",
+                        "completed_at",
+                    ],
+                    "properties": item_properties,
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "additionalProperties": False,
+    }
+
+
+@dataclass(frozen=True, slots=True)
+class BatchCaseSubmission:
+    case: EvalCase
+    fingerprint: str
+    metadata: Mapping[str, Any]
+    profile: EvalProfile | None = None
+    cleanup: Callable[[], None] | None = None
 
 
 class _RequestBodyTooLarge(Exception):
@@ -122,6 +259,7 @@ class LocalJobManager:
         workers: int = 2,
         max_active_jobs: int = 32,
         max_terminal_jobs: int = 256,
+        max_terminal_batches: int = 64,
     ) -> None:
         if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
             raise ValueError("workers must be a positive integer")
@@ -137,6 +275,12 @@ class LocalJobManager:
             or max_terminal_jobs < 1
         ):
             raise ValueError("max_terminal_jobs must be a positive integer")
+        if (
+            isinstance(max_terminal_batches, bool)
+            or not isinstance(max_terminal_batches, int)
+            or max_terminal_batches < 1
+        ):
+            raise ValueError("max_terminal_batches must be a positive integer")
         self.executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="ppt-eval")
         self.jobs: dict[str, dict[str, Any]] = {}
         self.lock = threading.RLock()
@@ -145,6 +289,11 @@ class LocalJobManager:
         self._idempotency: dict[str, tuple[str, str]] = {}
         self._terminal_job_ids: deque[str] = deque()
         self._max_terminal_jobs = max_terminal_jobs
+        self.batches: dict[str, dict[str, Any]] = {}
+        self._batch_idempotency: dict[str, tuple[str, str]] = {}
+        self._terminal_batch_ids: deque[str] = deque()
+        self._max_terminal_batches = max_terminal_batches
+        self._job_batches: dict[str, tuple[str, int]] = {}
         self._shutdown = False
 
     def submit(
@@ -195,18 +344,17 @@ class LocalJobManager:
         cleanup: Callable[[], None] | None = None,
         idempotency_key: str | None = None,
     ) -> dict[str, Any]:
-        with self.lock:
-            if self._shutdown:
-                if cleanup is not None:
-                    _run_cleanup(cleanup)
-                raise RuntimeError("local job manager is shut down")
         key = (
             validated_record_id(idempotency_key, label="idempotency key")
             if idempotency_key
             else None
         )
-        if key is not None:
-            with self.lock:
+        with self.lock:
+            if self._shutdown:
+                if cleanup is not None:
+                    _run_cleanup(cleanup)
+                raise RuntimeError("local job manager is shut down")
+            if key is not None:
                 existing = self._idempotency.get(key)
                 if existing is not None:
                     existing_fingerprint, existing_job_id = existing
@@ -216,36 +364,152 @@ class LocalJobManager:
                         raise JobIdempotencyConflictError(
                             "idempotency key was reused with different input"
                         )
-                    return self.get(existing_job_id)
-
-        if not self._active_slots.acquire(blocking=False):
-            if cleanup is not None:
-                _run_cleanup(cleanup)
-            raise JobQueueFullError("local evaluation queue is full")
-        job_id = f"job-{uuid.uuid4().hex}"
-        created_at = _utc_now()
-        with self.lock:
-            if key is not None and key in self._idempotency:
-                existing_fingerprint, existing_job_id = self._idempotency[key]
-                self._active_slots.release()
+                    return dict(self.jobs[existing_job_id])
+            if not self._reserve_slots_unlocked(1):
                 if cleanup is not None:
                     _run_cleanup(cleanup)
-                if existing_fingerprint != fingerprint:
-                    raise JobIdempotencyConflictError(
-                        "idempotency key was reused with different input"
-                    )
-                return self.get(existing_job_id)
-            self.jobs[job_id] = {
-                "job_id": job_id,
-                "status": "PENDING",
-                "stage": "QUEUED",
-                "created_at": created_at,
-                "started_at": None,
-                "completed_at": None,
-            }
+                raise JobQueueFullError("local evaluation queue is full")
+            job_id = f"job-{uuid.uuid4().hex}"
+            self.jobs[job_id] = self._new_job(job_id)
             if key is not None:
                 self._idempotency[key] = (fingerprint, job_id)
 
+        try:
+            self._schedule_reserved_job(job_id, evaluate, cleanup=cleanup)
+        except Exception:
+            with self.lock:
+                self.jobs.pop(job_id, None)
+                if key is not None:
+                    self._idempotency.pop(key, None)
+            self._active_slots.release()
+            if cleanup is not None:
+                _run_cleanup(cleanup)
+            raise
+        return self.get(job_id)
+
+    def submit_batch(
+        self,
+        submissions: Sequence[BatchCaseSubmission],
+        *,
+        idempotency_key: str | None = None,
+    ) -> dict[str, Any]:
+        items = tuple(submissions)
+        if not 1 <= len(items) <= MAX_BATCH_PRESENTATIONS:
+            self._cleanup_batch(items)
+            raise BatchValidationError(
+                f"batch must contain between 1 and {MAX_BATCH_PRESENTATIONS} presentations"
+            )
+        fingerprint = _payload_fingerprint(
+            {
+                "items": [
+                    {
+                        "fingerprint": item.fingerprint,
+                        "metadata": {
+                            str(name): value
+                            for name, value in item.metadata.items()
+                        },
+                    }
+                    for item in items
+                ]
+            }
+        )
+        key = (
+            validated_record_id(idempotency_key, label="idempotency key")
+            if idempotency_key
+            else None
+        )
+        with self.lock:
+            if self._shutdown:
+                self._cleanup_batch(items)
+                raise RuntimeError("local job manager is shut down")
+            if key is not None:
+                existing = self._batch_idempotency.get(key)
+                if existing is not None:
+                    existing_fingerprint, existing_batch_id = existing
+                    self._cleanup_batch(items)
+                    if existing_fingerprint != fingerprint:
+                        raise JobIdempotencyConflictError(
+                            "idempotency key was reused with different batch input"
+                        )
+                    return self._get_batch_unlocked(existing_batch_id)
+            if not self._reserve_slots_unlocked(len(items)):
+                self._cleanup_batch(items)
+                raise JobQueueFullError("local evaluation queue is full")
+
+            batch_id = f"batch-{uuid.uuid4().hex}"
+            job_ids: list[str] = []
+            batch_items: list[dict[str, Any]] = []
+            for index, submission in enumerate(items, start=1):
+                job_id = f"job-{uuid.uuid4().hex}"
+                job = self._new_job(job_id)
+                self.jobs[job_id] = job
+                self._job_batches[job_id] = (batch_id, index - 1)
+                job_ids.append(job_id)
+                batch_items.append(
+                    {
+                        "index": index,
+                        **{
+                            str(name): value
+                            for name, value in submission.metadata.items()
+                        },
+                        **job,
+                    }
+                )
+            self.batches[batch_id] = {
+                "batch_id": batch_id,
+                "status": "PENDING",
+                "stage": "QUEUED",
+                "created_at": _utc_now(),
+                "started_at": None,
+                "completed_at": None,
+                "items": batch_items,
+                "job_ids": job_ids,
+                "terminal_recorded": False,
+                "acceptance_pending": True,
+            }
+            if key is not None:
+                self._batch_idempotency[key] = (fingerprint, batch_id)
+
+        for job_id, submission in zip(job_ids, items):
+            def evaluate(
+                submission: BatchCaseSubmission = submission,
+            ) -> dict[str, Any]:
+                return self.runtime.evaluate(submission.case, submission.profile)
+
+            try:
+                self._schedule_reserved_job(
+                    job_id,
+                    evaluate,
+                    cleanup=submission.cleanup,
+                )
+            except Exception:
+                if submission.cleanup is not None:
+                    _run_cleanup(submission.cleanup)
+                with self.lock:
+                    self.jobs[job_id] = {
+                        **self.jobs[job_id],
+                        "status": "FAILED",
+                        "stage": "FAILED",
+                        "error_code": "JOB_SCHEDULING_FAILED",
+                        "completed_at": _utc_now(),
+                    }
+                    self._sync_batch_item_unlocked(job_id)
+                    self._remember_terminal_unlocked(job_id)
+                self._active_slots.release()
+        with self.lock:
+            batch = self.batches[batch_id]
+            batch["acceptance_pending"] = False
+            accepted = self._get_batch_unlocked(batch_id)
+            self._prune_terminal_batches_unlocked(protected_batch_id=batch_id)
+            return accepted
+
+    def _schedule_reserved_job(
+        self,
+        job_id: str,
+        evaluate: Callable[[], dict[str, Any]],
+        *,
+        cleanup: Callable[[], None] | None,
+    ) -> None:
         def work() -> None:
             try:
                 with self.lock:
@@ -255,6 +519,7 @@ class LocalJobManager:
                         "stage": "EVALUATING",
                         "started_at": _utc_now(),
                     }
+                    self._sync_batch_item_unlocked(job_id)
                 try:
                     report = evaluate()
                     run_id = validated_record_id(report.get("run_id"), label="run_id")
@@ -280,28 +545,155 @@ class LocalJobManager:
                         **terminal,
                         "completed_at": _utc_now(),
                     }
+                    self._sync_batch_item_unlocked(job_id)
                     self._remember_terminal_unlocked(job_id)
             finally:
                 self._active_slots.release()
 
-        try:
-            self.executor.submit(work)
-        except Exception:
-            with self.lock:
-                self.jobs.pop(job_id, None)
-                if key is not None:
-                    self._idempotency.pop(key, None)
-            self._active_slots.release()
-            if cleanup is not None:
-                _run_cleanup(cleanup)
-            raise
-        return self.get(job_id)
+        self.executor.submit(work)
+
+    def _new_job(self, job_id: str) -> dict[str, Any]:
+        return {
+            "job_id": job_id,
+            "status": "PENDING",
+            "stage": "QUEUED",
+            "created_at": _utc_now(),
+            "started_at": None,
+            "completed_at": None,
+        }
+
+    def _reserve_slots_unlocked(self, count: int) -> bool:
+        acquired = 0
+        for _ in range(count):
+            if not self._active_slots.acquire(blocking=False):
+                for _ in range(acquired):
+                    self._active_slots.release()
+                return False
+            acquired += 1
+        return True
+
+    @staticmethod
+    def _cleanup_batch(items: Sequence[BatchCaseSubmission]) -> None:
+        for item in items:
+            if item.cleanup is not None:
+                _run_cleanup(item.cleanup)
+
+    def _sync_batch_item_unlocked(self, job_id: str) -> None:
+        batch_reference = self._job_batches.get(job_id)
+        if batch_reference is None:
+            return
+        batch_id, item_offset = batch_reference
+        batch = self.batches.get(batch_id)
+        if batch is None:
+            return
+        batch["items"][item_offset] = {
+            **batch["items"][item_offset],
+            **self.jobs[job_id],
+        }
+        if self.jobs[job_id]["status"] in {"COMPLETED", "FAILED"}:
+            self._job_batches.pop(job_id, None)
+        self._refresh_batch_unlocked(batch_id)
+
+    def _refresh_batch_unlocked(self, batch_id: str) -> None:
+        batch = self.batches[batch_id]
+        statuses = [str(item["status"]) for item in batch["items"]]
+        total = len(statuses)
+        counts = {
+            "total": total,
+            "pending": statuses.count("PENDING"),
+            "running": statuses.count("RUNNING"),
+            "completed": statuses.count("COMPLETED"),
+            "failed": statuses.count("FAILED"),
+        }
+        if counts["completed"] + counts["failed"] == total:
+            if counts["completed"] == total:
+                status, stage = "COMPLETED", "READY_FOR_REVIEW"
+            elif counts["failed"] == total:
+                status, stage = "FAILED", "FAILED"
+            else:
+                status, stage = "PARTIALLY_FAILED", "PARTIALLY_READY_FOR_REVIEW"
+            batch["completed_at"] = batch.get("completed_at") or _utc_now()
+            if not batch["terminal_recorded"]:
+                batch["terminal_recorded"] = True
+                self._remember_terminal_batch_unlocked(batch_id)
+        elif counts["running"] or counts["completed"] or counts["failed"]:
+            status, stage = "RUNNING", "EVALUATING"
+        else:
+            status, stage = "PENDING", "QUEUED"
+        batch["status"] = status
+        batch["stage"] = stage
+        started_at = [
+            str(item["started_at"])
+            for item in batch["items"]
+            if item.get("started_at")
+        ]
+        batch["started_at"] = min(started_at) if started_at else None
+        batch["summary"] = counts
+
+    def get_batch(self, batch_id: str) -> dict[str, Any]:
+        with self.lock:
+            return self._get_batch_unlocked(batch_id)
+
+    def _get_batch_unlocked(self, batch_id: str) -> dict[str, Any]:
+        if batch_id not in self.batches:
+            raise KeyError(batch_id)
+        self._refresh_batch_unlocked(batch_id)
+        batch = self.batches[batch_id]
+        return {
+            str(key): (
+                [dict(item) for item in value]
+                if key == "items"
+                else dict(value)
+                if key == "summary"
+                else value
+            )
+            for key, value in batch.items()
+            if key not in {"job_ids", "terminal_recorded", "acceptance_pending"}
+        }
 
     def get(self, job_id: str) -> dict[str, Any]:
         with self.lock:
             if job_id not in self.jobs:
                 raise KeyError(job_id)
             return dict(self.jobs[job_id])
+
+    def _remember_terminal_batch_unlocked(self, batch_id: str) -> None:
+        self._terminal_batch_ids.append(batch_id)
+        protected = (
+            batch_id
+            if self.batches.get(batch_id, {}).get("acceptance_pending") is True
+            else None
+        )
+        self._prune_terminal_batches_unlocked(protected_batch_id=protected)
+
+    def _prune_terminal_batches_unlocked(
+        self,
+        *,
+        protected_batch_id: str | None = None,
+    ) -> None:
+        while len(self._terminal_batch_ids) > self._max_terminal_batches:
+            expired: str | None = None
+            for _ in range(len(self._terminal_batch_ids)):
+                candidate = self._terminal_batch_ids.popleft()
+                record = self.batches.get(candidate)
+                if candidate == protected_batch_id or (
+                    record is not None
+                    and record.get("acceptance_pending") is True
+                ):
+                    self._terminal_batch_ids.append(candidate)
+                    continue
+                expired = candidate
+                break
+            if expired is None:
+                return
+            self.batches.pop(expired, None)
+            stale_keys = [
+                key
+                for key, (_fingerprint, stored_batch_id) in self._batch_idempotency.items()
+                if stored_batch_id == expired
+            ]
+            for key in stale_keys:
+                self._batch_idempotency.pop(key, None)
 
     def shutdown(self, *, wait: bool = False) -> None:
         with self.lock:
@@ -333,7 +725,18 @@ def create_app(
 ) -> Any:
     try:
         import python_multipart  # noqa: F401
-        from fastapi import FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+        from fastapi import (
+            Depends,
+            FastAPI,
+            File,
+            Form,
+            Header,
+            HTTPException,
+            Query,
+            Request,
+            UploadFile,
+        )
+        from fastapi import Path as ApiPath
         from fastapi.middleware.cors import CORSMiddleware
         from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
         from fastapi.staticfiles import StaticFiles
@@ -346,6 +749,7 @@ def create_app(
     # annotations FastAPI resolves UploadFile from module globals, so publish
     # only this type after the guarded import succeeds.
     globals()["UploadFile"] = UploadFile
+    globals()["Request"] = Request
 
     app = FastAPI(title="PPT Eval Harness", version=__version__)
     app.add_middleware(
@@ -370,6 +774,21 @@ def create_app(
     app.state.job_manager = jobs
     app.state.upload_store = uploads
     app.router.add_event_handler("shutdown", jobs.shutdown)
+
+    async def validate_batch_multipart_fields(request: Request) -> None:
+        form = await request.form()
+        allowed = {"presentations", "case_ids", "scene", "request", "audience"}
+        unknown = sorted(set(form.keys()) - allowed)
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "BATCH_INVALID",
+                    "message": (
+                        "unsupported batch multipart fields: " + ", ".join(unknown)
+                    ),
+                },
+            )
 
     @app.get("/healthz")
     def healthz() -> dict[str, Any]:
@@ -463,38 +882,7 @@ def create_app(
                 assets=tuple(assets or ()),
                 submission=submission,
             )
-            case = case_from_mapping(
-                {
-                    **submission,
-                    "pptx_path": str(workspace.presentation_path),
-                    "source_materials": [
-                        str(path) for path in workspace.source_material_paths
-                    ],
-                    "assets": [str(path) for path in workspace.asset_paths],
-                    "metadata": {
-                        "source_pptx_original_name": (
-                            workspace.presentation_original_name
-                        ),
-                        "artifact_hashes": {
-                            "source_pptx": workspace.presentation_sha256,
-                            **{
-                                f"source_material/{index}": digest
-                                for index, digest in enumerate(
-                                    workspace.source_material_hashes,
-                                    start=1,
-                                )
-                            },
-                            **{
-                                f"asset/{index}": digest
-                                for index, digest in enumerate(
-                                    workspace.asset_hashes,
-                                    start=1,
-                                )
-                            },
-                        }
-                    },
-                }
-            )
+            case = _case_from_upload_workspace(workspace, submission)
             if asynchronous:
                 input_sha256 = workspace.presentation_sha256
                 total_size_bytes = workspace.total_size_bytes
@@ -541,6 +929,189 @@ def create_app(
         finally:
             if workspace is not None:
                 _run_cleanup(workspace.cleanup)
+
+    @app.post(
+        "/v1/evaluation-batches/upload",
+        status_code=202,
+        response_model=None,
+        responses={
+            202: {
+                "description": "Batch accepted into the bounded local queue.",
+                "headers": {
+                    "Location": {
+                        "description": "Batch status URL.",
+                        "schema": {"type": "string"},
+                    }
+                },
+                "content": {
+                    "application/json": {"schema": _batch_openapi_schema()}
+                },
+            },
+            400: {"description": "The Content-Length header is invalid."},
+            403: {"description": "The browser Origin is not a permitted local UI."},
+            409: {"description": "Idempotency key conflicts with another batch."},
+            413: {"description": "The request or an uploaded PPTX exceeded its limit."},
+            422: {"description": "Batch fields or a presentation failed validation."},
+            429: {"description": "The bounded local evaluation queue is full."},
+            503: {"description": "The controlled upload store is unavailable."},
+        },
+    )
+    def create_uploaded_evaluation_batch(
+        presentations: list[UploadFile] = File(
+            ...,
+            min_length=1,
+            max_length=MAX_BATCH_PRESENTATIONS,
+        ),
+        case_ids: list[str] = Form(
+            ...,
+            min_length=1,
+            max_length=MAX_BATCH_PRESENTATIONS,
+        ),
+        scene: Literal["ready_made"] = Form("ready_made"),
+        request_text: str | None = Form(
+            None,
+            alias="request",
+            max_length=20_000,
+        ),
+        audience: str | None = Form(None, max_length=2_000),
+        idempotency_key: str | None = Header(
+            None,
+            alias="Idempotency-Key",
+            max_length=128,
+        ),
+        _validated_fields: None = Depends(validate_batch_multipart_fields),
+    ) -> Any:
+        workspaces: list[UploadWorkspace] = []
+        try:
+            presentation_files = tuple(presentations)
+            if not 1 <= len(presentation_files) <= MAX_BATCH_PRESENTATIONS:
+                raise BatchValidationError(
+                    f"batch must contain between 1 and {MAX_BATCH_PRESENTATIONS} presentations"
+                )
+            if len(case_ids) != len(presentation_files):
+                raise BatchValidationError(
+                    "case_ids must contain exactly one value per presentation"
+                )
+            safe_case_ids = tuple(_validated_case_id(value) for value in case_ids)
+            if len(set(safe_case_ids)) != len(safe_case_ids):
+                raise BatchValidationError("case_ids must be unique within a batch")
+            safe_scene = parse_scene(scene).value
+            if safe_scene != "ready_made":
+                raise BatchValidationError(
+                    "batch upload currently supports only the ready_made scene"
+                )
+            safe_request = _validated_optional_text(
+                request_text,
+                label="request",
+                maximum_characters=20_000,
+            )
+            safe_audience = _validated_optional_text(
+                audience,
+                label="audience",
+                maximum_characters=2_000,
+            )
+            safe_idempotency_key = (
+                validated_record_id(idempotency_key, label="idempotency key")
+                if idempotency_key
+                else None
+            )
+            submissions: list[BatchCaseSubmission] = []
+            for case_id, presentation in zip(safe_case_ids, presentation_files):
+                submission = {
+                    "case_id": case_id,
+                    "scene": safe_scene,
+                    "request": safe_request,
+                    "audience": safe_audience,
+                }
+                workspace = uploads.prepare(
+                    presentation,
+                    submission=submission,
+                )
+                workspaces.append(workspace)
+                submissions.append(
+                    BatchCaseSubmission(
+                        case=_case_from_upload_workspace(workspace, submission),
+                        fingerprint=workspace.fingerprint,
+                        cleanup=workspace.cleanup,
+                        metadata={
+                            "case_id": case_id,
+                            "original_name": workspace.presentation_original_name,
+                            "input_sha256": workspace.presentation_sha256,
+                            "size_bytes": workspace.total_size_bytes,
+                        },
+                    )
+                )
+            batch = jobs.submit_batch(
+                submissions,
+                idempotency_key=safe_idempotency_key,
+            )
+            workspaces = []  # ownership transferred to LocalJobManager
+            return JSONResponse(
+                status_code=202,
+                content=_public_report(batch),
+                headers={
+                    "Location": (
+                        f"/v1/evaluation-batches/{batch['batch_id']}"
+                    )
+                },
+            )
+        except UploadTooLargeError as exc:
+            raise HTTPException(status_code=413, detail=exc.error_code) from exc
+        except UploadValidationError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": exc.error_code, "message": _public_error_detail(exc)},
+            ) from exc
+        except BatchValidationError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "BATCH_INVALID", "message": _public_error_detail(exc)},
+            ) from exc
+        except UploadStorageError as exc:
+            raise HTTPException(status_code=503, detail=exc.error_code) from exc
+        except JobQueueFullError as exc:
+            raise HTTPException(
+                status_code=429,
+                detail="evaluation queue is full",
+                headers={"Retry-After": "1"},
+            ) from exc
+        except JobIdempotencyConflictError as exc:
+            raise HTTPException(status_code=409, detail=_public_error_detail(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="EVALUATION_SERVICE_UNAVAILABLE",
+            ) from exc
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail=_public_error_detail(exc)) from exc
+        finally:
+            for workspace in workspaces:
+                _run_cleanup(workspace.cleanup)
+
+    @app.get(
+        "/v1/evaluation-batches/{batch_id}",
+        response_model=None,
+        responses={
+            200: {
+                "description": "Current aggregate and ordered per-item status.",
+                "content": {
+                    "application/json": {"schema": _batch_openapi_schema()}
+                },
+            },
+            404: {"description": "Batch not found."},
+            422: {"description": "Batch identifier has an invalid format."},
+        },
+    )
+    def get_evaluation_batch(
+        batch_id: str = ApiPath(..., pattern=r"^batch-[0-9a-f]{32}$"),
+    ) -> dict[str, Any]:
+        try:
+            safe_batch_id = validated_record_id(batch_id, label="batch_id")
+            return _public_report(jobs.get_batch(safe_batch_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="batch not found") from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=_public_error_detail(exc)) from exc
 
     @app.get("/v1/jobs/{job_id}")
     def get_job(job_id: str) -> dict[str, Any]:
@@ -957,6 +1528,42 @@ def _public_error_detail(exc: Exception) -> str:
     if sanitized == "[redacted-local-path]":
         return "request validation failed"
     return str(sanitized)[:500]
+
+
+def _case_from_upload_workspace(
+    workspace: UploadWorkspace,
+    submission: Mapping[str, Any],
+) -> EvalCase:
+    return case_from_mapping(
+        {
+            **submission,
+            "pptx_path": str(workspace.presentation_path),
+            "source_materials": [
+                str(path) for path in workspace.source_material_paths
+            ],
+            "assets": [str(path) for path in workspace.asset_paths],
+            "metadata": {
+                "source_pptx_original_name": workspace.presentation_original_name,
+                "artifact_hashes": {
+                    "source_pptx": workspace.presentation_sha256,
+                    **{
+                        f"source_material/{index}": digest
+                        for index, digest in enumerate(
+                            workspace.source_material_hashes,
+                            start=1,
+                        )
+                    },
+                    **{
+                        f"asset/{index}": digest
+                        for index, digest in enumerate(
+                            workspace.asset_hashes,
+                            start=1,
+                        )
+                    },
+                },
+            },
+        }
+    )
 
 
 def _validated_case_id(value: object) -> str:

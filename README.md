@@ -13,14 +13,14 @@ PowerPoint 渲染、本地内容寻址存储与哈希链均可直接使用。默
 
 | 层级 | 当前值 | 何时变更 |
 |---|---|---|
-| 产品/软件发布 | `0.8.4` | 服务、CLI、UI 或运维能力发布 |
+| 产品/软件发布 | `0.8.5` | 服务、CLI、UI 或运维能力发布 |
 | Evaluation Profile | `8.3` / `PRE_RESEARCH` | 评分公式、权重、DAG 或准入语义改变 |
 | EvalReport / Audit schema | `1.0` | 持久化 JSON 出现不兼容变更 |
 | HTTP API namespace | `/v1` | 接口合同出现破坏性变更 |
 
-上一个产品基线在本轮迁移语境中称为 `0.8.3`；这与评测 Profile `8.3` 是两个独立版本轴。
-产品升到 `0.8.4` 不改变 Profile、Oracle/Prompt 版本、schema 或 `/v1`，历史 `8.3`/`1.0` run
-仍可读取。本仓库在此前使用过 `0.1.0` 打包占位值；`0.8.4` 开始正式统一产品版本出口。
+产品版本与评测 Profile 是两个独立版本轴。产品升到 `0.8.5` 不改变 Profile、
+Oracle/Prompt 版本、schema 或 `/v1`，历史 `8.3`/`1.0` run 仍可读取。本仓库在此前使用过
+`0.1.0` 打包占位值；`0.8.4` 开始统一产品版本出口，`0.8.5` 新增了正式批处理 API。
 
 ## 1. 能做什么
 
@@ -80,6 +80,27 @@ curl.exe -X POST "http://127.0.0.1:8000/v1/evaluations/upload?async=true" `
 ```powershell
 Invoke-RestMethod "http://127.0.0.1:8000/v1/jobs/job-..."
 ```
+
+对文件夹内的多份存量 PPT，可使用正式批处理入口一次提交 1–16 份文件：
+
+```powershell
+curl.exe -X POST "http://127.0.0.1:8000/v1/evaluation-batches/upload" `
+  -H "Idempotency-Key: market-folder-001" `
+  -F "presentations=@C:\path\to\deck-a.pptx" `
+  -F "presentations=@C:\path\to\deck-b.pptx" `
+  -F "case_ids=deck-a" `
+  -F "case_ids=deck-b" `
+  -F "scene=ready_made"
+```
+
+`presentations` 和 `case_ids` 按提交顺序一一对应。返回的 `Location` 指向
+`GET /v1/evaluation-batches/{batch_id}`；每个 item 仍是独立 Job，可独立成功或失败，成功项会
+给出自己的 `run_id` 和 `review_url`。批次在入队前会完整预检并原子预留队列容量；
+任一文件不安全或容量不足时整批拒绝，不会只接收前半批。
+
+当前批量上传仅支持 `ready_made` PPTX，不接受 `source_materials` 或 `assets`；需要逐项
+来源/素材的场景应继续使用单任务入口。单个 PPTX 仍限 100 MiB，批次整个 multipart
+请求与其他写请求共享 202 MiB 前置上限；超出时请拆成多个批次。
 
 上传只接受有限大小的 `.pptx`。文件名、MIME 和 multipart 字段都是不可信输入；服务端使用
 不可猜测的本地名称、ZIP/OOXML 安全预检与原子工作区。所有写请求在 multipart 解析/落 spool
@@ -283,6 +304,8 @@ bundle 不包含 demo 数据。
 | Endpoint | 用途 |
 |---|---|
 | `POST /v1/evaluations/upload` | 推荐：multipart 上传 PPTX，创建同步或进程内异步评测 |
+| `POST /v1/evaluation-batches/upload` | 1–16 份 `ready_made` PPTX 原子入队，每项独立执行 |
+| `GET /v1/evaluation-batches/{batch_id}` | 读取进程内批次进度、计数和各项 review URL |
 | `GET /v1/jobs/{job_id}` | 读取进度；完成后返回 `run_id` 与 `review_url` |
 | `POST /v1/evaluations` | 受信本机兼容：管理员/自动化提供服务端可见 PPTX 路径 |
 | `GET /v1/review/tasks` | 读取精简审计队列 |

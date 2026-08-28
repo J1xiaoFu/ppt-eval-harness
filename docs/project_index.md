@@ -6,7 +6,7 @@
 - [产品变更记录](../CHANGELOG.md)：产品发布版本与 Profile/schema 兼容边界。
 - [v8 原子评测方法](v8_atomic_evaluation_method.md)：Observation、Reducer、评分和训练准入。
 - [服务端人工审计平台](review_platform.md)：浏览器上传、Job 进度、AttentionIssue 和 ReviewEvent 闭环。
-- [OpenAPI](openapi.yaml)：multipart 评测、进程内 Job、精简审计 DTO 与人审写入合同。
+- [OpenAPI](openapi.yaml)：单件/批量 multipart 评测、进程内 Job/Batch、精简审计 DTO 与人审写入合同。
 
 ## 运行与审计
 
@@ -22,6 +22,7 @@
 - [需求追踪矩阵](../reports/02_development/04_traceability_matrix.md)
 - [Oracle、模型与数据卡](../reports/02_development/05_oracle_model_data_cards.md)
 - [单机发布收敛记录](../reports/02_development/07_single_node_release.md)
+- [批处理 API 设计](../reports/02_development/08_batch_api.md)
 
 ## 可审计研发过程
 
@@ -33,6 +34,7 @@
 - [MVP 验证](../reports/03_evaluation/04_mvp_verification.md)
 - [v8.3 三主题真实切片](../reports/03_evaluation/13_v83_three_topic_replay.md)
 - [单机发布最终验证](../reports/03_evaluation/14_single_node_release_validation.md)
+- [0.8.5 批处理 API 验证](../reports/03_evaluation/15_batch_api_release_validation.md)
 
 ## 历史复现
 

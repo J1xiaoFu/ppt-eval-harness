@@ -4,4 +4,5 @@
 再从成品 PPT 本体质量纵向切片开始实现。文档中的 `accepted` 是架构决定，不代表代码已发布。
 
 当前单机发布的运行路径收敛、Profile 打包、审计平台合同和已删除骨架记录见
-`07_single_node_release.md`。
+`07_single_node_release.md`；正式批处理 API 的原子准入、并发共享与终态快照设计见
+`08_batch_api.md`。

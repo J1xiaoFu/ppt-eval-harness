@@ -19,7 +19,7 @@ from ppt_eval.oracles.v8_composites import V8_QUALITY_VERSION
 from ppt_eval.runtime import LocalEvaluationRuntime
 
 ROOT = Path(__file__).resolve().parents[1]
-PRODUCT_VERSION = "0.8.4"
+PRODUCT_VERSION = "0.8.5"
 
 
 def test_product_release_metadata_is_consistent() -> None:
@@ -32,7 +32,7 @@ def test_product_release_metadata_is_consistent() -> None:
     assert distribution_version("ppt-eval-harness") == PRODUCT_VERSION
     assert project["project"]["version"] == PRODUCT_VERSION
     assert ui_package["version"] == PRODUCT_VERSION
-    assert re.search(r"(?m)^  version: 0\.8\.4$", info)
+    assert re.search(r"(?m)^  version: 0\.8\.5$", info)
 
 
 def test_cli_reports_product_release_without_constructing_runtime() -> None:

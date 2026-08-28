@@ -68,7 +68,7 @@ export const demoTasks: ReviewTaskSummary[] = [
 
 export const demoTask: ReviewTaskDetail = {
   ...demoTasks[0],
-  service_version: "0.8.4",
+  service_version: "0.8.5",
   triage_policy_version: "audit-attention@0.8.4",
   report_hash: "292b35887e090000000000000000000000000000000000000000000000000000",
   observation_hash: "5bbaabaab4a20000000000000000000000000000000000000000000000000000",
@@ -170,7 +170,7 @@ export const demoTask: ReviewTaskDetail = {
 
 export const demoAudit: FullAuditPayload = {
   run_id: demoTask.run_id,
-  service_version: "0.8.4",
+  service_version: "0.8.5",
   attention_summary: demoTask.attention_summary,
   results: [],
   gate_results: [
