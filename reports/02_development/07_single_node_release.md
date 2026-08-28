@@ -33,6 +33,20 @@ Compose 中未产生业务效果的 Redis/PostgreSQL/MinIO 服务。异步 API �
 `required_oracles` / `optional_oracles` 协议会明确报错。Qwen 只保留 `qwen3.8-flash` 单一主
 Provider，跨 Provider 复核由 `glm-5.3-flash` 承担，不再公开 qwen3.7/Plus 兼容符号。
 
+## 产品 0.8.4 版本分层
+
+上一个产品预研基线在本轮迁移语境中称为 `0.8.3`；当前软件发布统一为 `0.8.4`。此前
+Python/FastAPI/UI 中的 `0.1.0` 是未收口的打包占位值，不是 Evaluation Profile 版本。
+
+本次升级只沿产品版本轴发布服务、CLI、UI 与运维能力：
+
+- 默认 Profile 仍为 `8.3` / `PRE_RESEARCH`，Composite Oracle 仍为 `8.3.0`；
+- EvalReport、RunManifest 与 AuditEvent schema 仍为 `1.0`，API namespace 仍为 `/v1`；
+- Atomic/VLM/Prompt/Reducer 只在自身语义变更时单独升版，不跟随产品发布号；
+- 旧 run 不需要补写新的必填字段，`profile_version=8.3` / `schema_version=1.0` 仍是可读合同。
+
+本轮只在各产品出口公布 `0.8.4`，不移动 `archive/v8.3-pre-release`，也不把 Profile 伪升级为 8.4。
+
 ## 审计平台
 
 - 生产队列不读取 human rank、Spearman、pairwise 或 benchmark comparison。
@@ -61,7 +75,7 @@ tracked demo manifest 保存旧机器绝对路径的可移植性问题，因此�
   vendored upstream 硬编码路径放行，以保留“上游为何不可复现”的原始证据。
 
 对应专项验证已纳入发布门禁；最终工作区的 pytest 与 dependency-free runner 均为
-`177 passed`，路径卫生、生成器 containment、JSON、PowerShell、Ruff 与 strict mypy 检查均通过。
+`193 passed`，路径卫生、生成器 containment、JSON、PowerShell、Ruff 与 strict mypy 检查均通过。
 
 Docker 冷启动审计也区分了代码失败与外部环境：要求重新拉取的 `--pull` 流程曾受 registry
 DNS/代理可达性影响，该现象记为外部依赖问题，不伪装成代码编译失败。使用已解析的固定

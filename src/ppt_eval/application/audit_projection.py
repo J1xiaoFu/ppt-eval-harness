@@ -13,7 +13,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence, cast
 
-TRIAGE_POLICY_VERSION = "audit-attention@1.0.0"
+TRIAGE_POLICY_VERSION = "audit-attention@0.8.4"
 _PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 _SEVERITY_ORDER = {"CRITICAL": 0, "MAJOR": 1, "MINOR": 2, "INFO": 3}
 _LEGACY_RESOLVED_VERDICTS = {"APPROVE", "REJECT"}
@@ -29,7 +29,7 @@ _ISSUE_RESOLUTIONS = {"CONFIRMED", "FALSE_POSITIVE", "INSUFFICIENT_EVIDENCE"}
 _DECISIONS = {"PASS", "REVIEW", "FAIL", "ERROR"}
 
 
-def build_attention_projection(
+def _build_raw_attention_projection(
     report: Mapping[str, Any],
     observations: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
@@ -133,7 +133,7 @@ def build_attention_projection(
                 else []
             )
             matching_model_evidence = [
-                item
+                {**item, "source": "MODEL"}
                 for item in model_evidence
                 if not pages or _positive_int(item.get("page_number")) in pages
             ]
@@ -280,7 +280,7 @@ def build_attention_projection(
             pair[0][0],
         ),
     )
-    for (metric_id, page_number), group in ordered_groups[:12]:
+    for (metric_id, page_number), group in ordered_groups:
         severity = min(
             (str(item.get("severity") or "INFO") for item in group),
             key=lambda item: _SEVERITY_ORDER.get(item, 4),
@@ -322,6 +322,1031 @@ def build_attention_projection(
     }
 
 
+_SEMANTIC_FAMILY_ORDER = {
+    "SYSTEM_INTEGRITY": 0,
+    "DELIVERY_INTEGRITY": 1,
+    "CONTENT_EXPRESSION": 2,
+    "TASK_FIDELITY": 3,
+    "VISUAL_LAYOUT_READABILITY": 4,
+    "VISUAL_COMMUNICATION": 5,
+    "SEQUENCE_SYSTEM": 6,
+    "AUTHORSHIP": 7,
+}
+_SEMANTIC_TITLES = {
+    "SYSTEM_INTEGRITY": "运行与证据完整性需要复核",
+    "DELIVERY_INTEGRITY": "交付完整性需要复核",
+    "CONTENT_EXPRESSION": "内容结构与语言表达需要复核",
+    "TASK_FIDELITY": "任务、来源与素材对齐需要复核",
+    "VISUAL_LAYOUT_READABILITY": "页面布局与文字可读性需要复核",
+    "VISUAL_COMMUNICATION": "视觉表达与信息传达需要复核",
+    "SEQUENCE_SYSTEM": "页间节奏与视觉系统需要复核",
+    "AUTHORSHIP": "内容与视觉的定制化程度需要复核",
+}
+_METRIC_FAMILY_OWNERS = {
+    "v8_functional_integrity": "DELIVERY_INTEGRITY",
+    "file_deliverability": "DELIVERY_INTEGRITY",
+    "content_structure": "CONTENT_EXPRESSION",
+    "language_consistency": "CONTENT_EXPRESSION",
+    "compression_richness": "CONTENT_EXPRESSION",
+    "critical_content_visibility": "CONTENT_EXPRESSION",
+    "instruction": "TASK_FIDELITY",
+    "audience": "TASK_FIDELITY",
+    "fact_claim": "TASK_FIDELITY",
+    "internal_data_consistency": "TASK_FIDELITY",
+    "key_point": "TASK_FIDELITY",
+    "numeric": "TASK_FIDELITY",
+    "source_claim": "TASK_FIDELITY",
+    "traceability": "TASK_FIDELITY",
+    "asset_coverage": "TASK_FIDELITY",
+    "asset_presentation": "TASK_FIDELITY",
+    "chart_fidelity": "TASK_FIDELITY",
+    "crop_image_integrity": "TASK_FIDELITY",
+    "media_integrity": "TASK_FIDELITY",
+    "composition_craft": "VISUAL_LAYOUT_READABILITY",
+    "typography_craft": "VISUAL_LAYOUT_READABILITY",
+    "palette_craft": "VISUAL_COMMUNICATION",
+    "visual_communication": "VISUAL_COMMUNICATION",
+    "visual_system_sequence": "SEQUENCE_SYSTEM",
+    "authorship_specificity_v2": "AUTHORSHIP",
+    "authorship_specificity": "AUTHORSHIP",
+}
+_SOURCE_ORDER = {"SYSTEM": 0, "MODEL": 1, "REDUCER": 2, "RULE": 3}
+_MAX_MAIN_ISSUES = 8
+_MAX_FOCUS_PAGES = 6
+_MAX_MAIN_EVIDENCE = 3
+_MAX_RATIONALES = 3
+_DEFECT_SEMANTICS = {
+    "content_overflow_or_cutoff": ("TEXT_CUTOFF", "文本截断或越界"),
+    "occluded_content": ("ELEMENT_OVERLAP", "元素重叠或错位"),
+    "content_alignment_issue": ("ELEMENT_MISALIGNMENT", "元素重叠或错位"),
+    "cluttered_layout": ("CLUTTERED_LAYOUT", "页面信息拥挤"),
+    "poor_visual_hierarchy": ("WEAK_VISUAL_HIERARCHY", "视觉层级不清晰"),
+    "illegible_typeface": ("TYPE_LEGIBILITY", "字号与层级可读性"),
+    "improper_font_sizing": ("TYPE_LEGIBILITY", "字号与层级可读性"),
+    "poor_text_hierarchy": ("TYPE_LEGIBILITY", "字号与层级可读性"),
+    "excessive_text_volume": ("READING_LOAD", "页面文字负载过高"),
+    "insufficient_color_contrast": ("COLOR_CONTRAST", "文字与背景对比不足"),
+    "unclear_data_encoding": ("DATA_ENCODING", "图表或数据编码不清晰"),
+    "missing_material_visual_explanation": ("MATERIAL_EXPLANATION", "素材缺少视觉说明"),
+    "disjointed_visual_rhythm": ("VISUAL_RHYTHM", "页间视觉节奏不连贯"),
+    "mechanical_cardization": ("TEMPLATE_ROUTINE", "页面呈现机械模板化"),
+    "generic_copy_scaffold": ("GENERIC_COPY", "文案缺少具体性"),
+    "undeclared_mixed_language": ("MIXED_LANGUAGE", "中英文混用影响语言一致性"),
+    "minority_language_page": ("MIXED_LANGUAGE", "中英文混用影响语言一致性"),
+    "missing_title_anchor": ("MISSING_TITLE_ANCHOR", "页面缺少清晰标题锚点"),
+    "missing_source_reference": ("MISSING_SOURCE_REFERENCE", "来源引用或追溯信息不足"),
+    "small_text": ("SMALL_TEXT", "字号过小影响阅读"),
+    "out_of_bounds": ("ELEMENT_OUT_OF_BOUNDS", "元素越出页面边界"),
+    "overlap": ("ELEMENT_OVERLAP", "元素重叠或错位"),
+    "missing_alt_text": ("MISSING_ALT_TEXT", "图片缺少可访问性说明"),
+    "rasterized_slide": ("RASTERIZED_SLIDE", "页面栅格化导致编辑性受限"),
+    "pixel_contrast_proxy": ("COLOR_CONTRAST", "文字与背景对比不足"),
+    "garbled_or_unreadable_text": ("GARBLED_TEXT", "乱码或不可理解文本"),
+    "improper_text_styling": ("TEXT_STYLING", "文字样式使用不当"),
+    "improper_line_or_character_spacing": ("TEXT_SPACING", "字距或行距影响阅读"),
+    "poor_image_quality_or_editing": ("IMAGE_EDITING", "图片质量或编辑不完整"),
+    "improper_image_sizing": ("IMAGE_SIZING", "图片尺寸或比例不合适"),
+    "irrelevant_visual_content": ("IRRELEVANT_VISUAL", "视觉素材与内容关联较弱"),
+    "visible_export_artifact": ("EXPORT_ARTIFACT", "存在可见导出瑕疵"),
+    "unbalanced_space_distribution": ("SPACE_DISTRIBUTION", "留白与空间分配失衡"),
+    "mismatched_color_combination": ("PALETTE_MISMATCH", "配色组合不协调"),
+    "repeated_template_silhouette": ("TEMPLATE_ROUTINE", "页面呈现机械模板化"),
+    "ornamental_icon_routine": ("ORNAMENTAL_ICON_ROUTINE", "装饰性小图标重复且缺少功能"),
+    "repetitive_decorative_motif": ("REPETITIVE_DECORATION", "装饰元素重复"),
+    "inconsistent_component_conventions": ("COMPONENT_INCONSISTENCY", "组件样式约定不一致"),
+    "inconsistent_grid_system": ("GRID_INCONSISTENCY", "跨页网格系统不一致"),
+    "inconsistent_typography_system": ("TYPE_SYSTEM_INCONSISTENCY", "跨页字体系统不一致"),
+    "weak_focal_claim_specificity": ("WEAK_FOCAL_CLAIM", "页面重点主张不够具体"),
+}
+_DEFECT_PRIORITY = {
+    code: rank
+    for rank, code in enumerate(
+        (
+            "content_overflow_or_cutoff",
+            "occluded_content",
+            "illegible_typeface",
+            "improper_font_sizing",
+            "insufficient_color_contrast",
+            "cluttered_layout",
+            "unclear_data_encoding",
+            "missing_material_visual_explanation",
+            "mechanical_cardization",
+            "generic_copy_scaffold",
+            "content_alignment_issue",
+            "poor_visual_hierarchy",
+            "poor_text_hierarchy",
+            "excessive_text_volume",
+            "disjointed_visual_rhythm",
+            "small_text",
+            "out_of_bounds",
+            "overlap",
+            "pixel_contrast_proxy",
+            "missing_title_anchor",
+            "undeclared_mixed_language",
+            "minority_language_page",
+            "missing_source_reference",
+            "missing_alt_text",
+            "rasterized_slide",
+            "garbled_or_unreadable_text",
+            "improper_text_styling",
+            "improper_line_or_character_spacing",
+            "poor_image_quality_or_editing",
+            "improper_image_sizing",
+            "irrelevant_visual_content",
+            "visible_export_artifact",
+            "unbalanced_space_distribution",
+            "mismatched_color_combination",
+            "repeated_template_silhouette",
+            "ornamental_icon_routine",
+            "repetitive_decorative_motif",
+            "inconsistent_component_conventions",
+            "inconsistent_grid_system",
+            "inconsistent_typography_system",
+            "weak_focal_claim_specificity",
+        )
+    )
+}
+
+
+def build_attention_projection(
+    report: Mapping[str, Any],
+    observations: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
+    """Return a bounded semantic projection plus complete raw candidate details."""
+
+    raw = _build_raw_attention_projection(report, observations)
+    run_id = str(report.get("run_id") or "unknown-run")
+    results = tuple(_mappings(report.get("results")))
+    results_by_metric = {
+        str(item.get("metric_id")): item
+        for item in results
+        if item.get("metric_id")
+    }
+    candidates: list[dict[str, Any]] = []
+
+    def candidate(
+        family: str,
+        *,
+        priority: str,
+        severity: str,
+        rationale: str,
+        metrics: Sequence[str] = (),
+        pages: Sequence[int] = (),
+        evidence: Sequence[Mapping[str, Any]] = (),
+        raw_issue_ids: Sequence[str] = (),
+        sources: Sequence[str] = (),
+        consensus: str | None = None,
+        evidence_gap: bool = False,
+    ) -> None:
+        candidates.append(
+            {
+                "family": family,
+                "priority": priority,
+                "severity": severity,
+                "rationale": rationale,
+                "metrics": tuple(str(item) for item in metrics if str(item)),
+                "pages": tuple(page for page in pages if page > 0),
+                "evidence": tuple(evidence),
+                "raw_issue_ids": tuple(str(item) for item in raw_issue_ids),
+                "sources": tuple(str(item) for item in sources if str(item)),
+                "consensus": consensus,
+                "evidence_gap": evidence_gap,
+            }
+        )
+
+    for item in raw["items"]:
+        kind = str(item.get("kind") or "")
+        metric_id = str(item.get("metric_id") or "")
+        raw_id = str(item.get("issue_id") or "")
+        pages = tuple(int(page) for page in item.get("page_numbers", ()) if int(page) > 0)
+        raw_evidence = tuple(_mappings(item.get("evidence")))
+        if kind == "ATOMIC_DEFECT":
+            continue
+        if kind == "HARNESS_ERROR":
+            candidate(
+                "SYSTEM_INTEGRITY",
+                priority="P0",
+                severity="CRITICAL",
+                rationale="运行错误或审计链异常阻止了可靠结论。",
+                evidence=raw_evidence,
+                raw_issue_ids=(raw_id,),
+                sources=("SYSTEM",),
+                evidence_gap=True,
+            )
+            continue
+        if kind.startswith("HARD_GATE_"):
+            lineage = _mapping(item.get("lineage"))
+            model_metric = str(lineage.get("model_metric_id") or "")
+            model_result = results_by_metric.get(model_metric)
+            model_evidence = tuple(
+                _model_evidence(model_result) if model_result is not None else ()
+            )
+            model_pages = set(_evidence_pages(model_evidence))
+            same_page_model = bool(model_pages.intersection(pages))
+            family = _semantic_family(model_metric or metric_id)
+            if same_page_model:
+                candidate(
+                    family,
+                    priority="P0" if kind == "HARD_GATE_CONFIRMED" else "P1",
+                    severity=str(item.get("severity") or "MAJOR"),
+                    rationale=(
+                        "规则候选已由同页视觉语义证据确认。"
+                        if kind == "HARD_GATE_CONFIRMED"
+                        else "规则与同页视觉语义证据尚未形成一致结论。"
+                    ),
+                    metrics=(metric_id, model_metric),
+                    pages=(*pages, *model_pages),
+                    evidence=(*model_evidence, *raw_evidence),
+                    raw_issue_ids=(raw_id,),
+                    sources=("RULE", "MODEL"),
+                    consensus=(
+                        "AGREED" if kind == "HARD_GATE_CONFIRMED" else "CONFLICT"
+                    ),
+                )
+            else:
+                candidate(
+                    family,
+                    priority="P0" if kind == "HARD_GATE_CONFIRMED" else "P1",
+                    severity=str(item.get("severity") or "MAJOR"),
+                    rationale=(
+                        "该质量构念的严重问题已确认，但主视图只有规则侧可定位证据。"
+                        if kind == "HARD_GATE_CONFIRMED"
+                        else "该质量构念缺少足够的同页复核证据。"
+                    ),
+                    metrics=(metric_id,),
+                    pages=pages,
+                    evidence=raw_evidence,
+                    raw_issue_ids=(raw_id,),
+                    sources=("RULE",),
+                    consensus=(
+                        "SINGLE_SOURCE"
+                        if kind == "HARD_GATE_CONFIRMED"
+                        else "INSUFFICIENT"
+                    ),
+                    evidence_gap=kind != "HARD_GATE_CONFIRMED",
+                )
+            continue
+        if kind == "PROVIDER_ERROR_RECOVERED":
+            # The final result and evidence are usable. Keep the failed attempt in
+            # full audit lineage, but do not spend reviewer attention on an
+            # operational retry that recovered successfully.
+            continue
+        if kind == "PROVIDER_ERROR":
+            candidate(
+                "SYSTEM_INTEGRITY",
+                priority="P1",
+                severity="MAJOR",
+                rationale="模型审计调用缺失、失败或未提供完整证据。",
+                metrics=(metric_id,),
+                pages=pages,
+                evidence=raw_evidence,
+                raw_issue_ids=(raw_id,),
+                sources=("SYSTEM",),
+                consensus="INSUFFICIENT",
+                evidence_gap=True,
+            )
+            continue
+        if kind == "RULE_MODEL_DISAGREEMENT":
+            candidate(
+                _semantic_family(metric_id),
+                priority="P1",
+                severity="MAJOR",
+                rationale="规则与视觉语义审计对同一质量构念判断不一致。",
+                metrics=(metric_id,),
+                pages=pages,
+                evidence=raw_evidence,
+                raw_issue_ids=(raw_id,),
+                sources=("RULE", "MODEL"),
+                consensus="CONFLICT",
+            )
+            continue
+        if kind == "UNRESOLVED_METRIC":
+            reason = str(item.get("summary") or "")
+            if _evidence_gap_reason(reason):
+                candidate(
+                    "SYSTEM_INTEGRITY",
+                    priority="P1",
+                    severity="MAJOR",
+                    rationale="必需审计证据不足或模型能力尚未配置。",
+                    metrics=(metric_id,),
+                    pages=pages,
+                    evidence=raw_evidence,
+                    raw_issue_ids=(raw_id,),
+                    sources=("SYSTEM",),
+                    consensus="INSUFFICIENT",
+                    evidence_gap=True,
+                )
+            else:
+                candidate(
+                    _semantic_family(metric_id),
+                    priority="P1",
+                    severity="MAJOR",
+                    rationale="必需的综合质量结论尚未收敛。",
+                    metrics=(metric_id,),
+                    pages=pages,
+                    evidence=raw_evidence,
+                    raw_issue_ids=(raw_id,),
+                    sources=("REDUCER",),
+                    consensus="INSUFFICIENT",
+                    evidence_gap=True,
+                )
+
+    for result in sorted(results, key=lambda item: str(item.get("metric_id") or "")):
+        metric_id = str(result.get("metric_id") or "")
+        metadata = _mapping(result.get("metadata"))
+        score = result.get("normalized_score")
+        is_quality_aggregate = bool(
+            metadata.get("reducer_id") or metadata.get("fusion_mode")
+        )
+        if is_quality_aggregate and _number(score) and float(cast(int | float, score)) < 0.8:
+            numeric_score = float(cast(int | float, score))
+            candidate(
+                _semantic_family(metric_id),
+                priority="P1" if numeric_score < 0.6 else "P2",
+                severity=str(result.get("severity") or "MINOR"),
+                rationale=(
+                    "综合质量明显低于审计关注线。"
+                    if numeric_score < 0.6
+                    else "综合质量低于稳定交付区间。"
+                ),
+                metrics=(metric_id,),
+                pages=_evidence_pages(tuple(_mappings(result.get("evidence")))),
+                evidence=tuple(_reducer_evidence(result)),
+                sources=("REDUCER",),
+                consensus="SINGLE_SOURCE",
+            )
+        for evidence_item in _model_evidence(result):
+            severity = str(evidence_item.get("severity") or "INFO").upper()
+            if severity not in {"MAJOR", "CRITICAL"}:
+                continue
+            candidate(
+                _semantic_family(metric_id),
+                priority="P1",
+                severity=severity,
+                rationale="视觉语义审计发现需要人工确认的显著质量问题。",
+                metrics=(metric_id,),
+                pages=_evidence_pages((evidence_item,)),
+                evidence=(evidence_item,),
+                sources=("MODEL",),
+                consensus="SINGLE_SOURCE",
+            )
+
+    grouped: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    for item in candidates:
+        grouped[str(item["family"])].append(item)
+    semantic_issues = [
+        _semantic_issue(run_id, family, grouped[family])
+        for family in sorted(grouped, key=lambda value: _SEMANTIC_FAMILY_ORDER[value])
+    ]
+    semantic_issues.sort(key=_semantic_issue_sort_key)
+    required = [
+        item for item in semantic_issues if item.get("priority") in {"P0", "P1"}
+    ]
+    optional = [
+        item for item in semantic_issues if item.get("priority") not in {"P0", "P1"}
+    ]
+    presented = [*required, *optional[: max(0, _MAX_MAIN_ISSUES - len(required))]]
+    raw_details = [_raw_attention_detail(item) for item in raw["items"]]
+    raw_by_id = {
+        str(item.get("raw_issue_id")): item
+        for item in raw_details
+        if item.get("raw_issue_id")
+    }
+    details = [
+        _semantic_attention_detail(item, raw_by_id) for item in semantic_issues
+    ]
+    assigned_raw_ids = {
+        str(raw_id)
+        for item in semantic_issues
+        for raw_id in _mapping(item.get("lineage")).get("raw_issue_ids", ())
+    }
+    unassigned_by_family: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+    for raw_detail in raw_details:
+        if str(raw_detail.get("raw_issue_id")) in assigned_raw_ids:
+            continue
+        unassigned_by_family[
+            _semantic_family(str(raw_detail.get("metric_id") or ""))
+        ].append(raw_detail)
+    details.extend(
+        {
+            "semantic_issue_id": None,
+            "semantic_family": family,
+            "semantic_code": "RAW_AUDIT_FACTS",
+            "metric_ids": sorted(
+                {
+                    str(item.get("metric_id"))
+                    for item in values
+                    if item.get("metric_id")
+                }
+            ),
+            "all_page_numbers": sorted(
+                {
+                    int(page)
+                    for item in values
+                    for page in item.get("page_numbers", ())
+                }
+            ),
+            "raw_candidates": [dict(item) for item in values],
+            "raw_candidate_count": len(values),
+            "detail_count": len(values),
+        }
+        for family, values in sorted(
+            unassigned_by_family.items(),
+            key=lambda pair: _SEMANTIC_FAMILY_ORDER[pair[0]],
+        )
+    )
+    decision = str(report.get("decision") or "ERROR")
+    if presented:
+        state = "ACTIONABLE"
+        summary_title = "评测结论需要人工复核"
+    elif decision == "REVIEW":
+        state = "REVIEW_WITHOUT_LOCALIZED_ISSUE"
+        summary_title = "评测需要复核，但尚无局部化主疑点"
+    elif decision == "PASS":
+        state = "NO_ISSUE"
+        summary_title = "未发现需要优先处理的语义疑点"
+    else:
+        state = "UNLOCATED_FAILURE"
+        summary_title = "评测失败且缺少可定位的主疑点"
+    required_count = sum(
+        item.get("priority") in {"P0", "P1"} for item in presented
+    )
+    non_atomic_fact_count = sum(
+        item.get("kind") != "ATOMIC_DEFECT" for item in raw_details
+    )
+    raw_fact_count = len(observations) + non_atomic_fact_count
+    return {
+        "policy_version": TRIAGE_POLICY_VERSION,
+        "items": presented,
+        "page_numbers": sorted(
+            {page for issue in presented for page in issue["page_numbers"]}
+        ),
+        "reason_codes": [str(issue["kind"]) for issue in presented],
+        "attention_summary": {
+            "state": state,
+            "title": summary_title,
+            "description": (
+                f"主视图呈现 {len(presented)} 个语义问题；"
+                f"完整审计保留 {len(observations)} 条原子观察"
+                f"和 {non_atomic_fact_count} 条其他审计事实。"
+            ),
+            "total_count": len(presented),
+            "required_count": required_count,
+            "raw_fact_count": raw_fact_count,
+        },
+        "attention_details": details,
+    }
+
+
+def _semantic_issue(
+    run_id: str,
+    family: str,
+    candidates: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    priority = min(
+        (str(item.get("priority") or "P3") for item in candidates),
+        key=lambda value: _PRIORITY_ORDER.get(value, 4),
+    )
+    severity = min(
+        (str(item.get("severity") or "INFO") for item in candidates),
+        key=lambda value: _SEVERITY_ORDER.get(value, 4),
+    )
+    all_pages = sorted(
+        {
+            int(page)
+            for item in candidates
+            for page in item.get("pages", ())
+            if int(page) > 0
+        }
+    )
+    focus_pages = all_pages[:_MAX_FOCUS_PAGES]
+    metrics = sorted(
+        {
+            str(metric)
+            for item in candidates
+            for metric in item.get("metrics", ())
+            if str(metric)
+        }
+    )
+    generic_rationales = list(
+        dict.fromkeys(
+            str(item.get("rationale") or "")
+            for item in candidates
+            if str(item.get("rationale") or "")
+        )
+    )
+    ranked_evidence = _rank_semantic_evidence(
+        [
+            evidence_item
+            for item in candidates
+            for evidence_item in _mappings(item.get("evidence"))
+        ]
+    )
+    model_messages = [
+        str(item.get("message") or "")
+        for item in ranked_evidence
+        if item.get("source") == "MODEL" and str(item.get("message") or "")
+    ]
+    semantic_rationales = [
+        rationale
+        for item in ranked_evidence
+        for rationale in (_semantic_evidence_rationale(item),)
+        if rationale
+    ]
+    rationales = list(
+        dict.fromkeys([*semantic_rationales, *model_messages, *generic_rationales])
+    )[:_MAX_RATIONALES]
+    defect_codes = sorted(
+        {
+            str(code)
+            for item in ranked_evidence
+            for code in item.get("_defect_codes", ())
+            if str(code)
+        },
+        key=lambda code: (_DEFECT_PRIORITY.get(code, 10**9), code),
+    )
+    semantic_defects: list[tuple[str, str]] = []
+    seen_defect_titles: set[str] = set()
+    for code in defect_codes:
+        semantic = _DEFECT_SEMANTICS.get(code)
+        if semantic is None or semantic[1] in seen_defect_titles:
+            continue
+        semantic_defects.append(semantic)
+        seen_defect_titles.add(semantic[1])
+    defect_pages = sorted(
+        {
+            page
+            for item in ranked_evidence
+            if any(
+                str(code) in _DEFECT_SEMANTICS
+                for code in item.get("_defect_codes", ())
+            )
+            for page in _evidence_pages((item,))
+        }
+    )
+    evidence = [
+        {str(key): value for key, value in item.items() if not str(key).startswith("_")}
+        for item in ranked_evidence[:_MAX_MAIN_EVIDENCE]
+    ]
+    consensuses = {
+        str(item.get("consensus"))
+        for item in candidates
+        if item.get("consensus")
+    }
+    if "CONFLICT" in consensuses:
+        consensus_status = "CONFLICT"
+    elif "AGREED" in consensuses:
+        consensus_status = "AGREED"
+    elif any(bool(item.get("evidence_gap")) for item in candidates):
+        consensus_status = "INSUFFICIENT"
+    else:
+        consensus_status = "SINGLE_SOURCE"
+    sources = sorted(
+        {
+            str(source)
+            for item in candidates
+            for source in item.get("sources", ())
+            if str(source)
+        },
+        key=lambda source: _SOURCE_ORDER.get(source, 9),
+    )
+    conflicting_count = sum(
+        item.get("consensus") == "CONFLICT" for item in candidates
+    )
+    consensus_label = {
+        "AGREED": "多源证据一致",
+        "CONFLICT": "多源证据冲突",
+        "SINGLE_SOURCE": "单一证据来源",
+        "INSUFFICIENT": "证据不足",
+    }[consensus_status]
+    if consensus_status == "SINGLE_SOURCE" and {"MODEL", "REDUCER"}.issubset(
+        sources
+    ):
+        consensus_label = "模型及其聚合结果"
+    consensus = {
+        "status": consensus_status,
+        "sources": sources,
+        "label": consensus_label,
+        "supporting_count": len(candidates) - conflicting_count,
+        "conflicting_count": conflicting_count,
+    }
+    evidence_integrity = family == "SYSTEM_INTEGRITY" and any(
+        bool(item.get("evidence_gap")) for item in candidates
+    )
+    kind = "EVIDENCE_INTEGRITY" if evidence_integrity else family
+    identity = {
+        "run_id": run_id,
+        "policy_version": TRIAGE_POLICY_VERSION,
+        "semantic_family": family,
+        "semantic_codes": [item[0] for item in semantic_defects],
+        "focus_pages": focus_pages,
+    }
+    digest = hashlib.sha256(
+        json.dumps(identity, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()[:20]
+    title = _SEMANTIC_TITLES[family]
+    semantic_code = kind
+    if len(semantic_defects) == 1:
+        semantic_code, title = semantic_defects[0]
+    elif semantic_defects:
+        semantic_code = f"MULTI_DEFECT_{family}"
+        title = "、".join(item[1] for item in semantic_defects[:2])
+        if len(semantic_defects) > 2:
+            title += "等问题"
+    if semantic_defects:
+        summary_pages = defect_pages or focus_pages
+        shown_pages = summary_pages[:_MAX_FOCUS_PAGES]
+        page_text = "、".join(f"第 {page} 页" for page in shown_pages)
+        if len(summary_pages) > len(shown_pages):
+            page_text += f"等共 {len(summary_pages)} 页"
+        page_text = page_text or "抽样页面"
+        defect_text = "、".join(item[1] for item in semantic_defects[:3])
+        if len(semantic_defects) > 3:
+            defect_text += "等"
+        audit_label = (
+            "视觉语义审计"
+            if any(item.get("source") == "MODEL" for item in ranked_evidence)
+            else "综合审计"
+        )
+        summary = (
+            f"{audit_label}在{page_text}定位到{defect_text}；"
+            "请结合关联页确认影响范围。"
+        )
+    else:
+        summary = "；".join(generic_rationales[:_MAX_RATIONALES]) or "该综合质量构念需要人工复核。"
+    return {
+        "issue_id": f"att-{digest}",
+        "priority": priority,
+        "kind": kind,
+        "semantic_code": semantic_code,
+        "semantic_family": family,
+        "title": title,
+        "summary": summary,
+        "rationales": rationales,
+        "consensus": consensus,
+        "detail_count": len(candidates),
+        "severity": severity,
+        "status": "OPEN",
+        "metric_id": None,
+        "page_numbers": focus_pages,
+        "evidence": evidence,
+        "lineage": {
+            "metric_ids": metrics,
+            "all_page_numbers": all_pages,
+            "raw_issue_ids": sorted(
+                {
+                    str(raw_id)
+                    for item in candidates
+                    for raw_id in item.get("raw_issue_ids", ())
+                    if str(raw_id)
+                }
+            ),
+            "candidate_count": len(candidates),
+            "semantic_candidates": [
+                _semantic_candidate_detail(item)
+                for item in sorted(candidates, key=_semantic_candidate_sort_key)
+            ],
+        },
+    }
+
+
+def _semantic_evidence_rationale(item: Mapping[str, Any]) -> str | None:
+    codes = sorted(
+        {
+            str(code)
+            for code in item.get("_defect_codes", ())
+            if str(code) in _DEFECT_SEMANTICS
+        },
+        key=lambda code: (_DEFECT_PRIORITY.get(code, 10**9), code),
+    )
+    titles = list(
+        dict.fromkeys(_DEFECT_SEMANTICS[code][1] for code in codes)
+    )
+    if not titles:
+        return None
+    pages = _evidence_pages((item,))
+    shown_pages = pages[:_MAX_FOCUS_PAGES]
+    if shown_pages:
+        page_text = "、".join(f"第 {page} 页" for page in shown_pages)
+        if len(pages) > len(shown_pages):
+            page_text += f"等共 {len(pages)} 页"
+    else:
+        page_text = "跨页审计"
+    return f"{page_text}：{'、'.join(titles[:3])}。"
+
+
+def _semantic_candidate_sort_key(item: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (
+        _PRIORITY_ORDER.get(str(item.get("priority") or "P3"), 4),
+        _SEVERITY_ORDER.get(str(item.get("severity") or "INFO"), 4),
+        tuple(sorted(str(metric) for metric in item.get("metrics", ()))),
+        tuple(sorted(int(page) for page in item.get("pages", ()) if int(page) > 0)),
+        str(item.get("rationale") or ""),
+    )
+
+
+def _semantic_candidate_detail(item: Mapping[str, Any]) -> dict[str, Any]:
+    evidence: list[dict[str, Any]] = []
+    for raw_evidence in _rank_semantic_evidence(_mappings(item.get("evidence"))):
+        projected = {
+            str(key): value
+            for key, value in raw_evidence.items()
+            if not str(key).startswith("_")
+        }
+        defect_codes = [
+            str(code) for code in raw_evidence.get("_defect_codes", ()) if str(code)
+        ]
+        if defect_codes:
+            projected["defect_codes"] = defect_codes
+        affected_pages = [
+            int(page)
+            for page in raw_evidence.get("_affected_page_numbers", ())
+            if int(page) > 0
+        ]
+        if affected_pages:
+            projected["affected_page_numbers"] = sorted(set(affected_pages))
+        evidence.append(projected)
+    return {
+        "priority": item.get("priority"),
+        "severity": item.get("severity"),
+        "rationale": item.get("rationale"),
+        "metric_ids": sorted(str(metric) for metric in item.get("metrics", ())),
+        "page_numbers": sorted(
+            int(page) for page in item.get("pages", ()) if int(page) > 0
+        ),
+        "sources": sorted(
+            (str(source) for source in item.get("sources", ())),
+            key=lambda source: _SOURCE_ORDER.get(source, 9),
+        ),
+        "consensus": item.get("consensus"),
+        "evidence_gap": bool(item.get("evidence_gap")),
+        "evidence": evidence,
+    }
+
+
+def _semantic_family(metric_id: str) -> str:
+    normalized = metric_id.casefold()
+    explicit_owner = _METRIC_FAMILY_OWNERS.get(normalized)
+    if explicit_owner is not None:
+        return explicit_owner
+    if any(
+        token in normalized
+        for token in ("harness", "provider", "evidence_integrity")
+    ):
+        return "SYSTEM_INTEGRITY"
+    if any(token in normalized for token in ("author", "specificity")):
+        return "AUTHORSHIP"
+    if any(
+        token in normalized
+        for token in ("sequence", "cross_slide", "transition", "duplicate_slide")
+    ):
+        return "SEQUENCE_SYSTEM"
+    if any(
+        token in normalized
+        for token in ("typograph", "readability", "legibility", "contrast", "reading")
+    ):
+        return "VISUAL_LAYOUT_READABILITY"
+    if any(
+        token in normalized
+        for token in ("imagery", "palette", "visual_communication", "data_visual")
+    ):
+        return "VISUAL_COMMUNICATION"
+    if any(
+        token in normalized
+        for token in ("layout", "composition", "geometry", "crop", "render_integrity")
+    ):
+        return "VISUAL_LAYOUT_READABILITY"
+    if any(
+        token in normalized
+        for token in (
+            "requirement",
+            "instruction",
+            "audience",
+            "source",
+            "claim",
+            "asset",
+            "chart",
+            "numeric",
+            "key_point",
+            "traceability",
+            "media",
+            "task_fidelity",
+        )
+    ):
+        return "TASK_FIDELITY"
+    if any(
+        token in normalized
+        for token in (
+            "content",
+            "language",
+            "title",
+            "structure",
+            "expression",
+            "compression",
+        )
+    ):
+        return "CONTENT_EXPRESSION"
+    if any(token in normalized for token in ("deliver", "functional", "security")):
+        return "DELIVERY_INTEGRITY"
+    return "CONTENT_EXPRESSION"
+
+
+def _evidence_gap_reason(reason: str) -> bool:
+    normalized = reason.upper()
+    return any(
+        token in normalized
+        for token in (
+            "MISSING",
+            "UNCONFIGURED",
+            "UNAVAILABLE",
+            "PROVIDER",
+            "INSUFFICIENT",
+            "ERROR",
+        )
+    ) or reason == "required metric is unresolved"
+
+
+def _model_evidence(result: Mapping[str, Any]) -> list[dict[str, Any]]:
+    metadata = _mapping(result.get("metadata"))
+    if not metadata.get("criterion_id") and not str(result.get("metric_id") or "").startswith(
+        "structured_vlm_"
+    ):
+        return []
+    projected: list[dict[str, Any]] = []
+    for item in _mappings(result.get("evidence")):
+        evidence = _evidence_projection(item)
+        payload = _mapping(item.get("payload"))
+        evidence["source"] = "MODEL"
+        evidence["severity"] = (
+            item.get("severity") or payload.get("severity") or result.get("severity")
+        )
+        evidence["_defect_codes"] = list(payload.get("defect_codes", ()))
+        evidence["_affected_page_numbers"] = [
+            page
+            for page in (
+                _positive_int(value)
+                for value in payload.get("affected_page_numbers", ())
+            )
+            if page is not None
+        ]
+        projected.append(evidence)
+    return projected
+
+
+def _reducer_evidence(result: Mapping[str, Any]) -> list[dict[str, Any]]:
+    projected: list[dict[str, Any]] = []
+    for item in _mappings(result.get("evidence")):
+        evidence = _evidence_projection(item)
+        evidence["source"] = "REDUCER"
+        kind = str(evidence.get("kind") or "")
+        if kind in _DEFECT_SEMANTICS:
+            evidence["_defect_codes"] = [kind]
+        projected.append(evidence)
+    return projected
+
+
+def _rank_semantic_evidence(
+    evidence: Sequence[Mapping[str, Any]],
+) -> list[dict[str, Any]]:
+    deduplicated: dict[tuple[Any, ...], dict[str, Any]] = {}
+    for item in evidence:
+        projected = dict(item)
+        source = str(projected.get("source") or "RULE")
+        if source not in _SOURCE_ORDER:
+            source = "RULE"
+        projected["source"] = source
+        kind = str(projected.get("kind") or "")
+        if not projected.get("_defect_codes") and kind in _DEFECT_SEMANTICS:
+            projected["_defect_codes"] = [kind]
+        key = (
+            source,
+            kind,
+            _positive_int(projected.get("page_number")),
+            str(projected.get("object_id") or ""),
+            str(projected.get("message") or ""),
+        )
+        existing = deduplicated.get(key)
+        if existing is None:
+            deduplicated[key] = projected
+            continue
+        chosen = min((existing, projected), key=_semantic_evidence_choice_key)
+        merged = dict(chosen)
+        merged["_defect_codes"] = sorted(
+            {
+                str(code)
+                for value in (existing, projected)
+                for code in value.get("_defect_codes", ())
+                if str(code)
+            }
+        )
+        merged["_affected_page_numbers"] = sorted(
+            {
+                int(page)
+                for value in (existing, projected)
+                for page in value.get("_affected_page_numbers", ())
+                if int(page) > 0
+            }
+        )
+        deduplicated[key] = merged
+    return sorted(
+        deduplicated.values(),
+        key=lambda item: (
+            _SOURCE_ORDER.get(str(item.get("source") or "RULE"), 4),
+            _SEVERITY_ORDER.get(str(item.get("severity") or "INFO"), 4),
+            0 if _positive_int(item.get("page_number")) is not None else 1,
+            _positive_int(item.get("page_number")) or 10**9,
+            str(item.get("evidence_id") or ""),
+            str(item.get("kind") or ""),
+            str(item.get("object_id") or ""),
+            str(item.get("message") or ""),
+            json.dumps(item.get("bbox"), sort_keys=True, separators=(",", ":")),
+            tuple(sorted(str(code) for code in item.get("_defect_codes", ()))),
+            tuple(sorted(int(page) for page in item.get("_affected_page_numbers", ()))),
+        ),
+    )
+
+
+def _semantic_evidence_choice_key(item: Mapping[str, Any]) -> tuple[Any, ...]:
+    confidence = item.get("confidence")
+    confidence_rank = (
+        -float(cast(int | float, confidence)) if _number(confidence) else 1.0
+    )
+    return (
+        _SEVERITY_ORDER.get(str(item.get("severity") or "INFO"), 4),
+        confidence_rank,
+        str(item.get("evidence_id") or ""),
+        json.dumps(item.get("bbox"), sort_keys=True, separators=(",", ":")),
+        tuple(sorted(str(code) for code in item.get("_defect_codes", ()))),
+    )
+
+
+def _raw_attention_detail(item: Mapping[str, Any]) -> dict[str, Any]:
+    lineage = _mapping(item.get("lineage"))
+    evidence = [dict(value) for value in _mappings(item.get("evidence"))]
+    oracle_ids = sorted(
+        {
+            str(value.get("oracle_id"))
+            for value in evidence
+            if value.get("oracle_id")
+        }
+    )
+    observation_ids = sorted(
+        {
+            str(value)
+            for key in ("observation_ids", "rule_observation_ids")
+            for value in lineage.get(key, ())
+            if str(value)
+        }
+    )
+    return {
+        "raw_issue_id": item.get("issue_id"),
+        "kind": item.get("kind"),
+        "metric_id": item.get("metric_id"),
+        "oracle_ids": oracle_ids,
+        "observation_ids": observation_ids,
+        "page_numbers": list(item.get("page_numbers", ())),
+        "evidence": evidence,
+        "lineage": dict(lineage),
+    }
+
+
+def _semantic_attention_detail(
+    issue: Mapping[str, Any],
+    raw_by_id: Mapping[str, Mapping[str, Any]],
+) -> dict[str, Any]:
+    lineage = _mapping(issue.get("lineage"))
+    raw_candidates = [
+        dict(raw_by_id[raw_id])
+        for raw_id in lineage.get("raw_issue_ids", ())
+        if raw_id in raw_by_id
+    ]
+    return {
+        "semantic_issue_id": issue.get("issue_id"),
+        "semantic_family": issue.get("semantic_family"),
+        "semantic_code": issue.get("semantic_code"),
+        "metric_ids": list(lineage.get("metric_ids", ())),
+        "all_page_numbers": list(lineage.get("all_page_numbers", ())),
+        "semantic_candidates": [
+            dict(candidate)
+            for candidate in _mappings(lineage.get("semantic_candidates"))
+        ],
+        "raw_candidates": raw_candidates,
+        "raw_candidate_count": len(raw_candidates),
+        "detail_count": issue.get("detail_count"),
+    }
+
+
+def _semantic_issue_sort_key(item: Mapping[str, Any]) -> tuple[int, int, int, int, str]:
+    pages = item.get("page_numbers", ())
+    return (
+        _PRIORITY_ORDER.get(str(item.get("priority") or "P3"), 4),
+        _SEVERITY_ORDER.get(str(item.get("severity") or "INFO"), 4),
+        _SEMANTIC_FAMILY_ORDER.get(str(item.get("semantic_family") or ""), 99),
+        min(pages, default=10**9),
+        str(item.get("issue_id") or ""),
+    )
+
+
 def build_review_task_summary(
     report: Mapping[str, Any],
     *,
@@ -335,9 +1360,13 @@ def build_review_task_summary(
     decision = str(report.get("decision") or "ERROR")
     coverage = str(report.get("coverage") or "UNASSESSABLE")
     issue_priorities = [str(item.get("priority") or "P3") for item in attention["items"]]
-    if coverage != "FULL" or decision in {"FAIL", "ERROR"} or "P0" in issue_priorities:
+    if decision in {"FAIL", "ERROR"} or "P0" in issue_priorities:
         priority = "P0"
-    elif decision == "REVIEW" or "P1" in issue_priorities:
+    elif (
+        coverage in {"DEGRADED", "BASE_ONLY", "UNASSESSABLE"}
+        or decision == "REVIEW"
+        or "P1" in issue_priorities
+    ):
         priority = "P1"
     elif attention["items"] or _non_train_tracks(report):
         priority = "P2"
@@ -371,6 +1400,7 @@ def build_review_task_summary(
         "training_tracks": _training_tracks(report),
         "latest_review": dict(latest_review) if latest_review is not None else None,
         "triage_policy_version": TRIAGE_POLICY_VERSION,
+        "attention_summary": dict(attention["attention_summary"]),
     }
 
 
@@ -574,6 +1604,10 @@ def _evidence_pages(evidence: Sequence[Mapping[str, Any]]) -> list[int]:
             pages.add(page)
         payload = _mapping(item.get("payload"))
         for affected in payload.get("affected_page_numbers", ()):
+            page = _positive_int(affected)
+            if page is not None:
+                pages.add(page)
+        for affected in item.get("_affected_page_numbers", ()):
             page = _positive_int(affected)
             if page is not None:
                 pages.add(page)

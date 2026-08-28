@@ -9,6 +9,19 @@ PowerPoint 渲染、本地内容寻址存储与哈希链均可直接使用。默
 `PRE_RESEARCH`，表示权重和阈值尚未通过大规模人类金标完成生产校准，不应把当前分数解释为
 行业标准。
 
+### 版本分层
+
+| 层级 | 当前值 | 何时变更 |
+|---|---|---|
+| 产品/软件发布 | `0.8.4` | 服务、CLI、UI 或运维能力发布 |
+| Evaluation Profile | `8.3` / `PRE_RESEARCH` | 评分公式、权重、DAG 或准入语义改变 |
+| EvalReport / Audit schema | `1.0` | 持久化 JSON 出现不兼容变更 |
+| HTTP API namespace | `/v1` | 接口合同出现破坏性变更 |
+
+上一个产品基线在本轮迁移语境中称为 `0.8.3`；这与评测 Profile `8.3` 是两个独立版本轴。
+产品升到 `0.8.4` 不改变 Profile、Oracle/Prompt 版本、schema 或 `/v1`，历史 `8.3`/`1.0` run
+仍可读取。本仓库在此前使用过 `0.1.0` 打包占位值；`0.8.4` 开始正式统一产品版本出口。
+
 ## 1. 能做什么
 
 - 评测四类任务：`text_to_ppt`、`project_summary`、`multimodal`、`ready_made`。
@@ -38,7 +51,8 @@ docker compose up -d --build
 打开：
 
 - 审计平台：<http://127.0.0.1:8000/review/>
-- OpenAPI：<http://127.0.0.1:8000/docs>
+- 交互式接口浏览：<http://127.0.0.1:8000/docs>
+- 权威静态接口合同：[`docs/openapi.yaml`](docs/openapi.yaml)
 - 健康检查：<http://127.0.0.1:8000/healthz>
 
 没有模型 Key 时，确定性 Oracle、评分、制品存储和审计平台仍可运行；模型相关 required
@@ -192,15 +206,19 @@ S_full = 100 × product(base multipliers) × product(scene multipliers)
 → 幂等追加 ReviewEvent
 ```
 
-队列按系统事实产生 P0–P3，不使用人类标签：
+队列按系统事实产生 P0–P3，不使用人类标签。主 Attention 最多展示 8 个
+Composite/多模态语义问题：
 
 ```text
-Coverage/审计链异常
-→ required metric 未解决或硬门 CONFIRMED/UNRESOLVED
-→ Provider 错误或规则/VLM 冲突
-→ CRITICAL/MAJOR 原子证据
-→ 主动 PASS 抽查
+Harness ERROR / required metric 未解决 / 未恢复 Provider 错误
+→ 同页 VLM 确认或仍有冲突的严重候选
+→ 规则与模型的同构念冲突
+→ VLM MAJOR/CRITICAL 语义缺陷与低于关注线的 Composite/Reducer
 ```
+
+Coverage 非 FULL 只会提升队列优先级，不会凭空生成局部疑点。原子规则、已恢复的
+Provider 尝试、metric/Oracle/observation ID 和完整 Gate/Reducer lineage 仅保留在
+“完整审计事实”与 Observation 制品中。
 
 问题级判断：
 

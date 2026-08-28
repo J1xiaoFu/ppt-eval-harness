@@ -1,11 +1,12 @@
 openapi: 3.1.0
 info:
   title: PPT Eval Harness
-  version: 0.1.0
+  version: 0.8.4
   description: >-
-    Deterministic PPT evaluation, review, and audit API. Every write request has a 202 MiB
-    pre-parser body limit. If a browser supplies Origin, only localhost or 127.0.0.1 origins are
-    accepted; trusted local CLI clients without Origin remain supported.
+    Product release 0.8.4 with Evaluation Profile 8.3, persisted schema 1.0 and API namespace /v1.
+    These version axes evolve independently. Every write request has a 202 MiB pre-parser body
+    limit. If a browser supplies Origin, only localhost or 127.0.0.1 origins are accepted; trusted
+    local CLI clients without Origin remain supported.
 paths:
   /healthz:
     get:
@@ -13,6 +14,9 @@ paths:
       responses:
         "200":
           description: Service and audit-chain status.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthStatus" }
   /v1/evaluations:
     post:
       operationId: createEvaluation
@@ -366,6 +370,15 @@ components:
       content:
         application/json: { schema: { $ref: "#/components/schemas/ApiError" } }
   schemas:
+    HealthStatus:
+      type: object
+      required: [status, service_version, audit_chain_valid, broken_event]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        service_version: { const: "0.8.4" }
+        audit_chain_valid: { type: boolean }
+        broken_event: { type: [string, "null"] }
+      additionalProperties: false
     ApiError:
       type: object
       required: [detail]
@@ -547,21 +560,62 @@ components:
         note: { type: string }
     AttentionIssue:
       type: object
-      required: [issue_id, priority, kind, title, summary, severity, page_numbers, evidence]
+      required: [issue_id, priority, title, summary, severity, status, semantic_code, consensus, rationales, detail_count, page_numbers]
       properties:
         issue_id: { type: string }
         priority: { type: string, enum: [P0, P1, P2, P3] }
-        kind: { type: string }
         title: { type: string }
         summary: { type: string }
         severity: { type: string, enum: [INFO, MINOR, MAJOR, CRITICAL] }
-        metric_id: { type: [string, "null"] }
+        status: { type: string, enum: [OPEN, RESOLVED] }
+        semantic_code: { type: string }
+        consensus: { $ref: "#/components/schemas/AttentionConsensus" }
+        rationales: { type: array, items: { type: string } }
+        detail_count: { type: integer, minimum: 0 }
         page_numbers: { type: array, items: { type: integer, minimum: 1 } }
-        evidence: { type: array, items: { type: object, additionalProperties: true } }
-        lineage: { type: object, additionalProperties: true }
+        evidence: { type: array, items: { $ref: "#/components/schemas/EvidenceRef" } }
+      additionalProperties: false
+    AttentionConsensus:
+      type: object
+      required: [status, sources, label, supporting_count, conflicting_count]
+      properties:
+        status: { type: string, enum: [AGREED, CONFLICT, SINGLE_SOURCE, INSUFFICIENT] }
+        sources:
+          type: array
+          uniqueItems: true
+          items: { type: string, enum: [RULE, MODEL, REDUCER, SYSTEM] }
+        label: { type: string }
+        supporting_count: { type: integer, minimum: 0 }
+        conflicting_count: { type: integer, minimum: 0 }
+      additionalProperties: false
+    AttentionSummary:
+      type: object
+      required: [state, title, description, total_count, required_count, raw_fact_count]
+      properties:
+        state:
+          type: string
+          enum: [ACTIONABLE, REVIEW_WITHOUT_LOCALIZED_ISSUE, NO_ISSUE, UNLOCATED_FAILURE]
+        title: { type: string }
+        description: { type: string }
+        total_count: { type: integer, minimum: 0 }
+        required_count: { type: integer, minimum: 0 }
+        raw_fact_count: { type: integer, minimum: 0 }
+      additionalProperties: false
+    EvidenceRef:
+      type: object
+      required: [source, page_number]
+      properties:
+        source: { type: string, enum: [RULE, MODEL, REDUCER, SYSTEM] }
+        page_number: { type: [integer, "null"], minimum: 1 }
+        bbox:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items: { type: number }
+      additionalProperties: false
     ReviewTaskSummary:
       type: object
-      required: [run_id, case_id, scenario, decision, coverage, priority, priority_reason, issue_count, page_count, review_state, training_tracks, triage_policy_version]
+      required: [run_id, case_id, scenario, decision, coverage, score, priority, priority_reason, issue_count, page_count, review_state, created_at, profile_id, profile_version, training_tracks, latest_review, triage_policy_version, attention_summary]
       properties:
         run_id: { type: string }
         case_id: { type: string }
@@ -585,15 +639,18 @@ components:
             - { $ref: "#/components/schemas/ReviewEvent" }
             - { type: "null" }
         triage_policy_version: { type: string }
+        attention_summary: { $ref: "#/components/schemas/AttentionSummary" }
     ReviewTaskDetail:
       allOf:
         - { $ref: "#/components/schemas/ReviewTaskSummary" }
         - type: object
-          required: [review_reasons, issues, slides, inputs, audit_url, artifacts, reviews, audit_integrity]
+          required: [service_version, report_hash, observation_hash, review_reasons, attention_summary, issues, slides, inputs, audit_url, artifacts, reviews, audit_integrity]
           properties:
+            service_version: { type: string }
             report_hash: { type: [string, "null"] }
             observation_hash: { type: [string, "null"] }
             review_reasons: { type: array, items: { type: string } }
+            attention_summary: { $ref: "#/components/schemas/AttentionSummary" }
             issues: { type: array, items: { $ref: "#/components/schemas/AttentionIssue" } }
             slides: { type: array, items: { $ref: "#/components/schemas/SlideRef" } }
             inputs: { type: array, items: { $ref: "#/components/schemas/ReviewInputArtifact" } }
@@ -620,13 +677,30 @@ components:
         thumbnail_url: { type: [string, "null"] }
     ReviewArtifactLinks:
       type: object
-      required: [report_url]
+      required: [report, atomic_observations, source_pptx, slide_render_manifest, report_url, observations_url, source_pptx_url, render_manifest_url]
       properties:
+        report: { $ref: "#/components/schemas/ArtifactAvailability" }
+        atomic_observations: { $ref: "#/components/schemas/ObservationArtifactAvailability" }
+        source_pptx: { $ref: "#/components/schemas/ArtifactAvailability" }
+        slide_render_manifest: { $ref: "#/components/schemas/ArtifactAvailability" }
         report_url: { type: string }
         observations_url: { type: [string, "null"] }
         source_pptx_url: { type: [string, "null"] }
         render_manifest_url: { type: [string, "null"] }
-      additionalProperties: true
+      additionalProperties: false
+    ArtifactAvailability:
+      type: object
+      required: [available]
+      properties:
+        available: { type: boolean }
+        sha256: { type: [string, "null"], pattern: "^[0-9a-f]{64}$" }
+      additionalProperties: false
+    ObservationArtifactAvailability:
+      allOf:
+        - { $ref: "#/components/schemas/ArtifactAvailability" }
+      description: >-
+        Availability and digest of the complete, untruncated AtomicObservation artifact. The
+        attention summary is only a projection and never replaces this run-bound artifact.
     ReviewInputArtifact:
       type: object
       required: [role, index, original_name, media_type, size_bytes, sha256, available, download_url]
@@ -652,7 +726,17 @@ components:
           enum: [CONFIRM_SYSTEM_DECISION, OVERRIDE_DECISION, REQUEST_MORE_EVIDENCE, APPROVE, REJECT]
         note: { type: [string, "null"] }
         created_at: { type: string, format: date-time }
+        client_request_id: { type: [string, "null"] }
+        target_decision: { type: [string, "null"], enum: [PASS, REVIEW, FAIL, ERROR, null] }
+        machine_decision: { type: [string, "null"], enum: [PASS, REVIEW, FAIL, ERROR, null] }
+        machine_coverage: { type: [string, "null"], enum: [FULL, DEGRADED, BASE_ONLY, UNASSESSABLE, null] }
+        report_hash: { type: [string, "null"], pattern: "^[0-9a-f]{64}$" }
+        observation_hash: { type: [string, "null"], pattern: "^[0-9a-f]{64}$" }
+        triage_policy_version: { type: [string, "null"] }
         issue_resolutions: { type: array, items: { $ref: "#/components/schemas/IssueResolution" } }
+        track_resolutions:
+          type: object
+          additionalProperties: { type: string, enum: [TRAIN, REVIEW, REJECT] }
     AuditIntegrity:
       type: object
       required: [chain_valid]
@@ -661,15 +745,29 @@ components:
         observation_artifact_valid: { type: [boolean, "null"] }
     FullAuditPayload:
       type: object
-      required: [run_id, results, gate_results, model_routes, manifest, reviews, audit_integrity]
+      required: [run_id, service_version, attention_summary, attention_details, observation_artifact, results, gate_results, model_routes, manifest, reviews, audit_integrity]
       properties:
         run_id: { type: string }
+        service_version: { type: string }
+        attention_summary: { $ref: "#/components/schemas/AttentionSummary" }
+        attention_details: { type: array, items: { type: object, additionalProperties: true } }
+        observation_artifact: { $ref: "#/components/schemas/ObservationArtifact" }
         results: { type: array, items: { type: object, additionalProperties: true } }
         gate_results: { type: array, items: { type: object, additionalProperties: true } }
         model_routes: { type: array, items: { type: object, additionalProperties: true } }
         manifest: { type: object, additionalProperties: true }
         reviews: { type: array, items: { $ref: "#/components/schemas/ReviewEvent" } }
         audit_integrity: { $ref: "#/components/schemas/AuditIntegrity" }
+    ObservationArtifact:
+      type: object
+      required: [available, url, count, sha256, valid]
+      properties:
+        available: { type: boolean }
+        url: { type: [string, "null"] }
+        count: { type: integer, minimum: 0 }
+        sha256: { type: [string, "null"], pattern: "^[0-9a-f]{64}$" }
+        valid: { type: [boolean, "null"] }
+      additionalProperties: false
     ReviewQueue:
       type: object
       required: [items, total, limit, offset, triage_policy_version]

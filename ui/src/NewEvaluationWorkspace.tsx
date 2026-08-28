@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { ApiError, getEvaluationJob, uploadEvaluation } from "./api";
 import type { EvaluationJob, EvaluationScene } from "./types";
+import { RESEARCH_RELEASE_LABEL } from "./version";
 
 const ACTIVE_JOB_KEY = "ppt-eval-active-upload-job";
 const PPTX_MIME = "application/vnd.openxmlformats-officedocument.presentationml.presentation";
@@ -360,7 +361,7 @@ export default function NewEvaluationWorkspace({
           <h1 id="new-evaluation-title">新建评测</h1>
           <p>上传真实 PPT 与场景证据。系统完成原子评测后，可直接进入对应 run 的人工审计。</p>
         </div>
-        <div className="evaluation-contract"><CheckCircle2 size={17} />使用当前 v8.3 默认 Profile</div>
+        <div className="evaluation-contract"><CheckCircle2 size={17} />{RESEARCH_RELEASE_LABEL}</div>
       </header>
 
       <div className="evaluation-layout">

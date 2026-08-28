@@ -46,13 +46,15 @@ FastAPI TestClient 产生一条上游 `StarletteDeprecationWarning`，不影响�
 
 | 门禁 | 结果 |
 |---|---|
-| 全量 pytest | `177 passed`；仅一条既有 Starlette/httpx2 迁移提示 |
-| dependency-free runner | `177 passed, 0 failed` |
+| 全量 pytest | `193 passed`；仅一条既有 Starlette/httpx2 迁移提示 |
+| dependency-free runner | `193 passed, 0 failed` |
 | 四份 tracked case | 全部从 manifest-relative 路径加载并完成运行 |
 | Demo generator | 只允许 ignored `var/` 子目录；外部绝对路径与 `../` 逃逸被拒绝 |
 | 路径卫生 | 个性化用户目录、开发机根、编码本地 URL 残留为 0 |
 | 制品格式 | 4 份 Demo JSON 与 4 份 reproduction JSON 解析通过；SlidesBench PowerShell 语法通过 |
 | 代码与 UI | Ruff、触及文件 strict mypy、TypeScript/Vite、Compose 与 diff check 通过 |
+| 产品版本 | Python package、CLI、FastAPI、OpenAPI 与 UI 统一为 `0.8.4` |
+| 评测合同 | 四场景 Profile 仍为 `8.3` / `PRE_RESEARCH`，Composite `8.3.0`，schema `1.0` |
 
 另从仓库外工作目录分别运行 tracked `case_ready_made.json` 与 generator 产出的相同 case，
 两者均得到合法 `REVIEW/DEGRADED` 结果；生成 JSON 保持 `./aurora_demo.pptx` 和
@@ -63,6 +65,9 @@ Docker `--pull` 尝试曾被外部 registry DNS/代理可达性阻断；该结�
 说明 Dockerfile/依赖和 UI 构建链在可用基础层上成立。隔离容器随后完成健康检查、浏览器上传、
 4 页渲染、57 条 AtomicObservation、完整制品 hash、`REQUEST_MORE_EVIDENCE` 人审事件与重启恢复；
 进程内 Job 在重启后返回 404，符合已声明的非持久 Job 合同。
+
+产品 `0.8.4` 不对历史 run 执行就地迁移：旧报告即使没有产品版本字段，只要保留
+`profile_version=8.3` 和 `schema_version=1.0`，仍可由 repository 与 `/v1/evaluations/{run_id}` 读取。
 
 ## 包与容器
 
@@ -81,7 +86,8 @@ Docker `--pull` 尝试曾被外部 registry DNS/代理可达性阻断；该结�
 - 生成 EvalReport、RunManifest 和审计链事件；
 - 保存 source PPTX、AtomicObservation 和 render manifest；
 - render manifest 为 1.1，逐页 SHA-256 校验通过；
-- 审计详情按需返回页图与 11 个系统 AttentionIssue；
+- 审计详情按需返回页图与 3 个语义 AttentionIssue，57 条 AtomicObservation
+  与原始 Gate/Reducer/Oracle 事实仅在完整审计中保留；
 - 详情首屏不含全量 Matrix，也不泄露主机或容器绝对路径；
 - 相同 Idempotency-Key 重试两次只产生一条 ReviewEvent；
 - 请求补证后任务状态为 `NEEDS_EVIDENCE`。

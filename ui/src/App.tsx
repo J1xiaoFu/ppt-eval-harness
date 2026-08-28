@@ -3,6 +3,7 @@ import {
   AlertCircle,
   AlertTriangle,
   CheckCircle2,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   CircleUserRound,
@@ -33,11 +34,15 @@ import type {
   ReviewTaskSummary,
   ReviewVerdict,
 } from "./types";
+import { RESEARCH_RELEASE_LABEL } from "./version";
 
 const DEMO_MODE = import.meta.env.DEV && import.meta.env.VITE_DEMO_MODE === "true";
 const priorityLabel = { P0: "立即处理", P1: "优先复核", P2: "质量抽查", P3: "常规抽查" };
 const viewLabel = { queue: "审计队列", all: "全部运行", completed: "已完成" };
+const trackLabel = { visual: "视觉", layout: "版式", content: "内容", full_deck: "整套" };
+const severityLabel = { INFO: "信息", MINOR: "轻微", MAJOR: "主要", CRITICAL: "严重" };
 type ReviewView = keyof typeof viewLabel;
+type AuditTab = "score" | "facts" | "routes" | "manifest" | "history";
 
 function locationSelection(): { view: ReviewView; runId: string } {
   const params = new URLSearchParams(window.location.search);
@@ -87,34 +92,61 @@ function IssueCard({
   active,
   resolution,
   onSelect,
+  onPageSelect,
   onResolve,
 }: {
   issue: AttentionIssue;
   active: boolean;
   resolution?: IssueResolution;
   onSelect: () => void;
+  onPageSelect: (page: number) => void;
   onResolve: (value: IssueResolution) => void;
 }) {
+  const [rationalesOpen, setRationalesOpen] = React.useState(false);
+  const rationaleId = `rationales-${issue.issue_id}`;
+  const visibleRationales = issue.rationales.slice(0, 3);
   return (
-    <article
-      className={`issue-card ${active ? "active" : ""}`}
-      onClick={onSelect}
-      aria-current={active ? "true" : undefined}
-    >
-      <div className="issue-topline">
-        <span className={`severity severity-${issue.severity}`}>{issue.severity}</span>
-        <code>{issue.kind}</code>
-      </div>
-      <h3>{issue.title}</h3>
-      <p>{issue.summary}</p>
+    <article className={`issue-card ${active ? "active" : ""}`}>
+      <button
+        className="issue-card-select"
+        onClick={onSelect}
+        aria-current={active ? "true" : undefined}
+      >
+        <span className="issue-topline">
+          <span className={`severity severity-${issue.severity}`}>{severityLabel[issue.severity]}</span>
+          <span className={`consensus consensus-${issue.consensus.status.toLowerCase()}`}>
+            {issue.consensus.label}
+          </span>
+        </span>
+        <h3>{issue.title}</h3>
+        <p>{issue.summary}</p>
+        <span className="issue-fact-count">{issue.detail_count} 条底层事实</span>
+      </button>
       {issue.page_numbers.length > 0 && (
-        <div className="page-pills">
+        <div className="page-pills" aria-label="关联页面">
           {issue.page_numbers.slice(0, 8).map((page) => (
-            <span key={page}>P{page}</span>
+            <button key={page} onClick={() => onPageSelect(page)} aria-label={`查看第 ${page} 页`}>
+              P{page}
+            </button>
           ))}
           {issue.page_numbers.length > 8 && <span>+{issue.page_numbers.length - 8}</span>}
         </div>
       )}
+      {issue.rationales.length > 0 && <>
+        <button
+          className="rationale-toggle"
+          onClick={() => setRationalesOpen((current) => !current)}
+          aria-expanded={rationalesOpen}
+          aria-controls={rationaleId}
+        >
+          <ChevronDown size={14} />
+          {rationalesOpen ? "收起判断依据" : `查看判断依据（${issue.rationales.length}）`}
+        </button>
+        {rationalesOpen && <div className="issue-rationales" id={rationaleId}>
+          <ul>{visibleRationales.map((rationale, index) => <li key={index}>{rationale}</li>)}</ul>
+          {issue.rationales.length > visibleRationales.length && <small>另有 {issue.rationales.length - visibleRationales.length} 条详见完整审计。</small>}
+        </div>}
+      </>}
       <div className="issue-actions" onClick={(event) => event.stopPropagation()}>
         <button
           className={resolution === "CONFIRMED" ? "selected" : ""}
@@ -139,6 +171,33 @@ function IssueCard({
   );
 }
 
+function EmptyAttentionState({ task }: { task: ReviewTaskDetail }) {
+  const tone = task.decision === "PASS"
+    ? "success"
+    : task.decision === "REVIEW"
+      ? "warning"
+      : "danger";
+  const fallbackTitle = task.decision === "PASS"
+    ? "没有需要优先处理的语义问题"
+    : task.decision === "REVIEW"
+      ? "系统要求人工复核，但没有可定位的语义问题"
+      : "机器结论异常，但系统没有生成可定位项";
+  const fallbackDescription = task.decision === "PASS"
+    ? "仍可打开完整审计进行常规抽查。"
+    : "请抽查关键页或打开完整审计，必要时请求补充证据。";
+  return (
+    <div
+      className={`attention-empty attention-empty-${tone}`}
+      role={tone === "danger" ? "alert" : "status"}
+    >
+      {tone === "success" ? <CheckCircle2 size={23} /> : tone === "warning" ? <AlertTriangle size={23} /> : <AlertCircle size={23} />}
+      <strong>{task.attention_summary.title || fallbackTitle}</strong>
+      <span>{task.attention_summary.description || fallbackDescription}</span>
+      {task.attention_summary.raw_fact_count > 0 && <small>完整审计中仍保留 {task.attention_summary.raw_fact_count} 条底层事实。</small>}
+    </div>
+  );
+}
+
 function valueText(value: unknown): string {
   if (value == null) return "—";
   if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(3);
@@ -157,8 +216,8 @@ function FullAuditDrawer({
   task: ReviewTaskDetail;
   audit: FullAuditPayload | null;
   loading: boolean;
-  tab: "score" | "routes" | "manifest" | "history";
-  onTab: (tab: "score" | "routes" | "manifest" | "history") => void;
+  tab: AuditTab;
+  onTab: (tab: AuditTab) => void;
   onClose: () => void;
 }) {
   return (
@@ -182,6 +241,9 @@ function FullAuditDrawer({
         <nav aria-label="审计事实分类">
           <button className={tab === "score" ? "active" : ""} onClick={() => onTab("score")}>
             <SlidersHorizontal size={15} />分数与 Lineage
+          </button>
+          <button className={tab === "facts" ? "active" : ""} onClick={() => onTab("facts")}>
+            <Layers3 size={15} />底层事实
           </button>
           <button className={tab === "routes" ? "active" : ""} onClick={() => onTab("routes")}>
             <Route size={15} />模型路由
@@ -212,6 +274,41 @@ function FullAuditDrawer({
               {audit.results.length === 0 && <p className="drawer-empty">当前报告没有可展示的结果 Matrix。</p>}
             </div>
           )}
+          {tab === "facts" && (
+            <div className="atomic-facts">
+              {audit.observation_artifact && <div className={`observation-artifact ${audit.observation_artifact.available && audit.observation_artifact.valid ? "valid" : audit.observation_artifact.valid === false ? "invalid" : "unavailable"}`}>
+                <div>
+                  <strong>完整 Observation</strong>
+                  <span>{audit.observation_artifact.valid === false
+                    ? "Observation 制品校验失败，不可下载"
+                    : audit.observation_artifact.available
+                      ? `${audit.observation_artifact.count} 条 · 哈希校验通过`
+                      : "该历史运行未保存 Observation 制品"}</span>
+                </div>
+                {audit.observation_artifact.available && audit.observation_artifact.url && <a href={audit.observation_artifact.url} target="_blank" rel="noreferrer"><Download size={14} />下载全量事实</a>}
+              </div>}
+              <section>
+                <h3>语义问题与底层 Lineage</h3>
+                {audit.attention_details.map((detail, index) => (
+                  <article key={`${valueText(detail.issue_id)}-${index}`}>
+                    <strong>{valueText(detail.issue_id ?? detail.semantic_code ?? `detail-${index + 1}`)}</strong>
+                    <pre>{JSON.stringify(detail, null, 2)}</pre>
+                  </article>
+                ))}
+                {audit.attention_details.length === 0 && <p className="drawer-empty">没有语义问题的底层映射。</p>}
+              </section>
+              <section>
+                <h3>硬门与聚合事实</h3>
+                {audit.gate_results.map((gate, index) => (
+                  <article key={`${valueText(gate.metric_id)}-${index}`}>
+                    <strong>{valueText(gate.metric_id ?? `gate-${index + 1}`)}</strong>
+                    <pre>{JSON.stringify(gate, null, 2)}</pre>
+                  </article>
+                ))}
+                {audit.gate_results.length === 0 && <p className="drawer-empty">该运行没有硬门记录。</p>}
+              </section>
+            </div>
+          )}
           {tab === "routes" && (
             <div className="route-list">
               {audit.model_routes.map((route, index) => (
@@ -232,6 +329,10 @@ function FullAuditDrawer({
                   <strong>{review.verdict}</strong>
                   <span>{review.reviewer_id} · {new Date(review.created_at).toLocaleString()}</span>
                   <p>{review.note || "未填写备注"}</p>
+                  <details>
+                    <summary>查看完整人审事件</summary>
+                    <pre>{JSON.stringify(review, null, 2)}</pre>
+                  </details>
                 </article>
               ))}
               {audit.reviews.length === 0 && <p className="drawer-empty">尚无人工审计事件。</p>}
@@ -283,10 +384,12 @@ export default function App() {
   const [submitting, setSubmitting] = React.useState(false);
   const [notice, setNotice] = React.useState("");
   const [drawerOpen, setDrawerOpen] = React.useState(false);
-  const [drawerTab, setDrawerTab] = React.useState<"score" | "routes" | "manifest" | "history">("score");
+  const [drawerTab, setDrawerTab] = React.useState<AuditTab>("score");
   const [audit, setAudit] = React.useState<FullAuditPayload | null>(null);
   const [auditLoading, setAuditLoading] = React.useState(false);
+  const [showAllIssues, setShowAllIssues] = React.useState(false);
   const requestId = React.useRef(crypto.randomUUID());
+  const auditRequestSequence = React.useRef(0);
 
   const loadTasks = React.useCallback(async () => {
     setLoading(true);
@@ -335,6 +438,10 @@ export default function App() {
   }, []);
 
   React.useEffect(() => {
+    auditRequestSequence.current += 1;
+    setDrawerOpen(false);
+    setAudit(null);
+    setAuditLoading(false);
     if (!activeRun) {
       setTask(null);
       return;
@@ -355,6 +462,7 @@ export default function App() {
         setNote("");
         setNotice("");
         setAudit(null);
+        setShowAllIssues(false);
       } catch (cause) {
         if (!cancelled) setError(cause instanceof Error ? cause.message : "无法加载审计详情");
       }
@@ -378,6 +486,13 @@ export default function App() {
       (verdict === "REQUEST_MORE_EVIDENCE" || unresolvedRequired.length === 0) &&
       (!noteRequired || note.trim()),
   );
+  const defaultIssueIds = new Set([
+    ...(task?.issues.slice(0, 5).map((item) => item.issue_id) ?? []),
+    ...(task?.issues.filter((item) => item.priority === "P0" || item.priority === "P1").map((item) => item.issue_id) ?? []),
+  ]);
+  const visibleIssues = task?.issues.filter((item) => showAllIssues || defaultIssueIds.has(item.issue_id)) ?? [];
+  const hiddenIssueCount = (task?.issues.length ?? 0) - visibleIssues.length;
+  const hasCollapsibleIssues = defaultIssueIds.size < (task?.issues.length ?? 0);
 
   function selectIssue(nextIssue: AttentionIssue) {
     setActiveIssue(nextIssue.issue_id);
@@ -406,19 +521,25 @@ export default function App() {
 
   async function openAudit() {
     if (!task) return;
+    const requestedRun = task.run_id;
+    const sequence = auditRequestSequence.current + 1;
+    auditRequestSequence.current = sequence;
     setDrawerOpen(true);
-    if (audit?.run_id === task.run_id) return;
+    if (audit?.run_id === requestedRun) return;
     setAuditLoading(true);
     try {
       const payload = DEMO_MODE && !liveRunId
         ? (await import("./demo")).demoAudit
-        : await getReviewAudit(task.run_id);
-      setAudit({ ...payload, run_id: task.run_id });
+        : await getReviewAudit(requestedRun);
+      if (auditRequestSequence.current !== sequence) return;
+      if (payload.run_id !== requestedRun) throw new Error("完整审计响应与当前运行不匹配");
+      setAudit(payload);
     } catch (cause) {
+      if (auditRequestSequence.current !== sequence) return;
       setError(cause instanceof Error ? cause.message : "无法加载完整审计事实");
       setAudit(null);
     } finally {
-      setAuditLoading(false);
+      if (auditRequestSequence.current === sequence) setAuditLoading(false);
     }
   }
 
@@ -459,7 +580,7 @@ export default function App() {
   return (
     <main className={`app-shell ${workspace === "create" ? "evaluation-mode" : ""}`}>
       <header className="topbar">
-        <div className="brand"><span className="brand-mark"><Layers3 size={18} /></span><div><strong>PPT Eval</strong><small>审计控制台</small></div></div>
+        <div className="brand"><span className="brand-mark"><Layers3 size={18} /></span><div><strong>PPT Eval</strong><small>{RESEARCH_RELEASE_LABEL}</small></div></div>
         <nav aria-label="主导航">
           <button className={workspace === "create" ? "active" : ""} onClick={() => setWorkspace("create")} aria-current={workspace === "create" ? "page" : undefined}><Plus size={15} />新建评测</button>
           {(["queue", "all", "completed"] as const).map((item) => (
@@ -502,13 +623,17 @@ export default function App() {
                   {issue?.evidence.filter((item) => item.page_number === page && item.bbox).map((item, index) => { const [x, y, width, height] = item.bbox!; return <span key={index} className="bbox" style={{ left: `${x * 100}%`, top: `${y * 100}%`, width: `${width * 100}%`, height: `${height * 100}%` }} />; })}
                 </div>
                 <div className="filmstrip">{task.slides.map((item) => <button key={item.page_number} className={item.page_number === page ? "active" : ""} aria-current={item.page_number === page ? "page" : undefined} onClick={() => setPage(item.page_number)}>{item.thumbnail_url ? <img src={item.thumbnail_url} alt="" /> : <span className="thumb-missing">P{item.page_number}</span>}<span>{item.page_number}</span>{task.issues.some((entry) => entry.page_numbers.includes(item.page_number)) && <i />}</button>)}</div>
-                <div className="evidence-strip"><strong>当前疑点证据</strong>{issue?.evidence.length ? issue.evidence.map((entry, index) => <div key={index}><span>{entry.source}</span><p>{entry.message}</p></div>) : <p className="muted">该疑点为 deck 级结论，没有单独的对象证据。</p>}</div>
+                <div className="evidence-strip"><strong>当前语义判断</strong>{issue ? <><div><span>来源共识</span><p>{issue.consensus.label}</p></div><div><span>人工关注</span><p>{issue.summary}</p></div></> : <p className="muted">当前没有可定位的语义问题；可进行常规页面抽查。</p>}</div>
               </section>
 
               <aside className="issue-panel">
-                <div className="issue-heading"><div><span>Human attention</span><strong>{task.issues.length} 个待判断事项</strong></div><AlertTriangle size={19} /></div>
-                <div className="track-strip">{task.training_tracks.map((track) => <span key={track.track}><small>{track.track}</small><b className={`track-${track.status}`}>{track.status}</b></span>)}</div>
-                <div className="issue-list">{task.issues.map((item) => <IssueCard key={item.issue_id} issue={item} active={activeIssue === item.issue_id} resolution={resolutions[item.issue_id]} onSelect={() => selectIssue(item)} onResolve={(value) => setResolutions((current) => ({ ...current, [item.issue_id]: value }))} />)}{task.issues.length === 0 && <div className="no-issues"><CheckCircle2 size={22} /><strong>没有系统优先疑点</strong><span>仍可从完整审计事实进行常规抽查。</span></div>}</div>
+                <div className="issue-heading"><div><span>语义关注</span><strong>{task.attention_summary.total_count} 个待判断事项</strong></div><AlertTriangle size={19} /></div>
+                <div className="track-strip">{task.training_tracks.map((track) => <span key={track.track}><small>{trackLabel[track.track]}</small><b className={`track-${track.status}`}>{track.status}</b></span>)}</div>
+                <div className="issue-list" id="semantic-issue-list">
+                  {visibleIssues.map((item) => <IssueCard key={item.issue_id} issue={item} active={activeIssue === item.issue_id} resolution={resolutions[item.issue_id]} onSelect={() => selectIssue(item)} onPageSelect={(nextPage) => { setActiveIssue(item.issue_id); setPage(nextPage); }} onResolve={(value) => setResolutions((current) => ({ ...current, [item.issue_id]: value }))} />)}
+                  {task.issues.length === 0 && <EmptyAttentionState task={task} />}
+                  {hasCollapsibleIssues && <button className="issue-list-toggle" onClick={() => setShowAllIssues((current) => !current)} aria-expanded={showAllIssues} aria-controls="semantic-issue-list">{showAllIssues ? "收起低优先项" : `展开其余 ${hiddenIssueCount} 项`}</button>}
+                </div>
                 <button className="full-audit" onClick={() => void openAudit()}><FileSearch size={16} />打开完整审计事实</button>
               </aside>
             </div>

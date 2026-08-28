@@ -20,6 +20,7 @@ from ppt_eval.adapters import (
     RenderResult,
 )
 from ppt_eval.application import (
+    TRIAGE_POLICY_VERSION,
     DagScheduler,
     EvaluationService,
     RunSupervisor,
@@ -48,6 +49,7 @@ from ppt_eval.infrastructure import (
 )
 from ppt_eval.oracles import build_default_registry
 from ppt_eval.reporting import export_run_report
+from ppt_eval.version import __version__
 
 _RENDER_MANIFEST_NAME = "render-manifest.json"
 
@@ -92,6 +94,7 @@ def normalized_report_payload(outcome: Any) -> dict[str, Any]:
     payload["degradation_reasons"] = list(payload.get("review_reasons", ()))
     payload["manifest"] = to_primitive(outcome.manifest)
     payload["score_breakdown"] = to_primitive(outcome.score) if outcome.score else None
+    payload["service_version"] = __version__
     return payload
 
 
@@ -544,10 +547,10 @@ class LocalEvaluationRuntime:
         return (LibreOfficeRenderer(),)
 
     def get(self, run_id: str) -> dict[str, Any]:
-        return self.repository.get(run_id)
+        return _with_service_version(self.repository.get(run_id))
 
     def list(self) -> list[dict[str, Any]]:
-        return self.repository.list()
+        return [_with_service_version(item) for item in self.repository.list()]
 
     def reviews(self, run_id: str) -> builtins.list[dict[str, Any]]:
         self.repository.get(run_id)
@@ -736,7 +739,8 @@ class LocalEvaluationRuntime:
             raise ValueError("invalid pagination")
         query_text = query.strip().casefold()
         summaries: list[dict[str, Any]] = []
-        for report in self.repository.list():
+        for stored_report in self.repository.list():
+            report = _with_service_version(stored_report)
             run_id = str(report.get("run_id") or "")
             reviews = self.repository.list_reviews(run_id)
             projection_report = report
@@ -776,20 +780,25 @@ class LocalEvaluationRuntime:
             "total": total,
             "limit": limit,
             "offset": offset,
-            "triage_policy_version": "audit-attention@1.0.0",
+            "triage_policy_version": TRIAGE_POLICY_VERSION,
         }
 
     def review_task(self, run_id: str) -> dict[str, Any]:
-        report = self.repository.get(run_id)
-        observation_integrity = True
-        try:
-            observations = self.observations(run_id)
-        except (OSError, ValueError, json.JSONDecodeError):
-            observations = []
-            observation_integrity = False
-            report = _with_integrity_error(
-                report, "ATOMIC_OBSERVATION_ARTIFACT_INVALID"
-            )
+        report = _with_service_version(self.repository.get(run_id))
+        has_observation_artifact = isinstance(
+            report.get("observation_artifact"), Mapping
+        )
+        observation_integrity: bool | None = None
+        observations: list[dict[str, Any]] = []
+        if has_observation_artifact:
+            try:
+                observations = self.observations(run_id)
+                observation_integrity = True
+            except (OSError, ValueError, json.JSONDecodeError):
+                observation_integrity = False
+                report = _with_integrity_error(
+                    report, "ATOMIC_OBSERVATION_ARTIFACT_INVALID"
+                )
         reviews = self.repository.list_reviews(run_id)
         slides = self.review_slide_paths(run_id)
         summary = build_review_task_summary(
@@ -844,8 +853,7 @@ class LocalEvaluationRuntime:
         artifacts: dict[str, dict[str, Any]] = {
             "report": {"available": True},
             "atomic_observations": {
-                "available": observation_integrity
-                and isinstance(report.get("observation_artifact"), Mapping),
+                "available": observation_integrity is True,
                 "sha256": _artifact_digest(report, "observation_artifact"),
             },
             "source_pptx": {
@@ -863,11 +871,15 @@ class LocalEvaluationRuntime:
         }
         return {
             **summary,
+            "service_version": report.get("service_version", "0.8.3"),
             "triage_policy_version": attention["policy_version"],
             "report_hash": manifest.get("result_hash"),
             "observation_hash": artifacts["atomic_observations"]["sha256"],
+            "observation_count": len(observations),
             "review_reasons": list(report.get("review_reasons", ())),
             "issues": attention["items"],
+            "attention_summary": attention["attention_summary"],
+            "attention_details": attention["attention_details"],
             "slides": [
                 {"page_number": index, "available": True}
                 for index in range(1, len(slides) + 1)
@@ -888,6 +900,11 @@ class LocalEvaluationRuntime:
     def review(self, payload: dict[str, Any]) -> dict[str, Any]:
         run_id = str(payload["run_id"])
         report = self.repository.get(run_id)
+        existing_review = _existing_idempotent_review(
+            self.repository.list_reviews(run_id), payload
+        )
+        if existing_review is not None:
+            return existing_review
         try:
             observations = self.observations(run_id)
         except (OSError, ValueError, json.JSONDecodeError) as exc:
@@ -1242,6 +1259,79 @@ def _safe_artifact_name(value: object, *, fallback: str) -> str:
     ):
         return fallback
     return name
+
+
+def _with_service_version(report: Mapping[str, Any]) -> dict[str, Any]:
+    value = {str(key): item for key, item in report.items()}
+    value.setdefault("service_version", "0.8.3")
+    return value
+
+
+def _existing_idempotent_review(
+    reviews: Sequence[Mapping[str, Any]], payload: Mapping[str, Any]
+) -> dict[str, Any] | None:
+    client_request_id = str(payload.get("client_request_id") or "").strip()
+    if not client_request_id:
+        return None
+    requested = _review_request_projection(payload)
+    for existing in reviews:
+        if str(existing.get("client_request_id") or "") != client_request_id:
+            continue
+        if _review_request_projection(existing) != requested:
+            raise ValueError("review idempotency key was reused with different content")
+        return {str(key): value for key, value in existing.items()}
+    return None
+
+
+def _review_request_projection(value: Mapping[str, Any]) -> dict[str, Any]:
+    raw_resolutions = value.get("issue_resolutions")
+    resolutions = (
+        raw_resolutions
+        if isinstance(raw_resolutions, Sequence)
+        and not isinstance(raw_resolutions, (str, bytes))
+        else ()
+    )
+    normalized_resolutions = sorted(
+        (
+            {
+                "issue_id": str(item.get("issue_id") or ""),
+                "resolution": str(item.get("resolution") or "").upper(),
+                "note": str(item.get("note") or "").strip(),
+            }
+            for item in resolutions
+            if isinstance(item, Mapping)
+        ),
+        key=lambda item: (
+            item["issue_id"],
+            item["resolution"],
+            item["note"],
+        ),
+    )
+    raw_tracks = value.get("track_resolutions")
+    track_resolutions = (
+        {
+            str(key): str(status).upper()
+            for key, status in raw_tracks.items()
+        }
+        if isinstance(raw_tracks, Mapping)
+        else {}
+    )
+    verdict = str(value.get("verdict") or "").upper()
+    target_decision = (
+        str(value.get("target_decision") or "").upper() or None
+        if verdict == "OVERRIDE_DECISION"
+        else None
+    )
+    return {
+        "run_id": str(value.get("run_id") or ""),
+        "reviewer_id": str(value.get("reviewer_id") or "").strip(),
+        "verdict": verdict,
+        "target_decision": target_decision,
+        "note": str(value.get("note") or "").strip(),
+        "client_request_id": str(value.get("client_request_id") or "").strip(),
+        "issue_resolutions": normalized_resolutions,
+        "track_resolutions": dict(sorted(track_resolutions.items())),
+    }
 
 
 def _with_integrity_error(

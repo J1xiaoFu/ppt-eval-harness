@@ -26,6 +26,7 @@ from ppt_eval.infrastructure.uploads import (
     UploadWorkspace,
 )
 from ppt_eval.runtime import LocalEvaluationRuntime, get_runtime
+from ppt_eval.version import __version__
 
 
 class MissingApiDependency(RuntimeError):
@@ -346,7 +347,7 @@ def create_app(
     # only this type after the guarded import succeeds.
     globals()["UploadFile"] = UploadFile
 
-    app = FastAPI(title="PPT Eval Harness", version="0.1.0")
+    app = FastAPI(title="PPT Eval Harness", version=__version__)
     app.add_middleware(
         RequestBodyLimitMiddleware,
         maximum_bytes=max_request_body_bytes,
@@ -373,7 +374,12 @@ def create_app(
     @app.get("/healthz")
     def healthz() -> dict[str, Any]:
         valid, broken_event = runtime_instance.audit_log.verify()
-        return {"status": "ok" if valid else "degraded", "audit_chain_valid": valid, "broken_event": broken_event}
+        return {
+            "status": "ok" if valid else "degraded",
+            "service_version": __version__,
+            "audit_chain_valid": valid,
+            "broken_event": broken_event,
+        }
 
     @app.post("/v1/evaluations")
     def create_evaluation(
@@ -619,6 +625,11 @@ def create_app(
             ),
         }
         detail["audit_url"] = f"/v1/review/tasks/{run_id}/audit"
+        detail["issues"] = [
+            _light_attention_issue(item)
+            for item in detail.get("issues", ())
+            if isinstance(item, Mapping)
+        ]
         raw_inputs = detail.get("inputs")
         raw_inputs = raw_inputs if isinstance(raw_inputs, Mapping) else {}
         detail["inputs"] = [
@@ -637,6 +648,8 @@ def create_app(
         ]
         for key in ("results", "gate_results", "model_routes", "manifest"):
             detail.pop(key, None)
+        detail.pop("attention_details", None)
+        detail.pop("observation_count", None)
         return _public_report(detail)
 
     @app.get("/v1/review/tasks/{run_id}/audit")
@@ -647,6 +660,11 @@ def create_app(
             raise HTTPException(status_code=404, detail="run not found") from exc
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=_public_error_detail(exc)) from exc
+        artifact_links = detail.get("artifacts")
+        artifact_links = artifact_links if isinstance(artifact_links, Mapping) else {}
+        observation = artifact_links.get("atomic_observations")
+        observation = observation if isinstance(observation, Mapping) else {}
+        observation_available = observation.get("available") is True
         return _public_report(
             {
                 "run_id": run_id,
@@ -654,6 +672,22 @@ def create_app(
                 "gate_results": detail["gate_results"],
                 "model_routes": detail["model_routes"],
                 "manifest": detail["manifest"],
+                "service_version": detail.get("service_version", "0.8.3"),
+                "attention_summary": detail["attention_summary"],
+                "attention_details": detail["attention_details"],
+                "observation_artifact": {
+                    "available": observation_available,
+                    "url": (
+                        f"/v1/review/tasks/{run_id}/artifacts/atomic_observations"
+                        if observation_available
+                        else None
+                    ),
+                    "count": detail["observation_count"],
+                    "sha256": detail["observation_hash"],
+                    "valid": detail["audit_integrity"].get(
+                        "observation_artifact_valid"
+                    ),
+                },
                 "reviews": detail["reviews"],
                 "audit_integrity": detail["audit_integrity"],
             }
@@ -844,6 +878,22 @@ def _public_report(report: Mapping[str, Any]) -> dict[str, Any]:
 
     sanitized = _sanitize_public_value(report)
     return sanitized if isinstance(sanitized, dict) else {}
+
+
+def _light_attention_issue(item: Mapping[str, Any]) -> dict[str, Any]:
+    hidden = {"kind", "semantic_family", "metric_id", "lineage"}
+    value = {str(key): entry for key, entry in item.items() if str(key) not in hidden}
+    light_evidence_keys = {"source", "page_number", "bbox"}
+    value["evidence"] = [
+        {
+            str(key): entry
+            for key, entry in evidence.items()
+            if str(key) in light_evidence_keys
+        }
+        for evidence in item.get("evidence", ())
+        if isinstance(evidence, Mapping)
+    ]
+    return value
 
 
 def _sanitize_public_value(value: Any, *, key: str | None = None) -> Any:

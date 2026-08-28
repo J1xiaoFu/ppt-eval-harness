@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from ppt_eval import __version__
 from ppt_eval.adapters import LibreOfficeRenderer, PowerPointRenderer
 from ppt_eval.config import default_profile, load_case, load_profile
 from ppt_eval.domain import EvalCase, SceneType
@@ -28,6 +29,11 @@ def _case_from_argument(path: str) -> EvalCase:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ppt-eval", description="Deterministic PPT evaluation harness")
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
+    )
     parser.add_argument("--data-dir", default="var", help="local run/audit/artifact directory")
     commands = parser.add_subparsers(dest="command", required=True)
 

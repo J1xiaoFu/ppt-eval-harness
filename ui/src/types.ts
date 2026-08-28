@@ -14,6 +14,21 @@ export type EvaluationScene =
   | "project_summary"
   | "multimodal";
 export type EvaluationJobStatus = "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+export type ConsensusStatus = "AGREED" | "CONFLICT" | "SINGLE_SOURCE" | "INSUFFICIENT";
+export type AttentionSummaryState =
+  | "ACTIONABLE"
+  | "REVIEW_WITHOUT_LOCALIZED_ISSUE"
+  | "NO_ISSUE"
+  | "UNLOCATED_FAILURE";
+
+export interface AttentionSummary {
+  state: AttentionSummaryState;
+  title: string;
+  description: string;
+  total_count: number;
+  required_count: number;
+  raw_fact_count: number;
+}
 
 export interface EvaluationJob {
   job_id: string;
@@ -31,44 +46,43 @@ export interface EvaluationJob {
 }
 
 export interface EvidenceRef {
-  evidence_id?: string;
   source: "RULE" | "MODEL" | "REDUCER" | "SYSTEM";
-  oracle_id?: string;
-  metric_id?: string;
-  page_number?: number;
-  object_id?: string;
+  page_number: number | null;
   bbox?: [number, number, number, number];
-  kind?: string;
-  message: string;
-  confidence?: number;
-  severity?: Severity;
 }
 
 export interface AttentionIssue {
   issue_id: string;
   priority: AttentionPriority;
-  kind: string;
   title: string;
   summary: string;
   severity: Severity;
   status: "OPEN" | "RESOLVED";
-  metric_id?: string;
+  semantic_code: string;
+  consensus: {
+    status: ConsensusStatus;
+    sources: Array<"RULE" | "MODEL" | "REDUCER" | "SYSTEM">;
+    label: string;
+    supporting_count: number;
+    conflicting_count: number;
+  };
+  rationales: string[];
+  detail_count: number;
   page_numbers: number[];
   evidence: EvidenceRef[];
-  lineage?: Record<string, unknown>;
 }
 
 export interface SlideRef {
   page_number: number;
-  image_url?: string;
-  thumbnail_url?: string;
+  image_url: string | null;
+  thumbnail_url: string | null;
   available: boolean;
 }
 
 export interface TrainingTrack {
   track: "visual" | "layout" | "content" | "full_deck";
   status: "TRAIN" | "REVIEW" | "REJECT";
-  score?: number;
+  score: number | null;
   reason_codes: string[];
 }
 
@@ -78,15 +92,19 @@ export interface ReviewTaskSummary {
   scenario: string;
   decision: Decision;
   coverage: Coverage;
-  score?: number;
+  score: number | null;
   priority: AttentionPriority;
   priority_reason: string;
   issue_count: number;
   page_count: number;
   review_state: ReviewState;
-  created_at?: string;
-  profile_id?: string;
-  profile_version?: string;
+  created_at: string | null;
+  profile_id: string | null;
+  profile_version: string | null;
+  training_tracks: TrainingTrack[];
+  latest_review: ReviewEvent | null;
+  triage_policy_version: string;
+  attention_summary: AttentionSummary;
 }
 
 export interface ReviewEvent {
@@ -94,8 +112,16 @@ export interface ReviewEvent {
   run_id: string;
   reviewer_id: string;
   verdict: ReviewVerdict | "APPROVE" | "REJECT";
-  note?: string;
+  note?: string | null;
   created_at: string;
+  client_request_id?: string | null;
+  target_decision?: Decision | null;
+  machine_decision?: Decision | null;
+  machine_coverage?: Coverage | null;
+  report_hash?: string | null;
+  observation_hash?: string | null;
+  triage_policy_version?: string | null;
+  track_resolutions?: Record<string, "TRAIN" | "REVIEW" | "REJECT">;
   issue_resolutions?: Array<{
     issue_id: string;
     resolution: IssueResolution;
@@ -104,13 +130,13 @@ export interface ReviewEvent {
 }
 
 export interface ReviewTaskDetail extends ReviewTaskSummary {
-  triage_policy_version: string;
-  report_hash?: string;
-  observation_hash?: string;
+  service_version: string;
+  report_hash: string | null;
+  observation_hash: string | null;
   review_reasons: string[];
   issues: AttentionIssue[];
   slides: SlideRef[];
-  inputs?: Array<{
+  inputs: Array<{
     role: string;
     index: number;
     original_name: string;
@@ -120,26 +146,50 @@ export interface ReviewTaskDetail extends ReviewTaskSummary {
     available: boolean;
     download_url?: string | null;
   }>;
-  training_tracks: TrainingTrack[];
   audit_url: string;
   artifacts: {
+    report: ArtifactAvailability;
+    atomic_observations: ArtifactAvailability;
+    source_pptx: ArtifactAvailability;
+    slide_render_manifest: ArtifactAvailability;
     report_url: string;
-    observations_url?: string;
-    source_pptx_url?: string;
-    render_manifest_url?: string;
+    observations_url: string | null;
+    source_pptx_url: string | null;
+    render_manifest_url: string | null;
   };
   reviews: ReviewEvent[];
-  audit_integrity?: { chain_valid: boolean };
+  audit_integrity: {
+    chain_valid: boolean;
+    observation_artifact_valid?: boolean | null;
+  };
+}
+
+export interface ArtifactAvailability {
+  available: boolean;
+  sha256?: string | null;
 }
 
 export interface FullAuditPayload {
   run_id: string;
+  service_version: string;
+  attention_summary: AttentionSummary;
   results: Array<Record<string, unknown>>;
   gate_results: Array<Record<string, unknown>>;
   model_routes: Array<Record<string, unknown>>;
-  manifest?: Record<string, unknown>;
+  attention_details: Array<Record<string, unknown>>;
+  observation_artifact: {
+    available: boolean;
+    url: string | null;
+    count: number;
+    sha256: string | null;
+    valid: boolean | null;
+  };
+  manifest: Record<string, unknown>;
   reviews: ReviewEvent[];
-  audit_integrity?: { chain_valid: boolean; observation_artifact_valid?: boolean };
+  audit_integrity: {
+    chain_valid: boolean;
+    observation_artifact_valid?: boolean | null;
+  };
 }
 
 export interface ReviewQueueResponse {

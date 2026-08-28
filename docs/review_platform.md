@@ -2,6 +2,10 @@
 
 ## 产品边界
 
+当前审计平台属于 PPT Eval Harness 产品发布 `0.8.4`，但它消费的默认评测 Profile 仍为
+`8.3` / `PRE_RESEARCH`，持久化 EvalReport/Audit schema 仍为 `1.0`，HTTP 命名空间仍为 `/v1`。
+产品版本只表达软件能力发布，不得被当作 Profile 或报告 schema 版本。
+
 审计平台是数据闭环的操作面，不是指标研究报告。Slides-Align 人评排名、Spearman、
 pairwise、历史 Profile 对比等研发协议已迁入 `archive/v8.3-pre-release`，不得进入生产队列、
 优先级或人工结论。
@@ -43,9 +47,10 @@ observation hash、triage policy 版本和问题级判断。
 桌面工作台采用三栏结构：
 
 1. 左侧队列：P0–P3、case/run、机器 Decision、Coverage、首要疑点、疑点数和审计状态；
-2. 中间幻灯片：当前页、风险页 filmstrip、bbox overlay、规则/VLM 原始文字证据；
-3. 右侧 Attention：按 primary owner、metric、page 聚合后的问题，以及
-   `CONFIRMED / FALSE_POSITIVE / INSUFFICIENT_EVIDENCE` 判断；
+2. 中间幻灯片：当前页、关联页 filmstrip、bbox overlay 和当前语义判断；
+3. 右侧 Attention：最多 8 个 Composite/多模态语义问题，以中文标题、证据共识、
+   聚焦页和折叠判断依据呈现，并接受 `CONFIRMED / FALSE_POSITIVE /
+   INSUFFICIENT_EVIDENCE` 判断；
 4. 底部 Review Composer：确认系统、覆盖结论、请求补证和不可变提交；
 5. 按需抽屉：完整 Matrix、Gate/Reducer lineage、模型路由、Manifest、制品和人审历史。
 
@@ -60,18 +65,22 @@ PASS 不会从系统中消失。“审计队列”默认隐藏无疑点 P3 PASS�
 
 ## 优先级
 
-`audit-attention@1.0.0` 不读取任何 GT 或人类标签。当前顺序为：
+`audit-attention@0.8.4` 不读取任何 GT 或人类标签。主 Attention 首先按以下信号形成
+语义候选，再合并到 8 个稳定质量族：
 
 ```text
-Coverage 非 FULL / Harness ERROR / 未解决 required metric
-→ 已确认或未解决硬门
-→ 未恢复 Provider 错误
-→ 规则与模型冲突
-→ CRITICAL / MAJOR 原子证据
-→ 非 TRAIN 训练轨与主动 PASS 抽查
+Harness ERROR / 未解决 required metric / 未恢复 Provider 错误
+→ 已经同页 VLM 确认或仍有冲突的硬门候选
+→ 规则与模型的同构念冲突
+→ VLM MAJOR/CRITICAL 语义缺陷与低于关注线的 Composite/Reducer
 ```
 
-同级只使用审计状态、系统优先级、创建时间和 run ID，禁止按 human rank 或模型分数优化队列。
+原子规则不直接生成主卡；已恢复的 Provider 尝试也只留在完整审计。页面布局与
+文字可读性等同类问题合并后，主区仅展示语义标题、共识、聚焦页和最多三条判断依据。
+原始 metric/Oracle/observation ID、Gate、Reducer 和全量 Observation 在“完整审计事实”中保留。
+
+Coverage 非 FULL 会提升队列优先级，但不会凭空生成一张局部问题卡。同级只使用审计状态、
+系统优先级、创建时间和 run ID，禁止按 human rank 或模型分数优化队列。
 
 ## 制品与安全
 

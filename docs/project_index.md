@@ -3,6 +3,7 @@
 ## 从这里开始
 
 - [项目 README](../README.md)：安装、启动、提交 PPT、CLI、测试与当前边界。
+- [产品变更记录](../CHANGELOG.md)：产品发布版本与 Profile/schema 兼容边界。
 - [v8 原子评测方法](v8_atomic_evaluation_method.md)：Observation、Reducer、评分和训练准入。
 - [服务端人工审计平台](review_platform.md)：浏览器上传、Job 进度、AttentionIssue 和 ReviewEvent 闭环。
 - [OpenAPI](openapi.yaml)：multipart 评测、进程内 Job、精简审计 DTO 与人审写入合同。

@@ -114,9 +114,12 @@ def test_attention_projection_groups_gate_and_never_uses_benchmark_rank() -> Non
     assert first["policy_version"] == TRIAGE_POLICY_VERSION
     assert len(first["items"]) == 1
     issue = first["items"][0]
-    assert issue["kind"] == "HARD_GATE_CONFIRMED"
+    assert issue["semantic_family"] == "VISUAL_LAYOUT_READABILITY"
+    assert issue["consensus"]["status"] == "AGREED"
     assert issue["page_numbers"] == [3]
-    assert issue["lineage"]["forced_rule_pages"] == [3]
+    assert first["attention_details"][0]["raw_candidates"][0]["lineage"][
+        "forced_rule_pages"
+    ] == [3]
     assert issue["issue_id"].startswith("att-")
     assert "human_rank" not in json.dumps(first)
 
@@ -189,6 +192,9 @@ def test_review_api_serves_queue_slides_artifacts_and_idempotent_history(
         )
     )
     client = TestClient(create_app(runtime))
+    assert report["service_version"] == "0.8.4"
+    assert client.app.version == "0.8.4"
+    assert client.get("/healthz").json()["service_version"] == "0.8.4"
 
     queue = client.get("/v1/review/tasks?view=all").json()
     assert queue["total"] == 1
@@ -203,9 +209,28 @@ def test_review_api_serves_queue_slides_artifacts_and_idempotent_history(
     assert "human_rank" not in json.dumps(detail)
     assert '"uri"' not in json.dumps(detail)
     assert "results" not in detail
+    assert "attention_details" not in detail
+    assert "observation_count" not in detail
+    assert detail["attention_summary"]["total_count"] == len(detail["issues"])
+    for item in detail["issues"]:
+        assert "lineage" not in item and "metric_id" not in item
+        assert all(
+            set(evidence).issubset({"source", "page_number", "bbox"})
+            for evidence in item["evidence"]
+        )
     full_audit = client.get(detail["audit_url"])
     assert full_audit.status_code == 200
-    assert full_audit.json()["results"]
+    full_payload = full_audit.json()
+    assert full_payload["results"]
+    assert full_payload["attention_details"]
+    assert full_payload["attention_summary"]["raw_fact_count"] >= 0
+    assert full_payload["observation_artifact"]["url"].endswith(
+        "/artifacts/atomic_observations"
+    )
+    assert full_payload["observation_artifact"]["available"] is True
+    assert full_payload["observation_artifact"]["count"] > 0
+    assert len(full_payload["observation_artifact"]["sha256"]) == 64
+    assert full_payload["observation_artifact"]["valid"] is True
 
     slide = client.get(detail["slides"][0]["image_url"])
     assert slide.status_code == 200
@@ -215,6 +240,13 @@ def test_review_api_serves_queue_slides_artifacts_and_idempotent_history(
     assert source.content == deck.read_bytes()
     observations = client.get(detail["artifacts"]["observations_url"])
     assert observations.status_code == 200
+    observation_payload = observations.json()
+    assert len(observation_payload) == full_payload["observation_artifact"]["count"]
+    assert (
+        detail["artifacts"]["atomic_observations"]["sha256"]
+        == full_payload["observation_artifact"]["sha256"]
+        == detail["observation_hash"]
+    )
     render_manifest = client.get(detail["artifacts"]["render_manifest_url"])
     assert render_manifest.status_code == 200
     render_payload = render_manifest.json()
@@ -249,6 +281,7 @@ def test_review_api_serves_queue_slides_artifacts_and_idempotent_history(
         "run_id": report["run_id"],
         "reviewer_id": "reviewer-a",
         "verdict": "REQUEST_MORE_EVIDENCE",
+        "target_decision": "PASS",
         "note": "Need a second render for the disputed pages.",
         "issue_resolutions": [],
         "track_resolutions": {},
@@ -269,3 +302,130 @@ def test_review_api_serves_queue_slides_artifacts_and_idempotent_history(
     assert len(history) == 1
     refreshed = client.get(f"/v1/review/tasks/{report['run_id']}").json()
     assert refreshed["review_state"] == "NEEDS_EVIDENCE"
+
+
+def test_legacy_review_idempotency_precedes_current_issue_validation(
+    tmp_path: Path,
+) -> None:
+    fastapi = pytest.importorskip("fastapi")
+    del fastapi
+    from fastapi.testclient import TestClient
+
+    runtime = LocalEvaluationRuntime(tmp_path / "var")
+    run_id = "run-legacy-idempotent-review"
+    runtime.repository.save(
+        {
+            "run_id": run_id,
+            "case_id": "legacy-idempotent-review",
+            "scenario": "ready_made",
+            "decision": "REVIEW",
+            "coverage": "DEGRADED",
+            "results": [],
+            "score_breakdown": {"unresolved_metric_ids": []},
+        }
+    )
+    old_issue_id = "att-from-policy-1-0-0"
+    stored = runtime.repository.add_review(
+        {
+            "run_id": run_id,
+            "reviewer_id": "reviewer-legacy",
+            "verdict": "REQUEST_MORE_EVIDENCE",
+            "target_decision": None,
+            "note": "Keep the old request idempotent.",
+            "client_request_id": "legacy-review-request",
+            "issue_resolutions": [
+                {
+                    "issue_id": old_issue_id,
+                    "resolution": "INSUFFICIENT_EVIDENCE",
+                    "note": "Old projection id.",
+                }
+            ],
+            "track_resolutions": {},
+            "machine_decision": "REVIEW",
+            "machine_coverage": "DEGRADED",
+            "report_hash": None,
+            "observation_hash": None,
+            "triage_policy_version": "audit-attention@1.0.0",
+        }
+    )
+    client = TestClient(create_app(runtime))
+    payload = {
+        "run_id": run_id,
+        "reviewer_id": "reviewer-legacy",
+        "verdict": "REQUEST_MORE_EVIDENCE",
+        "target_decision": "PASS",
+        "note": "Keep the old request idempotent.",
+        "issue_resolutions": [
+            {
+                "issue_id": old_issue_id,
+                "resolution": "INSUFFICIENT_EVIDENCE",
+                "note": "Old projection id.",
+            }
+        ],
+        "track_resolutions": {},
+    }
+    headers = {"Idempotency-Key": "legacy-review-request"}
+
+    retry = client.post("/v1/reviews", json=payload, headers=headers)
+    conflict = client.post(
+        "/v1/reviews",
+        json={**payload, "note": "Changed content."},
+        headers=headers,
+    )
+
+    assert retry.status_code == 200
+    assert retry.json()["review_id"] == stored["review_id"]
+    assert retry.json()["triage_policy_version"] == "audit-attention@1.0.0"
+    assert conflict.status_code == 409
+
+
+def test_full_audit_distinguishes_missing_and_corrupt_observation_artifacts(
+    tmp_path: Path,
+) -> None:
+    fastapi = pytest.importorskip("fastapi")
+    del fastapi
+    from fastapi.testclient import TestClient
+
+    runtime = LocalEvaluationRuntime(tmp_path / "var")
+    missing_run = "run-missing-observations"
+    runtime.repository.save(
+        {
+            "run_id": missing_run,
+            "case_id": "missing-observations",
+            "scenario": "ready_made",
+            "decision": "PASS",
+            "coverage": "FULL",
+            "results": [],
+            "score_breakdown": {"unresolved_metric_ids": []},
+        }
+    )
+    deck = build_pptx(tmp_path / "corrupt-observations.pptx")
+    corrupt_report = runtime.evaluate(
+        EvalCase(
+            case_id="corrupt-observations",
+            scene=SceneType.READY_MADE,
+            pptx_path=str(deck),
+        )
+    )
+    observation_path = Path(corrupt_report["observation_artifact"]["uri"])
+    observation_path.write_text("{not-json", encoding="utf-8")
+    client = TestClient(create_app(runtime))
+
+    missing = client.get(f"/v1/review/tasks/{missing_run}/audit").json()[
+        "observation_artifact"
+    ]
+    corrupt = client.get(
+        f"/v1/review/tasks/{corrupt_report['run_id']}/audit"
+    ).json()["observation_artifact"]
+
+    assert missing == {
+        "available": False,
+        "url": None,
+        "count": 0,
+        "sha256": None,
+        "valid": None,
+    }
+    assert corrupt["available"] is False
+    assert corrupt["url"] is None
+    assert corrupt["count"] == 0
+    assert corrupt["valid"] is False
