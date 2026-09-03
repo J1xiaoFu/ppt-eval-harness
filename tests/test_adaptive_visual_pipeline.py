@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import replace
 from pathlib import Path
 
@@ -30,6 +31,48 @@ VISUAL_CONTRACT_ROLES = {
     "visual_audit_rounds",
     "visual_coverage_certificate",
 }
+
+
+class _SlowScoutProvider(GroundedFakeProvider):
+    def audit(self, request: ModelAuditRequest):
+        if request.metric_id == "visual_atlas_scout_routing":
+            time.sleep(0.25)
+        return super().audit(request)
+
+
+def test_scout_internal_timeout_still_persists_complete_failure_contracts(
+    tmp_path: Path,
+) -> None:
+    deck, images = _deck_and_images(tmp_path, 3)
+    provider = _SlowScoutProvider()
+    profile = replace(
+        default_profile(SceneType.READY_MADE),
+        oracle_timeout_seconds=0.15,
+    )
+    runtime = LocalEvaluationRuntime(tmp_path / "timeout-var", vlm_provider=provider)
+
+    report = runtime.evaluate(
+        EvalCase(
+            case_id="scout-internal-timeout",
+            scene=SceneType.READY_MADE,
+            pptx_path=str(deck),
+        ),
+        profile,
+        artifacts={"slide_images": images},
+    )
+
+    scout = next(
+        item
+        for item in report["results"]
+        if item["metric_id"] == "visual_atlas_scout_routing"
+    )
+    assert scout["execution_status"] == "SUCCESS"
+    assert scout["metric_status"] == "NA"
+    assert scout["metadata"]["reason_code"] == "ATLAS_SCOUT_INTERNAL_TIMEOUT"
+    assert report["decision"] == "REVIEW"
+    assert report["visual_audit_summary"]["coverage_complete"] is False
+    assert set(report["visual_audit_artifacts"]) == VISUAL_CONTRACT_ROLES
+    assert set(report["manifest"]["artifact_hashes"]) >= VISUAL_CONTRACT_ROLES
 
 
 def test_visual_usage_never_turns_partial_telemetry_into_zero_tokens() -> None:

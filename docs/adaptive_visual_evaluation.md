@@ -91,6 +91,9 @@ VLM 必须依据已上传像素独立确认或否定，不能因为规则提出�
 Profile 8.4 使用线程安全的全局请求账本。每次 Provider 调用在发出 HTTP 前按最大重试
 上界原子预留，返回后只结算可证明的实际次数；超时后台线程的预留会一直保留到它真正
 返回。因此 `settled + in-flight upper bound` 永远不超过 Profile 的 64 次硬上限。
+Atlas Scout 在外层 600 秒原子节点超时前使用独立持久化截止时间；即使同步 Provider
+仍未返回，也会先写入 hash-bound 的失败 Scout，让 Selection 与 Coverage 合法收敛为
+REVIEW，而不是留下缺失审计合同。
 
 ## 5. 计分边界与审计链
 

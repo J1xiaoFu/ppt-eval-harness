@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import hashlib
+import queue
+import threading
 from dataclasses import replace
 from pathlib import Path
-from typing import Any, Mapping, MutableMapping, Sequence
+from typing import Any, Callable, Mapping, MutableMapping, Sequence, TypeVar
 
 from ppt_eval.adapters import ModelAuditProvider, PptxAdapter
 from ppt_eval.application.model_request_budget import ModelRequestBudgetLedger
@@ -50,6 +52,7 @@ VISUAL_ASSET_SEMANTIC_RISK_METRIC_ID = "visual_asset_semantic_risk"
 _VISUAL_CONTRACT_MEMO_KEY = "ppt_eval.visual_contracts"
 _VISUAL_INDEX_MEMO_KEY = "ppt_eval.visual_page_index"
 _ATLAS_SCOUT_MEMO_KEY = "ppt_eval.atlas_scout_result"
+_T = TypeVar("_T")
 
 
 def _contracts(context: EvaluationContext) -> MutableMapping[str, Any]:
@@ -250,21 +253,37 @@ class AtlasScoutOracle:
             self.fallback_provider,
             atlas_builder=AtlasBuilder(output_value),
         )
+        internal_cancel = threading.Event()
         try:
             ledger_value = context.memo.get("ppt_eval.model_request_budget")
-            scout = runner.run(
-                images,
-                case_id=context.case.case_id,
-                scene=context.case.scene.value,
-                deck_sha256=index.deck_sha256,
-                rendered_page_set_sha256=index.rendered_page_set_sha256,
-                cancelled=lambda: _evaluation_cancelled(context),
-                maximum_model_requests=maximum_model_requests,
-                request_budget_ledger=(
-                    ledger_value
-                    if isinstance(ledger_value, ModelRequestBudgetLedger)
-                    else None
+            scout = _call_before_scheduler_timeout(
+                lambda: runner.run(
+                    images,
+                    case_id=context.case.case_id,
+                    scene=context.case.scene.value,
+                    deck_sha256=index.deck_sha256,
+                    rendered_page_set_sha256=index.rendered_page_set_sha256,
+                    cancelled=lambda: (
+                        internal_cancel.is_set() or _evaluation_cancelled(context)
+                    ),
+                    maximum_model_requests=maximum_model_requests,
+                    request_budget_ledger=(
+                        ledger_value
+                        if isinstance(ledger_value, ModelRequestBudgetLedger)
+                        else None
+                    ),
                 ),
+                timeout_seconds=max(
+                    0.001,
+                    float(context.profile.oracle_timeout_seconds) * 0.90,
+                ),
+                cancel_event=internal_cancel,
+            )
+        except TimeoutError:
+            return self._unavailable(
+                context,
+                total_pages=len(index.pages),
+                code="ATLAS_SCOUT_INTERNAL_TIMEOUT",
             )
         except (OSError, TypeError, ValueError):
             return self._unavailable(
@@ -397,6 +416,42 @@ class AtlasScoutOracle:
                 "coverage_complete": False,
             },
         )
+
+
+def _call_before_scheduler_timeout(
+    call: Callable[[], _T],
+    *,
+    timeout_seconds: float,
+    cancel_event: threading.Event,
+) -> _T:
+    """Return before the outer DAG timeout so a failure contract can persist.
+
+    Provider transports are synchronous and cannot be forcefully interrupted.
+    Their global request reservation therefore remains charged while this
+    daemon finishes, but the Oracle can still persist a hash-bound failed Scout
+    and let deterministic Selection/Coverage converge to REVIEW.
+    """
+
+    completed: queue.Queue[tuple[bool, object]] = queue.Queue(maxsize=1)
+
+    def worker() -> None:
+        try:
+            completed.put((True, call()))
+        except BaseException as exc:  # pragma: no cover - re-raised below
+            completed.put((False, exc))
+
+    thread = threading.Thread(target=worker, daemon=True)
+    thread.start()
+    thread.join(timeout_seconds)
+    if thread.is_alive():
+        cancel_event.set()
+        raise TimeoutError("Atlas Scout exceeded its internal persistence deadline")
+    succeeded, payload = completed.get_nowait()
+    if not succeeded:
+        if isinstance(payload, BaseException):
+            raise payload
+        raise RuntimeError("Atlas Scout worker failed without an exception")
+    return payload  # type: ignore[return-value]
 
 
 class VisualSelectionOracle:

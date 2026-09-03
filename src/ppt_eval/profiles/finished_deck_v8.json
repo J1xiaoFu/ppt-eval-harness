@@ -12,7 +12,7 @@
   "scene_multiplier_metric_ids": [],
   "pass_threshold": 80,
   "review_threshold": 60,
-  "oracle_timeout_seconds": 300,
+  "oracle_timeout_seconds": 600,
   "cost_budget": 1.0,
   "metric_review_thresholds": {"content_structure": 0.60},
   "base_weights": {
