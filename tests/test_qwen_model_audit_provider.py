@@ -4,6 +4,7 @@ import hashlib
 import json
 import threading
 import urllib.error
+from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from typing import Any, Callable, Mapping
@@ -183,6 +184,36 @@ def test_fake_transport_builds_non_streaming_structured_llm_request() -> None:
     serialized = json.dumps(payload, ensure_ascii=False)
     assert "private chain of thought" not in serialized
     assert "fake-api-key" not in repr(provider)
+
+
+def test_scout_uses_bounded_low_latency_qwen_json_mode() -> None:
+    captured: dict[str, Any] = {}
+
+    def fake_urlopen(http_request, *, timeout):
+        del timeout
+        captured["body"] = json.loads(http_request.data.decode("utf-8"))
+        return _FakeHttpResponse(_vendor_response())
+
+    request = replace(
+        _request(),
+        audit_id="atlas-scout-fixture",
+        context={
+            "input_trust": "UNTRUSTED_RENDERED_ATLAS",
+            "model_inference_profile": "SCOUT_LOW_LATENCY_JSON_V1",
+        },
+    )
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+    )
+
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        provider.audit(request)
+
+    assert captured["body"]["enable_thinking"] is False
+    assert captured["body"]["max_tokens"] == 8192
+    assert captured["body"]["temperature"] == 0
 
 
 def test_qwen_context_cache_wire_shape_keeps_images_in_a_stable_prefix(tmp_path) -> None:

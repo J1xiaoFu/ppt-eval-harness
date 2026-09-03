@@ -42,8 +42,13 @@ python scripts/benchmarks/evaluate_slides_align_profile84.py `
   --workers 3 --resume
 ```
 
-Use `--verify-only` before a paid run. Resume is bound to the dataset hashes,
+Use `--verify-only` before a paid run. A live run requires a clean Git checkout.
+Resume is bound to the dataset hashes,
 Profile fingerprint, evaluation Git SHA, persisted report hash, visual contract
 hashes, and audit chain. Rank correlations and Composite variance are diagnostic
 only: they are never sent to Oracles, used to fit Profile 8.4, or shown in the
 production review queue.
+
+“模型合法响应率”按一次逻辑审计在 Qwen/GLM 回退后的最终结构化合同统计；Provider
+内部 HTTP 重试次数单独保留在 `visual_usage.request_count`，不会把已成功恢复的传输
+重试重复算成多个最终响应。

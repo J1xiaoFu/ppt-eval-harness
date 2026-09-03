@@ -24,6 +24,8 @@
   后台请求与后续 DAG 节点共同突破 Profile 的 64 次硬上限。
 - Atlas Scout 在外层节点超时前落盘失败合同；Profile 8.4 的单节点上限设为 600 秒，
   慢响应仍可退化为可追溯 REVIEW，不再造成 Selection/Coverage artifact 缺失。
+- 修正 Atlas evidence 必填字段并使用低延迟 JSON 推理；22 份固定真实切片的独立
+  Scout 预检达到 22/22 合法，高清 criterion 的深度推理配置保持不变。
 - 新增只路由的保守对象树—像素矛盾代理，并将规则 object/bbox/defect 作为不可信假设
   交给同构念 VLM 独立确认；规则本身仍不能直接作硬门最终决定。
 - 新增占位图、图库水印、图像语义错配和图内文字不可读路由；路由 Observation

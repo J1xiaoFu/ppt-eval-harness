@@ -164,6 +164,48 @@ def test_zhipu_provider_uses_documented_multimodal_request(tmp_path) -> None:
     assert "bigmodel-test-secret" not in repr(provider)
 
 
+def test_zhipu_scout_keeps_thinking_but_uses_low_reasoning_effort(
+    tmp_path,
+) -> None:
+    image_path = tmp_path / "slide.png"
+    image_path.write_bytes(PNG_1X1)
+    image = ModelImageInput(
+        page_number=1,
+        uri=str(image_path),
+        media_type="image/png",
+        sha256=hashlib.sha256(PNG_1X1).hexdigest(),
+    )
+    captured: dict[str, Any] = {}
+
+    def fake_urlopen(http_request, *, timeout):
+        del timeout
+        captured["body"] = json.loads(http_request.data.decode("utf-8"))
+        return _FakeHttpResponse(_vendor_response())
+
+    request = replace(
+        _request(image),
+        audit_id="atlas-scout-fixture",
+        context={
+            "input_trust": "UNTRUSTED_RENDERED_ATLAS",
+            "model_inference_profile": "SCOUT_LOW_LATENCY_JSON_V1",
+        },
+    )
+    provider = ZhipuOpenAICompatibleProvider(
+        "bigmodel-test-secret",
+        "https://open.bigmodel.cn/api/paas/v4/",
+    )
+
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        provider.audit(request)
+
+    assert captured["body"]["thinking"] == {
+        "type": "enabled",
+        "clear_thinking": False,
+    }
+    assert captured["body"]["reasoning_effort"] == "low"
+    assert captured["body"]["max_tokens"] == 8192
+
+
 def test_zhipu_provider_translates_safe_vendor_error(tmp_path) -> None:
     provider = ZhipuOpenAICompatibleProvider(
         "bigmodel-test-secret",

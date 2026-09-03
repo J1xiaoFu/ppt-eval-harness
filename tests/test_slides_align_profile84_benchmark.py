@@ -440,6 +440,23 @@ def test_report_legality_binds_evaluation_git_sha(tmp_path: Path) -> None:
     assert "manifest_git_sha_mismatch" in mismatched["reasons"]
 
 
+def test_live_benchmark_requires_clean_git_identity() -> None:
+    original_run = benchmark.subprocess.run
+
+    class Completed:
+        returncode = 0
+        stdout = ""
+
+    try:
+        benchmark.subprocess.run = lambda *_args, **_kwargs: Completed()
+        benchmark.require_clean_evaluation_checkout()
+        Completed.stdout = " M tracked.py\n"
+        with pytest.raises(RuntimeError, match="clean evaluation checkout"):
+            benchmark.require_clean_evaluation_checkout()
+    finally:
+        benchmark.subprocess.run = original_run
+
+
 def test_visual_usage_and_response_legality_come_from_verified_contracts(
     tmp_path: Path,
 ) -> None:
@@ -455,8 +472,13 @@ def test_visual_usage_and_response_legality_come_from_verified_contracts(
         "scout",
         {
             "audit_metadata": {
+                "batch_count": 1,
                 "provider_attempt_count": 2,
                 "valid_response_count": 1,
+                "attempts": [
+                    {"batch_index": 1, "outcome": "transport_error"},
+                    {"batch_index": 1, "outcome": "valid"},
+                ],
             }
         },
     )
@@ -513,10 +535,23 @@ def test_visual_usage_and_response_legality_come_from_verified_contracts(
             "visual_coverage_certificate": certificate,
         },
         "results": [
-            {"metadata": {"routing_attempts": [successful_attempt, failed_attempt]}},
+            {
+                "execution_status": "SUCCESS",
+                "metric_status": "SCORED",
+                "metadata": {"routing_attempts": [successful_attempt, failed_attempt]},
+            },
             # The initial/final pipeline may expose the same attempt twice.  It
             # must not inflate either the numerator or denominator.
-            {"metadata": {"routing_attempts": [successful_attempt]}},
+            {
+                "execution_status": "SUCCESS",
+                "metric_status": "SCORED",
+                "metadata": {"routing_attempts": [successful_attempt]},
+            },
+            {
+                "execution_status": "SUCCESS",
+                "metric_status": "NA",
+                "metadata": {"routing_attempts": []},
+            },
         ],
     }
 
@@ -527,9 +562,11 @@ def test_visual_usage_and_response_legality_come_from_verified_contracts(
     assert usage["request_bytes"] == 4096
     assert usage["reported_cost"] == 0.12
     assert legality["valid_response_count"] == 2
-    assert legality["response_attempt_count"] == 5
-    assert legality["legal_response_rate"] == 0.4
-    assert legality["meets_threshold"] is False
+    assert legality["response_attempt_count"] == 2
+    assert legality["logical_audit_count"] == 2
+    assert legality["legal_response_rate"] == 1.0
+    assert legality["meets_threshold"] is True
+    assert legality["counting_contract"] == "POST_FALLBACK_LOGICAL_AUDIT_CONTRACT_V2"
 
 
 def test_runtime_integrity_requires_one_hash_linked_completed_event(
@@ -643,7 +680,10 @@ def _summary_case(
         "report_relative_path": f"runtime/sample_topic/{case_id}/runs/run-{case_id}.json",
         "audit_integrity": {"valid": True},
         "report_legality": {"valid": True, "reasons": []},
-        "visual_audit_summary": {"usage_complete": True},
+        "visual_audit_summary": {
+            "usage_complete": True,
+            "coverage_complete": coverage == "FULL",
+        },
         "visual_usage": {
             "usage_complete": True,
             "cost_known": True,
@@ -702,6 +742,23 @@ def test_topic_statistics_are_within_topic_and_degraded_suppresses_formal() -> N
     )
     assert degraded["rank_gate_reasons"] == [
         "coverage_not_full:sample_topic/b:DEGRADED"
+    ]
+    visual_incomplete_cases = [dict(item) for item in cases]
+    visual_incomplete_cases[0] = {
+        **visual_incomplete_cases[0],
+        "visual_audit_summary": {
+            **visual_incomplete_cases[0]["visual_audit_summary"],
+            "coverage_complete": False,
+        },
+    }
+    visual_incomplete = summarize_topic(
+        "Sample_Topic",
+        "sample_topic",
+        visual_incomplete_cases,
+    )
+    assert visual_incomplete["rank_statistics_eligible"] is False
+    assert "visual_coverage_incomplete:sample_topic/a" in visual_incomplete[
+        "rank_gate_reasons"
     ]
     composite = eligible["exploratory_statistics"]["composite_metrics"][
         "composition_craft"

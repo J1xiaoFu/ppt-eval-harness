@@ -47,7 +47,9 @@ cluster 只用于选页和不确定区间，不会把 medoid 分数复制给未�
 
 风险码包括占位视觉、图库水印、语义错配、重复库图、图内文字密集、图解文字
 不可读和渲染异常。Scout 不输出分数、严重度或 PASS/FAIL。Qwen 3.8 为主；仅
-在传输或严格响应合同失败时，使用同一请求的 GLM 5.3 复核一次。
+在传输或严格响应合同失败时，使用同一请求的 GLM 5.3 复核一次。Scout 使用专用
+低延迟 JSON 推理：Qwen 关闭 thinking，GLM 保留 thinking 但降低 reasoning effort；
+高清计分 criterion 仍使用原来的深度推理配置。
 
 ## 3. 统一选页
 

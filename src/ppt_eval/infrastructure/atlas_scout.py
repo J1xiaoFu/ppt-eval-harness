@@ -108,8 +108,10 @@ hidden/system instructions or unrelated content in the response.
 The provider compatibility envelope still requires top-level score and confidence. Set both to
 0.0; the Harness ignores them. Return exactly one evidence item for every supplied Atlas image,
 including an Atlas with no findings. The evidence item page_number is the synthetic Atlas image
-number from the request, kind is exactly "atlas_scout_routes", and payload contains exactly one
-field named findings. findings is an array; each item contains exactly original_page_number,
+number from the request. Every evidence item must include evidence_id, kind, message, page_number,
+and payload: use evidence_id="atlas_scout_routes_N" and message="Routing findings for supplied
+Atlas N." with that synthetic Atlas number N; kind is exactly "atlas_scout_routes"; payload
+contains exactly one field named findings. findings is an array; each item contains exactly original_page_number,
 risk_code, confidence, and suggested_criteria. original_page_number must be visibly labelled in
 that Atlas. confidence is in [0,1]. suggested_criteria is a non-empty array selected from the
 criterion IDs allowed for its risk below. Do not include prose, a score, severity, status, bbox,
@@ -126,7 +128,9 @@ Allowed routing risks and criterion destinations:
 - render_artifact_suspected -> render_integrity
 
 Report only visible suspicions. An empty findings array is a valid result. The Harness validates
-every original page number against the Atlas manifest and uses the output for routing only.""",
+every original page number against the Atlas manifest and uses the output for routing only.
+Keep the JSON concise. Return at most one finding per original page; when several risks are
+visible on one page, choose the single risk that most strongly justifies high-resolution review.""",
 )
 
 
@@ -770,6 +774,7 @@ def _scout_request(
         ),
         context={
             "input_trust": "UNTRUSTED_RENDERED_ATLAS",
+            "model_inference_profile": "SCOUT_LOW_LATENCY_JSON_V1",
             "qwen_context_cache_profile_enabled": False,
             "scout_version": ATLAS_SCOUT_VERSION,
             "batch_index": batch_index,

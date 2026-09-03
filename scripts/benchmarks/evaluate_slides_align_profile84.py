@@ -29,6 +29,7 @@ import math
 import os
 import re
 import shutil
+import subprocess
 import sys
 import uuid
 import zipfile
@@ -50,7 +51,7 @@ from ppt_eval.infrastructure import JsonlAuditLog, git_sha, to_primitive  # noqa
 from ppt_eval.runtime import build_runtime_from_environment  # noqa: E402
 
 BENCHMARK_ID = "slides-align-profile84-live"
-BENCHMARK_VERSION = "1.1.0"
+BENCHMARK_VERSION = "1.2.0"
 CASE_RECORD_SCHEMA_VERSION = "1.0"
 COMPARISON_SCHEMA_VERSION = "1.0"
 EXPECTED_PROFILE_VERSION = "8.4"
@@ -141,6 +142,20 @@ def _stable_hash(value: Any) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
+
+
+def require_clean_evaluation_checkout() -> None:
+    """Reject live benchmark runs whose Git SHA does not describe the code."""
+
+    completed = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=REPOSITORY_ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0 or completed.stdout.strip():
+        raise RuntimeError("live benchmark requires a clean evaluation checkout")
 
 
 def _sha256_file(path: Path) -> str:
@@ -1316,75 +1331,137 @@ def _model_response_legality(
     report: Mapping[str, Any], runtime_root: Path
 ) -> Mapping[str, Any]:
     valid_responses = 0
-    response_attempts = 0
+    logical_audits = 0
     scout = _read_visual_contract(report, runtime_root, "atlas_scout")
     scout_metadata = scout.get("audit_metadata")
     scout_metadata = scout_metadata if isinstance(scout_metadata, Mapping) else {}
-    raw_scout_attempts = scout_metadata.get("provider_attempt_count")
-    raw_scout_valid = scout_metadata.get("valid_response_count")
-    if (
-        isinstance(raw_scout_attempts, int)
-        and not isinstance(raw_scout_attempts, bool)
-        and raw_scout_attempts >= 0
-    ):
-        response_attempts += raw_scout_attempts
-        if (
-            isinstance(raw_scout_valid, int)
-            and not isinstance(raw_scout_valid, bool)
-            and 0 <= raw_scout_valid <= raw_scout_attempts
-        ):
-            valid_responses += raw_scout_valid
+    raw_scout_calls = scout_metadata.get("attempts")
+    scout_calls = (
+        tuple(item for item in raw_scout_calls if isinstance(item, Mapping))
+        if isinstance(raw_scout_calls, Sequence)
+        and not isinstance(raw_scout_calls, (str, bytes))
+        else ()
+    )
+    raw_batch_count = scout_metadata.get("batch_count")
+    batch_count = (
+        int(raw_batch_count)
+        if isinstance(raw_batch_count, int)
+        and not isinstance(raw_batch_count, bool)
+        and raw_batch_count >= 0
+        else len(
+            {
+                item.get("batch_index")
+                for item in scout_calls
+                if isinstance(item.get("batch_index"), int)
+            }
+        )
+    )
+    if batch_count == 0 and scout_metadata.get("provider_attempt_count"):
+        batch_count = 1
+    for batch_index in range(1, batch_count + 1):
+        logical_audits += 1
+        batch_attempts = tuple(
+            item for item in scout_calls if item.get("batch_index") == batch_index
+        )
+        if batch_attempts:
+            valid_responses += int(
+                any(item.get("outcome") == "valid" for item in batch_attempts)
+            )
+        elif scout_metadata.get("valid_response_count"):
+            valid_responses += 1
 
-    seen_attempts: set[str] = set()
+    seen_logical_calls: set[str] = set()
+    adaptive_request_fingerprints: set[str] = set()
+    for result in _report_results(report):
+        metadata = result.get("metadata")
+        metadata = metadata if isinstance(metadata, Mapping) else {}
+        adaptive_calls = metadata.get("adaptive_calls")
+        if isinstance(adaptive_calls, Sequence) and not isinstance(
+            adaptive_calls, (str, bytes)
+        ):
+            for index, raw_call in enumerate(adaptive_calls, start=1):
+                if not isinstance(raw_call, Mapping):
+                    continue
+                call = {str(key): value for key, value in raw_call.items()}
+                fingerprint = str(call.get("request_fingerprint") or "")
+                dedupe_key = fingerprint or _stable_hash(
+                    {
+                        "metric_id": result.get("metric_id"),
+                        "call_index": call.get("call_index", index),
+                        "active_pages": call.get("active_page_numbers"),
+                    }
+                )
+                if dedupe_key in seen_logical_calls:
+                    continue
+                seen_logical_calls.add(dedupe_key)
+                if fingerprint:
+                    adaptive_request_fingerprints.add(fingerprint)
+                logical_audits += 1
+                valid_responses += int(
+                    call.get("metric_status") not in {"ERROR", None}
+                    and bool(call.get("response_fingerprint"))
+                )
+
     for result in _report_results(report):
         metadata = result.get("metadata")
         metadata = metadata if isinstance(metadata, Mapping) else {}
         attempts = metadata.get("routing_attempts")
         if not isinstance(attempts, Sequence) or isinstance(attempts, (str, bytes)):
             continue
-        for raw_attempt in attempts:
-            if not isinstance(raw_attempt, Mapping):
-                continue
-            attempt = {str(key): value for key, value in raw_attempt.items()}
-            fingerprint = str(attempt.get("request_fingerprint") or "")
-            dedupe_key = _stable_hash(
+        normalized_attempts = tuple(
+            {str(key): value for key, value in item.items()}
+            for item in attempts
+            if isinstance(item, Mapping)
+        )
+        if not normalized_attempts:
+            continue
+        fingerprints = tuple(
+            sorted(
                 {
-                    "provider": attempt.get("configured_provider"),
-                    "model": attempt.get("configured_model"),
-                    "tier": attempt.get("tier"),
-                    "request": fingerprint or attempt,
+                    str(item.get("request_fingerprint"))
+                    for item in normalized_attempts
+                    if item.get("request_fingerprint")
                 }
             )
-            if dedupe_key in seen_attempts:
-                continue
-            seen_attempts.add(dedupe_key)
-            raw_count = attempt.get("model_request_count")
-            count = (
-                int(raw_count)
-                if isinstance(raw_count, int)
-                and not isinstance(raw_count, bool)
-                and raw_count >= 0
-                else (1 if attempt.get("configured_provider") else 0)
+        )
+        if fingerprints and set(fingerprints) & adaptive_request_fingerprints:
+            continue
+        dedupe_key = _stable_hash(
+            {
+                "requests": fingerprints,
+                "metric_id": result.get("metric_id"),
+                "oracle_id": result.get("oracle_id"),
+            }
+        )
+        if dedupe_key in seen_logical_calls:
+            continue
+        seen_logical_calls.add(dedupe_key)
+        adaptive_request_fingerprints.update(fingerprints)
+        logical_audits += 1
+        selected = tuple(item for item in normalized_attempts if item.get("selected") is True)
+        candidates = selected or normalized_attempts
+        valid_responses += int(
+            result.get("execution_status") == "SUCCESS"
+            and result.get("metric_status") != "ERROR"
+            and any(
+                item.get("execution_status") == "SUCCESS"
+                and item.get("metric_status") != "ERROR"
+                and not item.get("error_code")
+                and bool(item.get("response_fingerprint"))
+                for item in candidates
             )
-            response_attempts += count
-            legal_final_response = (
-                count > 0
-                and attempt.get("execution_status") == "SUCCESS"
-                and attempt.get("metric_status") != "ERROR"
-                and not attempt.get("error_code")
-                and bool(attempt.get("response_fingerprint"))
-            )
-            valid_responses += 1 if legal_final_response else 0
-    rate = valid_responses / response_attempts if response_attempts else None
+        )
+    rate = valid_responses / logical_audits if logical_audits else None
     return {
         "valid_response_count": valid_responses,
-        "response_attempt_count": response_attempts,
+        "response_attempt_count": logical_audits,
+        "logical_audit_count": logical_audits,
         "legal_response_rate": rate,
         "threshold": _MODEL_RESPONSE_LEGALITY_THRESHOLD,
         "meets_threshold": bool(
             rate is not None and rate >= _MODEL_RESPONSE_LEGALITY_THRESHOLD
         ),
-        "counting_contract": "FINAL_LEGAL_RESPONSE_PER_HTTP_ATTEMPT_V1",
+        "counting_contract": "POST_FALLBACK_LOGICAL_AUDIT_CONTRACT_V2",
     }
 
 
@@ -1676,6 +1753,12 @@ def summarize_topic(
             gate_reasons.append(
                 f"coverage_not_full:{case_key}:{item.get('coverage') or 'UNKNOWN'}"
             )
+        visual_summary = item.get("visual_audit_summary")
+        if (
+            not isinstance(visual_summary, Mapping)
+            or visual_summary.get("coverage_complete") is not True
+        ):
+            gate_reasons.append(f"visual_coverage_incomplete:{case_key}")
         if item.get("decision") == "ERROR":
             gate_reasons.append(f"decision_error:{case_key}")
         integrity = item.get("audit_integrity")
@@ -1689,6 +1772,8 @@ def summarize_topic(
             for item in ordered
             if item.get("status") == "COMPLETED"
             and item.get("coverage") == "FULL"
+            and isinstance(item.get("visual_audit_summary"), Mapping)
+            and item["visual_audit_summary"].get("coverage_complete") is True
             and isinstance(item.get("audit_integrity"), Mapping)
             and item["audit_integrity"].get("valid") is True
         )
@@ -2465,6 +2550,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         if profile.scene != SceneType.READY_MADE:
             raise ValueError("benchmark profile must target the ready_made scene")
+        require_clean_evaluation_checkout()
         payload = run_benchmark(
             suite,
             profile,

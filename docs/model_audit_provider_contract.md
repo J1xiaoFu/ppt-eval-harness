@@ -116,6 +116,11 @@ Qwen 公共前缀。完整配置公网 HTTPS/HMAC 后，Provider 还可引用同
 短期签名 URL；Base64 仍是默认传输。
 URL 复用不自动证明视觉 Token 或账单下降，必须以 `cached_tokens` 和实际费用核验。
 
+Atlas Scout 是非计分路由任务，request context 使用
+`SCOUT_LOW_LATENCY_JSON_V1`：Qwen 关闭 thinking，GLM 仍启用 thinking 但使用低
+reasoning effort，并把输出限制为每页至多一个最高优先风险。该设置不影响独立高清
+criterion 的推理配置或 PromptSpec。
+
 ## 安全
 
 - 凭证只从环境或忽略的本地 key file 读取，不进入 Prompt、日志、异常或 Manifest。
