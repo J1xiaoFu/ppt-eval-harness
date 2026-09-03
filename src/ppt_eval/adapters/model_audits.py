@@ -127,6 +127,14 @@ class ModelAuditRequest:
     context: Mapping[str, Any] = field(default_factory=dict)
     images: tuple[ModelImageInput, ...] = ()
     schema_version: str = MODEL_AUDIT_SCHEMA_VERSION
+    # Process-local coordination primitive.  It is deliberately excluded from
+    # serialization and fingerprints; providers only see the stable request
+    # contract above.
+    request_budget_ledger: Any | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         _require_text(self.audit_id, "audit_id")

@@ -1,9 +1,10 @@
 openapi: 3.1.0
 info:
   title: PPT Eval Harness
-  version: 0.8.7
+  version: 0.9.0
   description: >-
-    Product release 0.8.7 with Evaluation Profile 8.3, persisted schema 1.0 and API namespace /v1.
+    Product release 0.9.0 with default Evaluation Profile 8.4, explicit Profile 8.3 replay,
+    persisted schema 1.0 and API namespace /v1.
     These version axes evolve independently. Every write request has a 202 MiB pre-parser body
     limit. If a browser supplies Origin, only localhost or 127.0.0.1 origins are accepted; trusted
     local CLI clients without Origin remain supported.
@@ -468,7 +469,7 @@ components:
       required: [status, service_version, audit_chain_valid, broken_event]
       properties:
         status: { type: string, enum: [ok, degraded] }
-        service_version: { const: "0.8.7" }
+        service_version: { const: "0.9.0" }
         audit_chain_valid: { type: boolean }
         broken_event: { type: [string, "null"] }
       additionalProperties: false
@@ -636,7 +637,7 @@ components:
       required: [case]
       properties:
         case: { $ref: "#/components/schemas/EvalCase" }
-        profile: { $ref: "#/components/schemas/EvalProfileV83" }
+        profile: { $ref: "#/components/schemas/EvalProfileV8" }
     EvalCase:
       type: object
       required: [case_id, scene, pptx_path]
@@ -651,7 +652,7 @@ components:
         source_materials: { type: array, items: { type: string } }
         assets: { type: array, items: { type: string } }
         metadata: { type: object, additionalProperties: true }
-    EvalProfileV83:
+    EvalProfileV8:
       type: object
       required:
         - profile_id
@@ -667,7 +668,7 @@ components:
         - required: [scenario]
       properties:
         profile_id: { type: string, minLength: 1 }
-        version: { const: "8.3" }
+        version: { type: string, enum: ["8.4", "8.3"] }
         scene: { type: string }
         scenario: { type: string }
         lambda_base: { type: number, minimum: 0, maximum: 1 }
@@ -871,10 +872,18 @@ components:
         atomic_observations: { $ref: "#/components/schemas/ObservationArtifactAvailability" }
         source_pptx: { $ref: "#/components/schemas/ArtifactAvailability" }
         slide_render_manifest: { $ref: "#/components/schemas/ArtifactAvailability" }
+        visual_page_index: { $ref: "#/components/schemas/ArtifactAvailability" }
+        atlas_scout: { $ref: "#/components/schemas/ArtifactAvailability" }
+        visual_selection_plan: { $ref: "#/components/schemas/ArtifactAvailability" }
+        visual_audit_rounds: { $ref: "#/components/schemas/ArtifactAvailability" }
+        visual_coverage_certificate: { $ref: "#/components/schemas/ArtifactAvailability" }
         report_url: { type: string }
         observations_url: { type: [string, "null"] }
         source_pptx_url: { type: [string, "null"] }
         render_manifest_url: { type: [string, "null"] }
+        visual_contract_urls:
+          type: object
+          additionalProperties: { type: [string, "null"] }
       additionalProperties: false
     ArtifactAvailability:
       type: object
@@ -943,6 +952,17 @@ components:
         results: { type: array, items: { type: object, additionalProperties: true } }
         gate_results: { type: array, items: { type: object, additionalProperties: true } }
         model_routes: { type: array, items: { type: object, additionalProperties: true } }
+        visual_audit_summary: { type: object, additionalProperties: true }
+        visual_contract_artifacts:
+          type: object
+          additionalProperties:
+            type: object
+            required: [available]
+            properties:
+              available: { type: boolean }
+              sha256: { type: [string, "null"], pattern: "^[0-9a-f]{64}$" }
+              url: { type: [string, "null"] }
+            additionalProperties: false
         manifest: { type: object, additionalProperties: true }
         reviews: { type: array, items: { $ref: "#/components/schemas/ReviewEvent" } }
         audit_integrity: { $ref: "#/components/schemas/AuditIntegrity" }

@@ -6,6 +6,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from ppt_eval.application import (
+    DagScheduler,
     EvaluationContext,
     MetricDefinition,
     OracleDescriptor,
@@ -22,6 +23,7 @@ from ppt_eval.domain import (
     SceneType,
     ScoreRole,
 )
+from ppt_eval.oracles import build_default_registry
 from ppt_eval.runtime import LocalEvaluationRuntime
 from ppt_eval.scoring import PAGE_QUALITY, ReducerEngine
 from tests.fixtures.pptx_factory import build_pptx
@@ -109,6 +111,21 @@ class _SlowObservationOracle(_ObservationOracle):
 
     def evaluate(self, context: EvaluationContext) -> ObservationBatch:
         time.sleep(0.50)
+        return super().evaluate(context)
+
+
+class _CooperativeLateMutationOracle(_ObservationOracle):
+    oracle_id = "test.v8.cooperative-timeout"
+
+    def __init__(self) -> None:
+        self.cancelled = False
+
+    def evaluate(self, context: EvaluationContext) -> ObservationBatch:
+        event = context.memo["ppt_eval.cancel_event"]
+        while not event.is_set():
+            time.sleep(0.002)
+        self.cancelled = True
+        context.memo["late_timeout_mutation"] = "must-not-merge"
         return super().evaluate(context)
 
 
@@ -221,3 +238,45 @@ def test_scheduler_enforces_profile_timeout_per_atomic_node(tmp_path: Path) -> N
     assert elapsed < 0.25
     assert timeout_result["error_code"] == "ORACLE_EXCEPTION"
     assert "configured timeout" in timeout_result["error_message"]
+
+
+def test_timed_out_worker_cannot_mutate_live_dag_context(tmp_path: Path) -> None:
+    deck = build_pptx(tmp_path / "cooperative-timeout.pptx")
+    oracle = _CooperativeLateMutationOracle()
+    registry = build_default_registry()
+    registry.register(oracle)
+    scheduler = DagScheduler(registry)
+    profile = replace(
+        _profile(),
+        oracle_timeout_seconds=0.01,
+        metadata={
+            "pipeline_nodes": (
+                {
+                    "node_id": "observe:cooperative-timeout",
+                    "oracle_id": oracle.oracle_id,
+                    "kind": "OBSERVE",
+                    "dependencies": ("baseline_ppt_quality",),
+                },
+            )
+        },
+    )
+    context = EvaluationContext(
+        case=EvalCase(
+            case_id="cooperative-timeout",
+            scene=SceneType.READY_MADE,
+            pptx_path=str(deck),
+        ),
+        profile=profile,
+        memo={},
+    )
+
+    outcome = scheduler.execute(ProfileCompiler().compile(profile), context, profile)
+    time.sleep(0.05)
+
+    assert oracle.cancelled is True
+    assert "late_timeout_mutation" not in context.memo
+    timed_out = next(
+        item for item in outcome.results if item.oracle_id == oracle.oracle_id
+    )
+    assert timed_out.error_code == "ORACLE_EXCEPTION"
+    assert "configured timeout" in str(timed_out.error_message)

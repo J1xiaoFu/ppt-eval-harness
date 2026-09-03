@@ -8,8 +8,6 @@ and neither HTTP response bodies nor model reasoning are included in errors.
 from __future__ import annotations
 
 import base64
-import hashlib
-import hmac
 import json
 import math
 import urllib.error
@@ -26,9 +24,14 @@ from ppt_eval.adapters.model_audits import (
     ModelAuditResponse,
     ModelImageInput,
 )
+from ppt_eval.infrastructure.visual_assets import (
+    DEFAULT_VISUAL_ASSET_MAX_PIXELS,
+    VisualAssetAccessError,
+    verified_raster_image,
+)
 
 QWEN_PRIMARY_MODEL = "qwen3.8-flash"
-QWEN_CONTEXT_CACHE_WIRE_VERSION = "1.0.0"
+QWEN_CONTEXT_CACHE_WIRE_VERSION = "2.0.0"
 
 _PROVIDER_NAME = "qwen-dashscope-openai-compatible"
 _QWEN_DIALECT = "qwen"
@@ -161,6 +164,12 @@ class QwenOpenAICompatibleProvider:
     def image_transport_mode(self) -> str:
         return "signed-url" if self._image_url_resolver is not None else "base64"
 
+    @property
+    def maximum_http_attempts_per_audit(self) -> int:
+        """Upper bound used by Profile 8.4's conservative request reservation."""
+
+        return _MAX_STRUCTURED_RESPONSE_ATTEMPTS
+
     def __repr__(self) -> str:
         return (
             f"{type(self).__name__}(model={self._model!r}, "
@@ -177,12 +186,16 @@ class QwenOpenAICompatibleProvider:
                 request,
                 protected_secrets=self._protected_secrets,
             )
+            context_cache_enabled = _request_context_cache_enabled(
+                request,
+                configured=self._context_cache_enabled,
+            )
             body = _request_body(
                 request,
                 model=self._model,
                 dialect=self._dialect,
                 max_image_bytes=self._max_image_bytes,
-                context_cache_enabled=self._context_cache_enabled,
+                context_cache_enabled=context_cache_enabled,
                 image_url_resolver=self._image_url_resolver,
             )
         except QwenModelAuditProviderError:
@@ -366,8 +379,19 @@ def _request_body(
     cached_messages: list[Mapping[str, Any]] | None = None
     if request.modality == ModelAuditModality.VLM:
         if context_cache_enabled:
+            cache_prefix_pages = _cache_prefix_pages(request)
+            common_images = tuple(
+                image
+                for image in request.images
+                if image.page_number in cache_prefix_pages
+            )
+            criterion_images = tuple(
+                image
+                for image in request.images
+                if image.page_number not in cache_prefix_pages
+            )
             visual_prefix: list[Mapping[str, Any]] = []
-            for image in request.images:
+            for image in common_images:
                 visual_prefix.append(
                     {
                         "type": "text",
@@ -399,6 +423,36 @@ def _request_body(
                     **dict(visual_prefix[-1]),
                     "cache_control": {"type": "ephemeral"},
                 }
+            criterion_content: list[Mapping[str, Any]] = [
+                {"type": "text", "text": user_text}
+            ]
+            for image in criterion_images:
+                criterion_content.append(
+                    {
+                        "type": "text",
+                        "text": (
+                            f"CRITERION_RISK_SLIDE_PAGE={image.page_number}. "
+                            "The image immediately following this label is additional "
+                            f"pixel evidence for slide {image.page_number} only."
+                        ),
+                    }
+                )
+                criterion_content.append(
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": _local_image_data_uri(
+                                image, max_image_bytes=max_image_bytes
+                            )
+                            if image_url_resolver is None
+                            else _resolved_image_url(
+                                image,
+                                image_url_resolver,
+                                max_image_bytes=max_image_bytes,
+                            )
+                        },
+                    }
+                )
             cached_messages = [
                 {"role": "system", "content": _CACHED_VISUAL_SYSTEM_POLICY},
                 {"role": "user", "content": visual_prefix},
@@ -411,7 +465,14 @@ def _request_body(
                         "confidence, and evidence."
                     ),
                 },
-                {"role": "user", "content": user_text},
+                {
+                    "role": "user",
+                    "content": (
+                        criterion_content
+                        if criterion_images
+                        else user_text
+                    ),
+                },
             ]
             content: str | list[Mapping[str, Any]] = user_text
         else:
@@ -490,6 +551,43 @@ def _request_body(
         # top-level wire field.  We issue raw HTTP, so no SDK wrapper is used.
         "enable_thinking": True,
     }
+
+
+def _request_context_cache_enabled(
+    request: ModelAuditRequest,
+    *,
+    configured: bool,
+) -> bool:
+    """Apply the Profile gate without changing direct provider compatibility."""
+
+    profile_value = request.context.get("qwen_context_cache_profile_enabled")
+    if profile_value is None:
+        if request.audit_id.startswith("grounded_vlm_"):
+            return False
+        return configured
+    return configured and profile_value is True
+
+
+def _cache_prefix_pages(request: ModelAuditRequest) -> tuple[int, ...]:
+    raw = request.context.get("cache_prefix_pages")
+    if raw is None:
+        return tuple(image.page_number for image in request.images)
+    if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
+        raise ValueError("cache_prefix_pages must be a sequence of page numbers")
+    pages: list[int] = []
+    available = {image.page_number for image in request.images}
+    for value in raw:
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError("cache_prefix_pages contains an invalid page number")
+        if value not in available or value in pages:
+            raise ValueError("cache_prefix_pages must uniquely reference supplied images")
+        pages.append(value)
+    supplied_order = [image.page_number for image in request.images]
+    if pages != supplied_order[: len(pages)]:
+        raise ValueError("cache_prefix_pages must be the stable leading image prefix")
+    if not pages:
+        raise ValueError("cache_prefix_pages must not be empty")
+    return tuple(pages)
 
 
 def _http_request(
@@ -647,31 +745,33 @@ def _validated_local_image_bytes(
     *,
     max_image_bytes: int,
 ) -> tuple[str, bytes]:
-    media_type = _nonblank(image.media_type, "image media_type")
-    if not media_type.startswith("image/"):
-        raise QwenModelAuditProviderError("rendered input has an invalid image media type")
-    path = Path(image.uri)
     try:
-        size = path.stat().st_size
-        if not path.is_file():
-            raise OSError("not a regular file")
-        if size > max_image_bytes:
-            raise QwenModelAuditProviderError(
+        snapshot = verified_raster_image(
+            image.uri,
+            expected_sha256=image.sha256,
+            expected_media_type=image.media_type,
+            max_bytes=max_image_bytes,
+            max_pixels=DEFAULT_VISUAL_ASSET_MAX_PIXELS,
+            require_exact_container=True,
+        )
+    except (OSError, TypeError, ValueError, VisualAssetAccessError) as exc:
+        category = str(exc).casefold()
+        if "size limit" in category:
+            message = (
                 f"rendered image for page {image.page_number} exceeds the size limit"
             )
-        data = path.read_bytes()
-    except QwenModelAuditProviderError:
-        raise
-    except OSError as exc:
+        elif "integrity validation" in category:
+            message = (
+                f"rendered image for page {image.page_number} failed integrity validation"
+            )
+        else:
+            message = (
+                f"rendered image for page {image.page_number} failed safe raster validation"
+            )
         raise QwenModelAuditProviderError(
-            f"rendered image for page {image.page_number} is unavailable"
+            message
         ) from exc
-    actual_digest = hashlib.sha256(data).hexdigest()
-    if not hmac.compare_digest(actual_digest, image.sha256.lower()):
-        raise QwenModelAuditProviderError(
-            f"rendered image for page {image.page_number} failed integrity validation"
-        )
-    return media_type, data
+    return snapshot.media_type, snapshot.data
 
 
 def _resolved_image_url(

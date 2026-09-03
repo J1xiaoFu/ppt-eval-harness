@@ -1,7 +1,8 @@
 # 审计 schema
 
-本目录只保存当前机器可读运行审计 schema。产品发布 `0.8.7` 仍使用 Evaluation Profile
-`8.3` 和 Audit/EvalReport schema `1.0`；三者是独立版本轴。实际运行数据写入用户指定 data-dir：
+本目录只保存当前机器可读运行审计 schema。产品发布 `0.9.0` 仍使用 Evaluation Profile
+`8.4` 和 Audit/EvalReport schema `1.0`；三者是独立版本轴。Profile 8.3 只作显式
+回放合同保留。实际运行数据写入用户指定 data-dir：
 
 ```text
 var/runs/

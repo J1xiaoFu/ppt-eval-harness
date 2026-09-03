@@ -156,6 +156,7 @@ export interface ReviewTaskDetail extends ReviewTaskSummary {
     observations_url: string | null;
     source_pptx_url: string | null;
     render_manifest_url: string | null;
+    visual_contract_urls?: Record<string, string | null>;
   };
   reviews: ReviewEvent[];
   audit_integrity: {
@@ -177,6 +178,11 @@ export interface FullAuditPayload {
   gate_results: Array<Record<string, unknown>>;
   model_routes: Array<Record<string, unknown>>;
   attention_details: Array<Record<string, unknown>>;
+  visual_audit_summary?: Record<string, unknown>;
+  visual_contract_artifacts?: Record<
+    string,
+    ArtifactAvailability & { url?: string | null }
+  >;
   observation_artifact: {
     available: boolean;
     url: string | null;

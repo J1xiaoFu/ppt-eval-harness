@@ -562,6 +562,7 @@ class EvalReport:
     review_reasons: tuple[str, ...] = ()
     errors: tuple[str, ...] = ()
     training_eligibility: Mapping[str, Any] = field(default_factory=dict)
+    visual_audit_summary: Mapping[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=utc_now_iso)
     schema_version: str = SCHEMA_VERSION
 

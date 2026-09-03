@@ -57,7 +57,7 @@ from .baseline import (
 )
 from .scenarios import _asset_hash, _fact_strings, _requirements
 
-V8_ATOMIC_VERSION = "2.1.0"
+V8_ATOMIC_VERSION = "2.2.0"
 _MEDIA_KINDS = frozenset({"picture", "linked_picture", "media"})
 _SEMANTIC_VISUAL_KINDS = frozenset({"chart", "table", *_MEDIA_KINDS})
 _CLOSING_RE = re.compile(

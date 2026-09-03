@@ -34,6 +34,7 @@ from ppt_eval.application import (
 )
 from ppt_eval.config import default_profile
 from ppt_eval.domain import AtomicObservation, EvalCase, EvalProfile
+from ppt_eval.domain.visual import rendered_page_set_sha256
 from ppt_eval.flywheel import (
     JsonlRecordStore,
     ParameterProposalService,
@@ -51,6 +52,8 @@ from ppt_eval.infrastructure import (
     to_primitive,
 )
 from ppt_eval.infrastructure.visual_assets import (
+    CANONICAL_MODEL_IMAGE_CAS_VERSION,
+    CanonicalModelImageCAS,
     SignedUrlVisualAssetTransport,
     VisualAssetCAS,
     VisualAssetCatalog,
@@ -69,6 +72,15 @@ _RENDER_POLICY: Mapping[str, str] = {
     "page_selection": "all",
     "policy_id": "native-full-slide",
     "version": "1.0",
+}
+_VISUAL_CONTRACT_MEDIA_TYPES: Mapping[str, str] = {
+    "visual_page_index": "application/vnd.ppt-eval.visual-page-index+json",
+    "atlas_scout": "application/vnd.ppt-eval.atlas-scout+json",
+    "visual_selection_plan": "application/vnd.ppt-eval.visual-selection-plan+json",
+    "visual_audit_rounds": "application/vnd.ppt-eval.visual-audit-rounds+json",
+    "visual_coverage_certificate": (
+        "application/vnd.ppt-eval.visual-coverage-certificate+json"
+    ),
 }
 _NON_REUSABLE_FONT_SCOPE_PREFIX = "unavailable-run:"
 
@@ -128,6 +140,7 @@ class LocalEvaluationRuntime:
         self,
         root: str | Path = "var",
         *,
+        provenance_root: str | Path | None = None,
         vlm_provider: ModelAuditProvider | None = None,
         advanced_vlm_provider: ModelAuditProvider | None = None,
         visual_asset_transport: SignedUrlVisualAssetTransport | None = None,
@@ -139,7 +152,9 @@ class LocalEvaluationRuntime:
         self.repository = JsonRunRepository(self.paths.reports)
         self.audit_log = JsonlAuditLog(self.paths.audit)
         self.artifacts = LocalArtifactStore(self.paths.artifacts)
-        self._git_sha = git_sha(Path.cwd())
+        self._git_sha = git_sha(
+            Path(provenance_root) if provenance_root is not None else Path.cwd()
+        )
         self._font_fingerprint = font_fingerprint()
         self.registry = build_default_registry(
             vlm_provider=vlm_provider,
@@ -147,6 +162,9 @@ class LocalEvaluationRuntime:
         )
         self._vlm_enabled = vlm_provider is not None
         self.visual_asset_transport = visual_asset_transport
+        self.model_image_cas = CanonicalModelImageCAS(
+            self.paths.render_cache / "model-image-cas"
+        )
         self._slide_renderer = slide_renderer
         self._review_rendering = bool(review_rendering)
         self.feedback_store = JsonlRecordStore(self.paths.root / "feedback" / "records.jsonl")
@@ -231,6 +249,34 @@ class LocalEvaluationRuntime:
                     "media_type": observation_artifact["media_type"],
                 },
             )
+        visual_contract_artifacts: dict[str, Mapping[str, Any]] = {}
+        for contract_name in sorted(outcome.visual_contracts):
+            media_type = _VISUAL_CONTRACT_MEDIA_TYPES.get(contract_name)
+            if media_type is None:
+                continue
+            contract_bytes = json.dumps(
+                to_primitive(outcome.visual_contracts[contract_name]),
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+            reference = self.artifacts.put_bytes(
+                contract_bytes,
+                media_type=media_type,
+                original_name=f"{outcome.report.run_id}.{contract_name}.json",
+            )
+            visual_contract_artifacts[contract_name] = dict(reference)
+            artifact_hashes[contract_name] = str(reference["sha256"])
+            self.audit_log.append(
+                run_id=outcome.report.run_id,
+                event_type="VISUAL_AUDIT_CONTRACT_STORED",
+                actor="local-runtime",
+                payload={
+                    "contract": contract_name,
+                    "sha256": reference["sha256"],
+                    "media_type": media_type,
+                },
+            )
         render_result = prepared_artifacts.get("render_result")
         rendering_metadata = prepared_artifacts.get("model_audit_rendering")
         rendering_metadata = (
@@ -278,6 +324,11 @@ class LocalEvaluationRuntime:
             payload["observation_summary"] = _observation_summary(
                 outcome.observations
             )
+        if visual_contract_artifacts:
+            payload["visual_audit_artifacts"] = {
+                key: dict(value)
+                for key, value in sorted(visual_contract_artifacts.items())
+            }
         if isinstance(render_result, RenderResult):
             payload["render_artifact"] = {
                 "cache_key": render_cache_key,
@@ -426,11 +477,56 @@ class LocalEvaluationRuntime:
         artifacts: Mapping[str, Any] | None,
     ) -> tuple[Mapping[str, Any], Mapping[str, str]]:
         prepared = dict(artifacts or {})
-        if self.visual_asset_transport is not None and artifacts is not None:
-            supplied_images: object | None = prepared.get("slide_images")
-            supplied_render = prepared.get("render_result")
-            if supplied_images is None and isinstance(supplied_render, RenderResult):
-                supplied_images = supplied_render.slide_images
+        if profile.version == "8.4":
+            prepared.setdefault(
+                "visual_atlas_dir",
+                self.paths.artifacts / "visual-atlases",
+            )
+        supplied_images: object | None = prepared.get("slide_images")
+        supplied_render = prepared.get("render_result")
+        if supplied_images is None and isinstance(supplied_render, RenderResult):
+            supplied_images = supplied_render.slide_images
+        if profile.version == "8.4" and supplied_images is not None:
+            try:
+                # Never trust a caller-supplied ParsedPresentation as the
+                # identity for externally supplied pixels. Re-parse the actual
+                # case source, then freeze a complete canonical page set.
+                presentation = PptxAdapter().parse(case.pptx_path)
+                prepared["parsed_presentation"] = presentation
+                normalized_images = self.model_image_cas.prepare_slide_images(
+                    supplied_images,
+                    expected_page_count=presentation.slide_count,
+                )
+                caller_page_set_hash = rendered_page_set_sha256(
+                    presentation.source_sha256.lower(),
+                    {
+                        item.page_number: item.sha256
+                        for item in normalized_images
+                    },
+                )
+                prepared["slide_images"] = normalized_images
+                prepared["model_audit_rendering"] = {
+                    "status": "READY",
+                    "source": "CALLER_CANONICAL_MODEL_IMAGE_CAS",
+                    "canonical_model_image_cas_version": (
+                        CANONICAL_MODEL_IMAGE_CAS_VERSION
+                    ),
+                    "slide_count": len(normalized_images),
+                    "rendered_page_set_sha256": caller_page_set_hash,
+                }
+            except (OSError, TypeError, ValueError) as exc:
+                prepared.pop("slide_images", None)
+                prepared.pop("render_result", None)
+                prepared["model_audit_rendering"] = {
+                    "status": "UNAVAILABLE",
+                    "error_type": type(exc).__name__,
+                }
+                return prepared, {"model_audit_slides": "unavailable"}
+        if (
+            profile.version != "8.4"
+            and self.visual_asset_transport is not None
+            and artifacts is not None
+        ):
             if supplied_images is not None:
                 try:
                     prepared["slide_images"] = (
@@ -447,24 +543,48 @@ class LocalEvaluationRuntime:
                     }
                     return prepared, {"model_audit_slides": "unavailable"}
         if not self._should_render_model_inputs(profile, prepared):
-            return prepared, {}
+            return prepared, (
+                {
+                    "model_audit_slides/canonical-model-image-cas": (
+                        CANONICAL_MODEL_IMAGE_CAS_VERSION
+                    )
+                }
+                if profile.version == "8.4" and "slide_images" in prepared
+                else {}
+            )
 
         try:
-            presentation = prepared.get("parsed_presentation")
-            if not isinstance(presentation, ParsedPresentation):
-                presentation = PptxAdapter().parse(case.pptx_path)
-                prepared["parsed_presentation"] = presentation
+            prepared_presentation = prepared.get("parsed_presentation")
+            if not isinstance(prepared_presentation, ParsedPresentation):
+                prepared_presentation = PptxAdapter().parse(case.pptx_path)
+                prepared["parsed_presentation"] = prepared_presentation
             if (
-                presentation.preflight.has_macros
-                or presentation.preflight.has_external_relationships
+                prepared_presentation.preflight.has_macros
+                or prepared_presentation.preflight.has_external_relationships
             ):
                 raise RuntimeError(
                     "native rendering is disabled for active or externally linked content"
                 )
             render_result, cache_hit, render_cache_key = self._render_for_model_audit(
                 case,
-                expected_slide_count=presentation.slide_count,
+                expected_slide_count=prepared_presentation.slide_count,
             )
+            prepared_model_images: Sequence[Any]
+            if profile.version == "8.4":
+                prepared_model_images = self.model_image_cas.prepare_slide_images(
+                    render_result.slide_images,
+                    expected_page_count=prepared_presentation.slide_count,
+                )
+                rendered_page_set_hash: str | None = rendered_page_set_sha256(
+                    prepared_presentation.source_sha256.lower(),
+                    {
+                        item.page_number: item.sha256
+                        for item in prepared_model_images
+                    },
+                )
+            else:
+                prepared_model_images = render_result.slide_images
+                rendered_page_set_hash = None
         except RenderSourceChangedError:
             # A source mutation invalidates both rendered and deterministic
             # evidence.  Unlike an unavailable renderer, this must abort the
@@ -482,19 +602,43 @@ class LocalEvaluationRuntime:
             return prepared, {"model_audit_slides": "unavailable"}
 
         prepared["render_result"] = render_result
-        prepared["slide_images"] = render_result.slide_images
+        prepared["slide_images"] = prepared_model_images
         prepared["model_audit_rendering"] = {
             "status": "READY",
             "cache_hit": cache_hit,
             "renderer_id": render_result.renderer_id,
             "renderer_version": render_result.renderer_version,
             "slide_count": len(render_result.slide_images),
+            "warnings": list(render_result.warnings),
             "cache_key": render_cache_key,
+            **(
+                {"rendered_page_set_sha256": rendered_page_set_hash}
+                if rendered_page_set_hash is not None
+                else {}
+            ),
+            **(
+                {
+                    "canonical_model_image_cas_version": (
+                        CANONICAL_MODEL_IMAGE_CAS_VERSION
+                    )
+                }
+                if profile.version == "8.4"
+                else {}
+            ),
         }
         return prepared, {
             f"model_audit_slides/{render_result.renderer_id}": (
                 render_result.renderer_version
-            )
+            ),
+            **(
+                {
+                    "model_audit_slides/canonical-model-image-cas": (
+                        CANONICAL_MODEL_IMAGE_CAS_VERSION
+                    )
+                }
+                if profile.version == "8.4"
+                else {}
+            ),
         }
 
     def _should_render_model_inputs(
@@ -740,9 +884,18 @@ class LocalEvaluationRuntime:
             "slide_render_manifest": "slide_render_manifest_artifact",
         }
         field = role_to_field.get(role)
-        if field is None:
+        if field is not None:
+            reference = report.get(field)
+        elif role in _VISUAL_CONTRACT_MEDIA_TYPES:
+            visual_references = report.get("visual_audit_artifacts")
+            visual_references = (
+                visual_references
+                if isinstance(visual_references, Mapping)
+                else {}
+            )
+            reference = visual_references.get(role)
+        else:
             raise KeyError(role)
-        reference = report.get(field)
         if not isinstance(reference, Mapping):
             raise FileNotFoundError(role)
         digest = str(reference.get("sha256") or "")
@@ -957,6 +1110,7 @@ class LocalEvaluationRuntime:
             attempts = metadata.get("routing_attempts")
             if not isinstance(attempts, Sequence) or isinstance(attempts, (str, bytes)):
                 continue
+            routing_usage = metadata.get("routing_usage")
             model_routes.append(
                 {
                     "metric_id": item.get("metric_id"),
@@ -965,6 +1119,19 @@ class LocalEvaluationRuntime:
                     "escalation_reason": metadata.get("escalation_reason"),
                     "sampled_pages": list(metadata.get("sampled_pages", ())),
                     "forced_rule_pages": list(metadata.get("forced_rule_pages", ())),
+                    "cache_prefix_pages": list(
+                        metadata.get("cache_prefix_pages", ())
+                    ),
+                    "adaptive_calls": list(metadata.get("adaptive_calls", ())),
+                    "stopping_reason": metadata.get("stopping_reason"),
+                    "coverage_complete_for_criterion": metadata.get(
+                        "coverage_complete_for_criterion"
+                    ),
+                    "routing_usage": (
+                        dict(routing_usage)
+                        if isinstance(routing_usage, Mapping)
+                        else {}
+                    ),
                     "attempts": [
                         {
                             "tier": attempt.get("tier"),
@@ -973,6 +1140,20 @@ class LocalEvaluationRuntime:
                             "metric_status": attempt.get("metric_status"),
                             "confidence": attempt.get("confidence"),
                             "error_code": attempt.get("error_code"),
+                            "image_transport_mode": attempt.get(
+                                "image_transport_mode"
+                            ),
+                            "context_cache_enabled": attempt.get(
+                                "context_cache_enabled"
+                            ),
+                            "usage": attempt.get("usage"),
+                            "usage_complete": attempt.get("usage_complete"),
+                            "adaptive_call_index": attempt.get(
+                                "adaptive_call_index"
+                            ),
+                            "active_page_numbers": attempt.get(
+                                "active_page_numbers"
+                            ),
                         }
                         for attempt in attempts
                         if isinstance(attempt, Mapping)
@@ -1000,6 +1181,26 @@ class LocalEvaluationRuntime:
                 ),
             },
         }
+        visual_references = report.get("visual_audit_artifacts")
+        visual_references = (
+            visual_references if isinstance(visual_references, Mapping) else {}
+        )
+        for role in _VISUAL_CONTRACT_MEDIA_TYPES:
+            reference = visual_references.get(role)
+            artifacts[role] = {
+                "available": isinstance(reference, Mapping),
+                "sha256": (
+                    str(reference.get("sha256") or "") or None
+                    if isinstance(reference, Mapping)
+                    else None
+                ),
+            }
+        visual_summary_value = report.get("visual_audit_summary")
+        visual_audit_summary = (
+            dict(visual_summary_value)
+            if isinstance(visual_summary_value, Mapping)
+            else {}
+        )
         return {
             **summary,
             "service_version": report.get("service_version", "0.8.3"),
@@ -1018,6 +1219,7 @@ class LocalEvaluationRuntime:
             "results": results,
             "gate_results": gate_results,
             "model_routes": model_routes,
+            "visual_audit_summary": visual_audit_summary,
             "manifest": manifest,
             "artifacts": artifacts,
             "inputs": self.review_inputs(run_id),
@@ -1456,9 +1658,10 @@ def build_runtime_from_environment(
     def image_url_resolver(image: Any) -> str:
         if visual_asset_transport is None:
             raise RuntimeError("signed visual-asset transport is unavailable")
+        variant = _visual_asset_variant_for_path(image.uri, runtime_paths)
         return visual_asset_transport.publish(
             image.uri,
-            variant=VisualAssetVariant.SLIDE,
+            variant=variant,
             expected_sha256=image.sha256,
         )
 
@@ -1486,6 +1689,7 @@ def build_runtime_from_environment(
     )
     return LocalEvaluationRuntime(
         data_root,
+        provenance_root=project_root,
         vlm_provider=flash,
         advanced_vlm_provider=advanced,
         visual_asset_transport=visual_asset_transport,
@@ -1500,10 +1704,10 @@ def build_runtime_from_environment(
 def _validate_runtime_profile(profile: EvalProfile) -> None:
     """Keep the release runtime on the single supported write contract."""
 
-    if profile.version != "8.3":
+    if profile.version not in {"8.3", "8.4"}:
         raise ValueError(
-            "the release runtime accepts only Profile version 8.3; "
-            "use archive/v8.3-pre-release for historical replay"
+            "the release runtime accepts Profile 8.4 and explicit Profile 8.3 "
+            "replay only; use archive/v8.3-pre-release for older history"
         )
     pipeline_nodes = profile.metadata.get("pipeline_nodes")
     if (
@@ -1511,7 +1715,23 @@ def _validate_runtime_profile(profile: EvalProfile) -> None:
         or not isinstance(pipeline_nodes, Sequence)
         or not pipeline_nodes
     ):
-        raise ValueError("Profile 8.3 requires a non-empty pipeline_nodes DAG")
+        raise ValueError(
+            f"Profile {profile.version} requires a non-empty pipeline_nodes DAG"
+        )
+
+
+def _visual_asset_variant_for_path(
+    value: str | Path,
+    runtime_paths: RuntimePaths,
+) -> VisualAssetVariant:
+    candidate = Path(value).resolve()
+    atlas_root = (runtime_paths.artifacts / "visual-atlases").resolve()
+    crop_root = (runtime_paths.artifacts / "visual-crops").resolve()
+    if candidate.is_relative_to(atlas_root):
+        return VisualAssetVariant.ATLAS
+    if candidate.is_relative_to(crop_root):
+        return VisualAssetVariant.CROP
+    return VisualAssetVariant.SLIDE
 
 
 def _environment_flag(value: object, *, default: bool) -> bool:

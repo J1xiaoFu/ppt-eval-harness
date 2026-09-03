@@ -102,7 +102,15 @@ def check_repository(root: Path = REPOSITORY_ROOT) -> list[str]:
 
     readme_path = root / "README.md"
     _record(issues, "README product version", _regex_value(readme_path, r"^\| \u4ea7\u54c1/\u8f6f\u4ef6\u53d1\u5e03 \| `([^`]+)`"), product_version)
-    _record(issues, "README current-release prose", _regex_value(readme_path, r"\u4ea7\u54c1\u5347\u5230 `([^`]+)`"), product_version)
+    _record(
+        issues,
+        "README current-release prose",
+        _regex_value(
+            readme_path,
+            r"\u4ea7\u54c1\u7248\u672c\u4e0e\u8bc4\u6d4b Profile \u662f\u4e24\u4e2a\u72ec\u7acb\u7248\u672c\u8f74\u3002`([^`]+)` \u540c\u65f6\u53d1\u5e03",
+        ),
+        product_version,
+    )
     _record(issues, "review-platform product version", _regex_value(root / "docs/review_platform.md", r"\u4ea7\u54c1\u53d1\u5e03 `([^`]+)`"), product_version)
     _record(issues, "audit README product version", _regex_value(root / "audit/README.md", r"\u4ea7\u54c1\u53d1\u5e03 `([^`]+)`"), product_version)
     _record(issues, "latest changelog release", _regex_value(root / "CHANGELOG.md", r"^## ([0-9]+\.[0-9]+\.[0-9]+)\s+-"), product_version)
@@ -124,6 +132,61 @@ def check_repository(root: Path = REPOSITORY_ROOT) -> list[str]:
         _record(issues, f"{path.name} Profile version", profile.get("version"), profile_version)
         metadata = _mapping(profile.get("metadata"), f"{path.name} metadata")
         _record(issues, f"{path.name} lifecycle", metadata.get("lifecycle"), lifecycle)
+        _record(
+            issues,
+            f"{path.name} Composite declaration",
+            metadata.get("composite_version"),
+            evaluation["composite_version"],
+        )
+        _record(
+            issues,
+            f"{path.name} Atomic declaration",
+            metadata.get("atomic_observation_version"),
+            evaluation["atomic_observation_version"],
+        )
+        _record(
+            issues,
+            f"{path.name} Prompt declaration",
+            metadata.get("grounded_vlm_prompt_version"),
+            _mapping(
+                evaluation["grounded_vlm_versions"],
+                "grounded_vlm_versions",
+            )["visual"],
+        )
+        _record(
+            issues,
+            f"{path.name} Selection declaration",
+            metadata.get("selection_policy_version"),
+            evaluation["selection_policy_version"],
+        )
+        _record(
+            issues,
+            f"{path.name} VisualPageIndex declaration",
+            metadata.get("visual_page_index_version"),
+            evaluation["visual_page_index_version"],
+        )
+        _record(
+            issues,
+            f"{path.name} Atlas declaration",
+            metadata.get("atlas_scout_version"),
+            evaluation["atlas_scout_version"],
+        )
+        _record(
+            issues,
+            f"{path.name} Attention declaration",
+            metadata.get("attention_policy_version"),
+            contracts["attention_policy_version"],
+        )
+
+    replay_versions = evaluation.get("legacy_replay_profile_versions")
+    if replay_versions != ["8.3"]:
+        issues.append("legacy_replay_profile_versions must contain only 8.3")
+    replay_paths = sorted((root / "src/ppt_eval/profiles").glob("*_v83.json"))
+    if len(replay_paths) != 4:
+        issues.append(f"expected four explicit Profile 8.3 replays, found {len(replay_paths)}")
+    for path in replay_paths:
+        replay = _mapping(_read_json(path), str(path.relative_to(root)))
+        _record(issues, f"{path.name} replay Profile version", replay.get("version"), "8.3")
 
     _record(issues, "UI Profile version", _constant(root / "ui/src/version.ts", "export const PROFILE_VERSION"), profile_version)
     _record(issues, "Composite version", _constant(root / "src/ppt_eval/oracles/v8_composites.py", "V8_QUALITY_VERSION"), evaluation["composite_version"])
@@ -135,6 +198,29 @@ def check_repository(root: Path = REPOSITORY_ROOT) -> list[str]:
     _record(issues, "authorship Oracle/prompt version", _constant(model_audits, "V8_AUTHORSHIP_VLM_ORACLE_VERSION"), grounded["authorship"])
     _record(issues, "raster-text Oracle/prompt version", _constant(model_audits, "V8_RASTER_TEXT_VLM_ORACLE_VERSION"), grounded["raster_text"])
     _record(issues, "selection-policy version", _constant(model_audits, "_GROUNDED_PAGE_SELECTION_STRATEGY_VERSION"), evaluation["selection_policy_version"])
+    visual_contracts = root / "src/ppt_eval/domain/visual.py"
+    _record(issues, "VisualPageIndex version", _constant(visual_contracts, "VISUAL_PAGE_INDEX_VERSION"), evaluation["visual_page_index_version"])
+    _record(issues, "Atlas Scout domain version", _constant(visual_contracts, "ATLAS_SCOUT_VERSION"), evaluation["atlas_scout_version"])
+    _record(issues, "VisualAuditRound version", _constant(visual_contracts, "VISUAL_AUDIT_ROUND_VERSION"), evaluation["visual_audit_round_version"])
+    _record(issues, "VisualCoverageCertificate version", _constant(visual_contracts, "VISUAL_COVERAGE_CERTIFICATE_VERSION"), evaluation["visual_coverage_certificate_version"])
+    _record(
+        issues,
+        "selection-policy implementation version",
+        _constant(
+            root / "src/ppt_eval/application/visual_selection.py",
+            "VISUAL_SELECTION_POLICY_VERSION",
+        ),
+        evaluation["selection_policy_version"],
+    )
+    _record(
+        issues,
+        "Atlas Scout implementation version",
+        _constant(
+            root / "src/ppt_eval/infrastructure/atlas_scout.py",
+            "ATLAS_SCOUT_VERSION",
+        ),
+        evaluation["atlas_scout_version"],
+    )
 
     schema_version = contracts["eval_report_schema_version"]
     _record(issues, "EvalReport schema version", _constant(root / "src/ppt_eval/domain/models.py", "SCHEMA_VERSION"), schema_version)
@@ -156,6 +242,15 @@ def check_repository(root: Path = REPOSITORY_ROOT) -> list[str]:
             "VISUAL_ASSET_TRANSPORT_VERSION",
         ),
         infrastructure["visual_asset_transport_version"],
+    )
+    _record(
+        issues,
+        "canonical model-image CAS version",
+        _constant(
+            root / "src/ppt_eval/infrastructure/visual_assets.py",
+            "CANONICAL_MODEL_IMAGE_CAS_VERSION",
+        ),
+        infrastructure["canonical_model_image_cas_version"],
     )
     _record(
         issues,
@@ -206,7 +301,11 @@ def sync_product_surfaces(root: Path, product_version: str) -> None:
     _replace_once(openapi, r'(service_version: \{ const: ")[^"]+(" \})', rf"\g<1>{product_version}\g<2>")
 
     _replace_once(root / "README.md", r"^(\| \u4ea7\u54c1/\u8f6f\u4ef6\u53d1\u5e03 \| `)[^`]+(` \|)", rf"\g<1>{product_version}\g<2>")
-    _replace_once(root / "README.md", r"(\u4ea7\u54c1\u5347\u5230 `)[^`]+(` \u4e0d\u6539\u53d8 Profile)", rf"\g<1>{product_version}\g<2>")
+    _replace_once(
+        root / "README.md",
+        r"(\u4ea7\u54c1\u7248\u672c\u4e0e\u8bc4\u6d4b Profile \u662f\u4e24\u4e2a\u72ec\u7acb\u7248\u672c\u8f74\u3002`)[^`]+(` \u540c\u65f6\u53d1\u5e03)",
+        rf"\g<1>{product_version}\g<2>",
+    )
     _replace_once(root / "docs/review_platform.md", r"(\u4ea7\u54c1\u53d1\u5e03 `)[^`]+(`)", rf"\g<1>{product_version}\g<2>")
     _replace_once(root / "audit/README.md", r"(\u4ea7\u54c1\u53d1\u5e03 `)[^`]+(`)", rf"\g<1>{product_version}\g<2>")
 

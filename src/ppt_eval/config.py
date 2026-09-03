@@ -25,6 +25,18 @@ _DEFAULT_PROFILE_NAMES = {
     SceneType.READY_MADE: "finished_deck_v8.json",
 }
 
+_PROFILE_NAMES_BY_VERSION = {
+    "8.4": _DEFAULT_PROFILE_NAMES,
+    "8.3": {
+        SceneType.TEXT_TO_PPT: "text_generation_v83.json",
+        SceneType.PROJECT_SUMMARY: "project_summary_v83.json",
+        SceneType.MULTIMODAL: "multimodal_generation_v83.json",
+        SceneType.READY_MADE: "finished_deck_v83.json",
+    },
+}
+CURRENT_PROFILE_VERSION = "8.4"
+REPLAY_PROFILE_VERSIONS = ("8.3",)
+
 _REQUIRED_V8_PROFILE_FIELDS = frozenset(
     {
         "profile_id",
@@ -125,10 +137,10 @@ def profile_from_mapping(payload: Mapping[str, Any]) -> EvalProfile:
         major_version = int(version.split(".", 1)[0])
     except ValueError as exc:
         raise ValueError("profile version must begin with an integer major version") from exc
-    if major_version != 8 or version != "8.3":
+    if major_version != 8 or version not in _PROFILE_NAMES_BY_VERSION:
         raise ValueError(
-            "main accepts only the v8.3 Profile contract; use archive/v8.3-pre-release "
-            "for historical replay"
+            "main accepts only Profile 8.4 and the explicit read-only 8.3 replay "
+            "contract; use archive/v8.3-pre-release for older historical replay"
         )
     enabled_oracles = tuple(
         str(item)
@@ -189,12 +201,30 @@ def default_profile(
     scene: SceneType,
     root: str | Path | None = None,
 ) -> EvalProfile:
+    return profile_for_version(scene, CURRENT_PROFILE_VERSION, root=root)
+
+
+def profile_for_version(
+    scene: SceneType,
+    version: str,
+    *,
+    root: str | Path | None = None,
+) -> EvalProfile:
+    """Load the current Profile or an explicitly requested immutable replay."""
+
+    try:
+        profile_names = _PROFILE_NAMES_BY_VERSION[version]
+    except KeyError as exc:
+        raise ValueError(f"unsupported Profile replay version {version!r}") from exc
+    profile_name = profile_names[scene]
     if root is not None:
-        path = profile_path_for_scene(scene, root)
+        path = Path(root) / profile_name
         if not path.is_file():
             raise FileNotFoundError(path)
         return load_profile(path)
-    resource = files("ppt_eval.profiles").joinpath(_DEFAULT_PROFILE_NAMES[scene])
+    resource = files("ppt_eval.profiles").joinpath(profile_name)
     if not resource.is_file():
-        raise RuntimeError(f"bundled v8 profile is missing for {scene.value}")
+        raise RuntimeError(
+            f"bundled Profile {version} is missing for {scene.value}"
+        )
     return profile_from_mapping(json.loads(resource.read_text(encoding="utf-8")))

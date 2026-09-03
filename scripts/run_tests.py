@@ -15,6 +15,7 @@ import tempfile
 import traceback
 from pathlib import Path
 from types import ModuleType
+from typing import Any, Callable, Sequence
 from unittest import SkipTest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,9 +89,34 @@ def _importorskip(name: str) -> ModuleType:
 
 
 def _install_pytest_facade() -> None:
+    class _Mark:
+        @staticmethod
+        def parametrize(
+            argnames: str | Sequence[str],
+            argvalues: Sequence[Any],
+        ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+            names = (
+                tuple(item.strip() for item in argnames.split(",") if item.strip())
+                if isinstance(argnames, str)
+                else tuple(str(item).strip() for item in argnames)
+            )
+            if not names:
+                raise ValueError("parametrize requires at least one argument name")
+
+            def decorate(function: Callable[..., Any]) -> Callable[..., Any]:
+                setattr(
+                    function,
+                    "__ppt_eval_parametrize__",
+                    (names, tuple(argvalues)),
+                )
+                return function
+
+            return decorate
+
     facade = ModuleType("pytest")
     facade.approx = _Approx  # type: ignore[attr-defined]
     facade.importorskip = _importorskip  # type: ignore[attr-defined]
+    facade.mark = _Mark()  # type: ignore[attr-defined]
     facade.raises = _Raises  # type: ignore[attr-defined]
     sys.modules["pytest"] = facade
 
@@ -135,22 +161,52 @@ def main() -> int:
                 )
                 continue
             signature = inspect.signature(function)
-            unknown = set(signature.parameters) - {"tmp_path"}
+            parametrized = getattr(function, "__ppt_eval_parametrize__", None)
+            parameter_names: tuple[str, ...] = ()
+            parameter_values: tuple[Any, ...] = (None,)
+            if parametrized is not None:
+                parameter_names, parameter_values = parametrized
+            unknown = set(signature.parameters) - {"tmp_path", *parameter_names}
             if unknown:
                 failures.append(f"{path.name}::{name}: unsupported fixtures {sorted(unknown)}")
                 continue
-            try:
-                with tempfile.TemporaryDirectory(prefix="ppt-eval-test-") as temp:
-                    kwargs = {"tmp_path": Path(temp)} if "tmp_path" in signature.parameters else {}
-                    function(**kwargs)
-                passed += 1
-                print(f"PASS {path.name}::{name}")
-            except SkipTest as exc:
-                skipped += 1
-                print(f"SKIP {path.name}::{name}: {exc}")
-            except Exception:
-                failures.append(f"{path.name}::{name}\n{traceback.format_exc()}")
-                print(f"FAIL {path.name}::{name}")
+            for parameter_index, raw_values in enumerate(parameter_values):
+                case_name = (
+                    name
+                    if parametrized is None
+                    else f"{name}[{parameter_index}]"
+                )
+                try:
+                    with tempfile.TemporaryDirectory(prefix="ppt-eval-test-") as temp:
+                        kwargs = (
+                            {"tmp_path": Path(temp)}
+                            if "tmp_path" in signature.parameters
+                            else {}
+                        )
+                        if parametrized is not None:
+                            values = (
+                                tuple(raw_values)
+                                if len(parameter_names) > 1
+                                and isinstance(raw_values, Sequence)
+                                and not isinstance(raw_values, (str, bytes))
+                                else (raw_values,)
+                            )
+                            if len(values) != len(parameter_names):
+                                raise ValueError(
+                                    "parametrize value count does not match argument names"
+                                )
+                            kwargs.update(zip(parameter_names, values, strict=True))
+                        function(**kwargs)
+                    passed += 1
+                    print(f"PASS {path.name}::{case_name}")
+                except SkipTest as exc:
+                    skipped += 1
+                    print(f"SKIP {path.name}::{case_name}: {exc}")
+                except Exception:
+                    failures.append(
+                        f"{path.name}::{case_name}\n{traceback.format_exc()}"
+                    )
+                    print(f"FAIL {path.name}::{case_name}")
     print(f"\n{passed} passed, {skipped} skipped, {len(failures)} failed")
     if failures:
         print("\n\n".join(failures))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from ppt_eval.application import (
@@ -269,6 +270,76 @@ def test_scheduler_does_not_retry_nondeterministic_composite_after_partial_error
         ExecutionStatus.SUCCESS,
         ExecutionStatus.ERROR,
     ]
+
+
+def test_cost_budget_stops_paid_work_but_preserves_deterministic_convergence() -> None:
+    baseline_result = replace(
+        scored("base", 0.9, ScoreRole.BASE_ADDITIVE),
+        cost=1.0,
+    )
+    baseline = StaticOracle("baseline_ppt_quality", (baseline_result,))
+    paid_audit = CountingOracle(
+        "paid_audit",
+        (scored("paid_metric", 0.8, ScoreRole.DIAGNOSTIC),),
+        deterministic=False,
+    )
+    coverage = CountingOracle(
+        "coverage",
+        (scored("coverage_metric", 1.0, ScoreRole.DIAGNOSTIC),),
+        deterministic=True,
+    )
+    reducer = CountingOracle(
+        "reducer",
+        (scored("reduced_metric", 0.9, ScoreRole.DIAGNOSTIC),),
+        deterministic=True,
+    )
+    registry = OracleRegistry((baseline, paid_audit, coverage, reducer))
+    profile = ready_profile(
+        cost_budget=1.0,
+        metadata={
+            "pipeline_nodes": (
+                {
+                    "node_id": "audit:paid",
+                    "oracle_id": paid_audit.oracle_id,
+                    "kind": "AUDIT",
+                    "dependencies": ("baseline_ppt_quality",),
+                },
+                {
+                    "node_id": "fuse:coverage",
+                    "oracle_id": coverage.oracle_id,
+                    "kind": "FUSE",
+                    "dependencies": ("audit:paid",),
+                },
+                {
+                    "node_id": "reduce:score",
+                    "oracle_id": reducer.oracle_id,
+                    "kind": "REDUCE",
+                    "dependencies": ("fuse:coverage",),
+                },
+            )
+        },
+    )
+
+    outcome = DagScheduler(registry).execute(
+        ProfileCompiler().compile(profile),
+        EvaluationContext(case=case(), profile=profile),
+        profile,
+    )
+
+    assert paid_audit.calls == 0
+    assert coverage.calls == 1
+    assert reducer.calls == 1
+    budget_error = next(
+        result for result in outcome.results if result.oracle_id == paid_audit.oracle_id
+    )
+    assert budget_error.metric_id == "paid_metric"
+    assert budget_error.error_code == "COST_BUDGET_EXHAUSTED"
+    assert outcome.attempts == {
+        "baseline_ppt_quality": 1,
+        "audit:paid": 0,
+        "fuse:coverage": 1,
+        "reduce:score": 1,
+    }
 
 
 def test_case_profile_scene_mismatch_becomes_auditable_harness_error() -> None:

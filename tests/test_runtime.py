@@ -50,6 +50,19 @@ class MutatingRenderer(CountingRenderer):
         return result
 
 
+def test_runtime_uses_explicit_provenance_root_for_git_identity(tmp_path: Path) -> None:
+    provenance_root = tmp_path / "source-checkout"
+    provenance_root.mkdir()
+    with patch("ppt_eval.runtime.git_sha", return_value="a" * 40) as resolve_git_sha:
+        runtime = LocalEvaluationRuntime(
+            tmp_path / "var",
+            provenance_root=provenance_root,
+        )
+
+    resolve_git_sha.assert_called_once_with(provenance_root)
+    assert runtime._git_sha == "a" * 40
+
+
 def test_local_artifact_store_uses_short_atomic_temp_name(tmp_path) -> None:
     written_names: list[str] = []
     original_write_bytes = Path.write_bytes
@@ -313,7 +326,7 @@ def test_release_runtime_rejects_legacy_profile_before_writing(tmp_path) -> None
     runtime = LocalEvaluationRuntime(tmp_path / "var")
     legacy = replace(default_profile(SceneType.READY_MADE), version="7.0")
 
-    with pytest.raises(ValueError, match="only Profile version 8.3"):
+    with pytest.raises(ValueError, match="Profile 8.4 and explicit Profile 8.3"):
         runtime.evaluate(
             EvalCase(
                 case_id="legacy-profile",

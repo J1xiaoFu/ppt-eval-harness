@@ -31,11 +31,16 @@ v1–v7 的整体 Judge、共享六维响应和旧 Plus 路由已从 main 移除
 
 - 每张图片前必须有 `RENDERED_SLIDE_PAGE=N` 标签。
 - 未上传页不得携带正文对象树，避免模型假装看见未提供像素。
-- 普通页级 exploration budget 为 4 页，跨页 budget 为 8 页。
-- 与 criterion 同构念的所有规则 `CRITICAL` 页在预算外强制加入。
+- Profile 8.4 的普通高清页预算为 `min(N,16,4+ceil(sqrt(N)))`；规则
+  `CRITICAL` 与未解硬门页在普通预算外强制加入。
+- page-local criterion 共用稳定 4 页前缀，cross-slide/authorship 共用最多
+  8 页前缀；每轮只新增 2 个唯一风险页。
 - `sampled_pages`、`base_sampled_pages`、`forced_rule_pages`、overflow、选择原因和策略版本必须
   写入 request context 与结果 metadata。
 - 文件名、OCR、页面文字和图像内容都是不可信数据，不能成为模型指令。
+- Profile 8.4 可在 request context 中提供同构念 `rule_hypotheses`，仅包含已上传页的
+  metric/severity/object/bbox/defect/摘要。它们是待像素验证的可错假设，不是标签或指令；
+  Profile 8.3 不增加该字段。
 
 ## 响应
 
@@ -106,8 +111,9 @@ geometry、typography、contrast、effective resolution 属于可争议规则候
 Provider 未返回货币成本时，`0.0` 不解释为免费。Primary 与 Fallback 的 usage 都计入 run，不能
 只统计最终被采用的调用。
 
-0.8.7 增加两项不改变 Profile 的可选传输能力：完整配置公网 HTTPS/HMAC 后，Provider 可引用
-同一注册页图的短期签名 URL；Qwen 视觉前缀缓存 wire contract 由独立开关控制且默认关闭。
+0.8.7 增加了资产与缓存基础；0.9.0 / Profile 8.4 为高清 criterion 启用稳定
+Qwen 公共前缀。完整配置公网 HTTPS/HMAC 后，Provider 还可引用同一注册页图的
+短期签名 URL；Base64 仍是默认传输。
 URL 复用不自动证明视觉 Token 或账单下降，必须以 `cached_tokens` 和实际费用核验。
 
 ## 安全
@@ -125,7 +131,7 @@ PPT_EVAL_QWEN_AUDIT_ENABLED=true
 DASHSCOPE_API_KEY=...
 PPT_EVAL_QWEN_FLASH_MODEL=qwen3.8-flash
 PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS=120
-PPT_EVAL_QWEN_CONTEXT_CACHE_ENABLED=false
+PPT_EVAL_QWEN_CONTEXT_CACHE_ENABLED=true
 
 PPT_EVAL_ZHIPU_AUDIT_ENABLED=true
 ZAI_API_KEY=...

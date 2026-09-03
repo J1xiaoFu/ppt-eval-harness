@@ -2,8 +2,8 @@
 
 ## 产品边界
 
-当前审计平台属于 PPT Eval Harness 产品发布 `0.8.7`，但它消费的默认评测 Profile 仍为
-`8.3` / `PRE_RESEARCH`，持久化 EvalReport/Audit schema 仍为 `1.0`，HTTP 命名空间仍为 `/v1`。
+当前审计平台属于 PPT Eval Harness 产品发布 `0.9.0`，消费默认 Profile
+`8.4` / `PRE_RESEARCH`；持久化 EvalReport/Audit schema 仍为 `1.0`，HTTP 命名空间仍为 `/v1`。
 产品版本只表达软件能力发布，不得被当作 Profile 或报告 schema 版本。
 
 审计平台是数据闭环的操作面，不是指标研究报告。Slides-Align 人评排名、Spearman、
@@ -73,7 +73,9 @@ PASS 不会从系统中消失。“审计队列”默认隐藏无疑点 P3 PASS�
 
 ## 优先级
 
-`audit-attention@0.8.6` 不读取任何 GT 或人类标签。主 Attention 首先按以下信号形成
+`audit-attention@0.9.0` 不读取任何 GT 或人类标签。Profile 8.4 的视觉 Coverage
+不完整时，主 Attention 只形成一条语义化证据缺口；页索引、Scout、选页、轮次和
+Token 遥测保留在“完整审计事实 / 视觉覆盖”中。其他主 Attention 信号为：
 语义候选，再合并到 8 个稳定质量族：
 
 ```text

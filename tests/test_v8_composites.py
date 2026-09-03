@@ -7,7 +7,7 @@ import pytest
 
 from ppt_eval.adapters import PptxAdapter
 from ppt_eval.application import EvaluationContext
-from ppt_eval.config import default_profile
+from ppt_eval.config import default_profile, profile_for_version
 from ppt_eval.domain import (
     AtomicObservation,
     EvalCase,
@@ -25,10 +25,68 @@ from ppt_eval.oracles.v8_composites import (
     V8QualityReducerOracle,
     V8RasterTextObservationOracle,
     V8TieredVisualCriterionOracle,
+    _merge_adaptive_visual_results,
     _model_routing_usage,
+    _profile_pdms_interval,
 )
+from ppt_eval.scoring import PptPdmsAggregator
 from tests.fixtures.pptx_factory import PNG_1X1, build_pptx
 from tests.test_grounded_visual_audit import GroundedFakeProvider
+
+
+def test_adaptive_page_reducer_counts_common_pages_only_once() -> None:
+    owner = V8TieredVisualCriterionOracle(
+        "composition_layout",
+        None,
+        None,
+    )
+    first = OracleResult(
+        oracle_id=owner.oracle_id,
+        metric_id=owner.metric_id,
+        execution_status=ExecutionStatus.SUCCESS,
+        metric_status=MetricStatus.SCORED,
+        score_role=ScoreRole.BASE_ADDITIVE,
+        raw_value=1.0,
+        normalized_score=1.0,
+        confidence=0.9,
+        metadata={
+            "page_scores": {str(page): 1.0 for page in range(1, 5)},
+            "defect_severity": "NONE",
+            "routing_attempts": [],
+        },
+    )
+    expanded = replace(
+        first,
+        raw_value=4 / 6,
+        normalized_score=4 / 6,
+        metadata={
+            **dict(first.metadata),
+            "page_scores": {
+                **{str(page): 1.0 for page in range(1, 5)},
+                "5": 0.0,
+                "6": 0.0,
+            },
+        },
+    )
+
+    merged = _merge_adaptive_visual_results(
+        owner,
+        (
+            (first, (1, 2, 3, 4), (1, 2, 3, 4)),
+            (expanded, (1, 2, 3, 4, 5, 6), (5, 6)),
+        ),
+        audited_pages=(1, 2, 3, 4, 5, 6),
+        attempted_pages=(1, 2, 3, 4, 5, 6),
+        common_pages=(1, 2, 3, 4),
+        ordered_pages=(1, 2, 3, 4, 5, 6),
+        stopping_reason="ADAPTIVE_STOP_CONDITIONS_MET",
+        required_pages=(),
+        policy_coverage_complete=True,
+        policy_unresolved_codes=(),
+    )
+
+    assert merged.normalized_score == pytest.approx(4 / 6)
+    assert merged.metadata["adaptive_score_reducer"] == "UNIQUE_PAGE_MEAN_V1"
 
 
 def _deck(path: Path) -> Path:
@@ -107,6 +165,87 @@ def _model_results() -> list[OracleResult]:
         _vlm_result("structured_vlm_render_integrity", 0.95),
         _vlm_result("structured_vlm_authorship_specificity", 0.75),
     ]
+
+
+def _base_multiplier(metric_id: str, value: float = 1.0) -> OracleResult:
+    return OracleResult(
+        oracle_id="pdms-bound-test",
+        metric_id=metric_id,
+        execution_status=ExecutionStatus.SUCCESS,
+        metric_status=MetricStatus.PASS if value == 1.0 else MetricStatus.FAIL,
+        score_role=ScoreRole.BASE_MULTIPLIER,
+        raw_value=value,
+        multiplier=value,
+        confidence=1.0,
+        version="test",
+    )
+
+
+def test_visual_interval_replays_real_reducer_weights_and_known_gate(
+    tmp_path: Path,
+) -> None:
+    context = _context(_deck(tmp_path / "pdms-interval.pptx"))
+    batch = V8AtomicObservationComposite(PptxAdapter(backend="ooxml")).evaluate(
+        context
+    )
+    context.memo["ppt_eval.atomic_observations"] = list(batch.observations)
+    baseline = [
+        _base_multiplier("file_deliverability", 0.5),
+        _base_multiplier("critical_content_visibility"),
+        _base_multiplier("internal_data_consistency"),
+    ]
+    models = _model_results()
+    context.memo["ppt_eval.oracle_results"] = baseline
+    context.memo["ppt_eval.visual_initial_results"] = {
+        result.metric_id.removeprefix("structured_vlm_"): result
+        for result in models
+    }
+    current = next(
+        result
+        for result in models
+        if result.metric_id == "structured_vlm_composition_layout"
+    )
+
+    actual = _profile_pdms_interval(
+        context,
+        criterion_id="composition_layout",
+        current_result=current,
+        criterion_interval=(50.0, 90.0),
+    )
+
+    expected: list[float] = []
+    for bound in (0.50, 0.90):
+        bounded_models = [
+            replace(
+                result,
+                raw_value=bound,
+                normalized_score=bound,
+            )
+            if result.metric_id == "structured_vlm_composition_layout"
+            else result
+            for result in models
+        ]
+        projection = EvaluationContext(
+            case=context.case,
+            profile=context.profile,
+            artifacts=context.artifacts,
+            memo={
+                "ppt_eval.atomic_observations": list(batch.observations),
+                "ppt_eval.oracle_results": [*baseline, *bounded_models],
+            },
+        )
+        reduced = V8QualityReducerOracle().evaluate(projection)
+        breakdown = PptPdmsAggregator().aggregate(
+            context.profile,
+            (*baseline, *bounded_models, *reduced),
+        )
+        assert breakdown.full_score is not None
+        expected.append(breakdown.full_score)
+
+    assert actual is not None
+    assert actual[0] == pytest.approx(expected[0])
+    assert actual[1] == pytest.approx(expected[1])
+    assert actual[1] < 50.0  # known 0.5 hard gate is part of the projection
 
 
 def test_v8_reducer_outputs_quality_attributes_without_holistic_judges(
@@ -199,7 +338,7 @@ def test_raster_text_model_emits_atomic_fallback_without_double_scoring(
             scene=SceneType.READY_MADE,
             pptx_path=str(deck),
         ),
-        profile=default_profile(SceneType.READY_MADE),
+        profile=profile_for_version(SceneType.READY_MADE, "8.3"),
         artifacts={"slide_images": tuple(images)},
         memo={},
     )
@@ -303,6 +442,87 @@ def test_editable_deck_skips_raster_text_model_calls(tmp_path: Path) -> None:
     )
 
 
+def test_profile84_visual_owner_does_not_bypass_missing_routing_contracts(
+    tmp_path: Path,
+) -> None:
+    deck = _deck(tmp_path / "missing-visual-plan.pptx")
+    image = tmp_path / "missing-visual-plan.png"
+    image.write_bytes(PNG_1X1)
+    base = _context(deck)
+    context = EvaluationContext(
+        case=base.case,
+        profile=base.profile,
+        artifacts={"slide_images": (image,)},
+        memo={},
+    )
+    provider = GroundedFakeProvider()
+
+    result = V8TieredVisualCriterionOracle(
+        "composition_layout",
+        provider,
+        None,
+        PptxAdapter(backend="ooxml"),
+    ).evaluate(context)
+
+    assert provider.requests == []
+    assert result.metric_status == MetricStatus.NA
+    assert result.metadata["reason_code"] == "VISUAL_SELECTION_PLAN_UNAVAILABLE"
+    assert result.metadata["coverage_complete_for_criterion"] is False
+
+
+def test_profile84_raster_recovery_does_not_bypass_missing_atlas_and_plan(
+    tmp_path: Path,
+) -> None:
+    deck = build_pptx(
+        tmp_path / "missing-raster-plan.pptx",
+        (
+            (
+                {
+                    "kind": "image",
+                    "x": 0,
+                    "y": 0,
+                    "w": 12_192_000,
+                    "h": 6_858_000,
+                },
+            ),
+        ),
+    )
+    image = tmp_path / "missing-raster-plan.png"
+    image.write_bytes(PNG_1X1)
+    context = EvaluationContext(
+        case=EvalCase(
+            case_id="missing-raster-plan",
+            scene=SceneType.READY_MADE,
+            pptx_path=str(deck),
+        ),
+        profile=default_profile(SceneType.READY_MADE),
+        artifacts={"slide_images": (image,)},
+        memo={},
+    )
+    deterministic = V8AtomicObservationComposite(
+        PptxAdapter(backend="ooxml")
+    ).evaluate(context)
+    context.memo["ppt_eval.atomic_observations"] = list(
+        deterministic.observations
+    )
+    provider = GroundedFakeProvider()
+
+    output = V8RasterTextObservationOracle(
+        "raster_content_structure",
+        provider,
+        None,
+        PptxAdapter(backend="ooxml"),
+    ).evaluate(context)
+
+    assert provider.requests == []
+    assert output.observations == ()
+    assert output.results[0].metric_status == MetricStatus.NA
+    assert output.results[0].metadata["reason_code"] == (
+        "VISUAL_SELECTION_PLAN_UNAVAILABLE"
+    )
+    assert output.results[0].metadata["coverage_complete_for_criterion"] is False
+
+
 def test_raster_text_double_provider_failure_returns_legal_na(tmp_path: Path) -> None:
     class FailingProvider:
         def audit(self, request):
@@ -331,7 +551,7 @@ def test_raster_text_double_provider_failure_returns_legal_na(tmp_path: Path) ->
             scene=SceneType.READY_MADE,
             pptx_path=str(deck),
         ),
-        profile=default_profile(SceneType.READY_MADE),
+        profile=profile_for_version(SceneType.READY_MADE, "8.3"),
         artifacts={"slide_images": (image,)},
         memo={},
     )
@@ -410,7 +630,7 @@ def test_visual_advanced_fallback_is_same_criterion_only(tmp_path: Path) -> None
     context = _context(deck)
     context = EvaluationContext(
         case=context.case,
-        profile=context.profile,
+        profile=profile_for_version(SceneType.READY_MADE, "8.3"),
         artifacts={"slide_images": (image,)},
         memo={},
     )
@@ -450,7 +670,7 @@ def test_visual_advanced_fallback_is_same_criterion_only(tmp_path: Path) -> None
         "base64",
         "signed-url",
     ]
-    assert [item["context_cache_enabled"] for item in attempts] == [True, False]
+    assert [item["context_cache_enabled"] for item in attempts] == [False, False]
     assert result.metadata["image_transport_mode"] == "signed-url"
     assert result.metadata["context_cache_enabled"] is False
     assert result.metadata["routing_usage"] == {
@@ -589,7 +809,7 @@ def test_authorship_persistent_rule_disagreement_routes_review(tmp_path: Path) -
     base = _context(deck)
     context = EvaluationContext(
         case=base.case,
-        profile=base.profile,
+        profile=profile_for_version(SceneType.READY_MADE, "8.3"),
         artifacts={"slide_images": tuple(images)},
         memo={},
     )
@@ -617,7 +837,7 @@ def test_low_confidence_advanced_result_cannot_replace_flash(tmp_path: Path) -> 
     base = _context(_deck(tmp_path / "advanced-confidence.pptx"))
     context = EvaluationContext(
         case=base.case,
-        profile=base.profile,
+        profile=profile_for_version(SceneType.READY_MADE, "8.3"),
         artifacts={"slide_images": (image, image_two)},
         memo={},
     )

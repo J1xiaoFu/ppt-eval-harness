@@ -13,7 +13,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence, cast
 
-TRIAGE_POLICY_VERSION = "audit-attention@0.8.6"
+TRIAGE_POLICY_VERSION = "audit-attention@0.9.0"
 _PRIORITY_ORDER = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
 _SEVERITY_ORDER = {"CRITICAL": 0, "MAJOR": 1, "MINOR": 2, "INFO": 3}
 _LEGACY_RESOLVED_VERDICTS = {"APPROVE", "REJECT"}
@@ -369,12 +369,24 @@ _METRIC_FAMILY_OWNERS = {
     "visual_system_sequence": "SEQUENCE_SYSTEM",
     "authorship_specificity_v2": "AUTHORSHIP",
     "authorship_specificity": "AUTHORSHIP",
+    "visual_audit_coverage": "SYSTEM_INTEGRITY",
 }
 _SOURCE_ORDER = {"SYSTEM": 0, "MODEL": 1, "REDUCER": 2, "RULE": 3}
 _MAX_MAIN_ISSUES = 8
 _MAX_FOCUS_PAGES = 6
 _MAX_MAIN_EVIDENCE = 3
 _MAX_RATIONALES = 3
+_VISUAL_COVERAGE_COLLAPSED_METRICS = frozenset(
+    {
+        "v8_functional_integrity",
+        "composition_craft",
+        "typography_craft",
+        "palette_craft",
+        "visual_communication",
+        "visual_system_sequence",
+        "authorship_specificity_v2",
+    }
+)
 _DEFECT_SEMANTICS = {
     "content_overflow_or_cutoff": ("TEXT_CUTOFF", "文本截断或越界"),
     "occluded_content": ("ELEMENT_OVERLAP", "元素重叠或错位"),
@@ -388,6 +400,10 @@ _DEFECT_SEMANTICS = {
     "insufficient_color_contrast": ("COLOR_CONTRAST", "文字与背景对比不足"),
     "unclear_data_encoding": ("DATA_ENCODING", "图表或数据编码不清晰"),
     "missing_material_visual_explanation": ("MATERIAL_EXPLANATION", "素材缺少视觉说明"),
+    "placeholder_or_stock_visual": ("PLACEHOLDER_VISUAL", "占位或库存素材未完成语义适配"),
+    "visible_stock_watermark": ("STOCK_WATERMARK", "图库水印可见"),
+    "image_semantics_mismatch": ("IMAGE_SEMANTIC_MISMATCH", "图像与页面主张不匹配"),
+    "embedded_text_unreadable": ("EMBEDDED_TEXT_UNREADABLE", "图像或图解内文字难以读取"),
     "disjointed_visual_rhythm": ("VISUAL_RHYTHM", "页间视觉节奏不连贯"),
     "mechanical_cardization": ("TEMPLATE_ROUTINE", "页面呈现机械模板化"),
     "generic_copy_scaffold": ("GENERIC_COPY", "文案缺少具体性"),
@@ -430,6 +446,10 @@ _DEFECT_PRIORITY = {
             "cluttered_layout",
             "unclear_data_encoding",
             "missing_material_visual_explanation",
+            "placeholder_or_stock_visual",
+            "visible_stock_watermark",
+            "image_semantics_mismatch",
+            "embedded_text_unreadable",
             "mechanical_cardization",
             "generic_copy_scaffold",
             "content_alignment_issue",
@@ -531,12 +551,55 @@ def build_attention_projection(
             }
         )
 
+    visual_coverage_result = results_by_metric.get("visual_audit_coverage")
+    visual_coverage_metadata = (
+        _mapping(visual_coverage_result.get("metadata"))
+        if visual_coverage_result is not None
+        else {}
+    )
+    visual_coverage_incomplete = bool(
+        visual_coverage_result is not None
+        and visual_coverage_metadata.get("coverage_complete") is not True
+    )
+    if visual_coverage_incomplete and visual_coverage_result is not None:
+        coverage_evidence = tuple(
+            _mappings(visual_coverage_result.get("evidence"))
+        )
+        unresolved_pages = tuple(
+            int(page)
+            for page in visual_coverage_metadata.get(
+                "forced_pages_not_audited", ()
+            )
+            if isinstance(page, int) and not isinstance(page, bool) and page > 0
+        )
+        candidate(
+            "SYSTEM_INTEGRITY",
+            priority="P1",
+            severity="MAJOR",
+            rationale=(
+                "视觉审计的 Atlas、强制页、cluster 或模型证据未完整；"
+                "请先核对 Coverage 合同中的未解风险。"
+            ),
+            metrics=("visual_audit_coverage",),
+            pages=unresolved_pages,
+            evidence=coverage_evidence,
+            sources=("SYSTEM",),
+            consensus="INSUFFICIENT",
+            evidence_gap=True,
+        )
+
     for item in raw["items"]:
         kind = str(item.get("kind") or "")
         metric_id = str(item.get("metric_id") or "")
         raw_id = str(item.get("issue_id") or "")
         pages = tuple(int(page) for page in item.get("page_numbers", ()) if int(page) > 0)
         raw_evidence = tuple(_mappings(item.get("evidence")))
+        if (
+            visual_coverage_incomplete
+            and kind == "UNRESOLVED_METRIC"
+            and metric_id in _VISUAL_COVERAGE_COLLAPSED_METRICS
+        ):
+            continue
         if kind == "ATOMIC_DEFECT":
             continue
         if kind == "HARNESS_ERROR":

@@ -13,8 +13,8 @@ PPTX / rendered pages / source / request
 → visual / layout / content / full-deck eligibility
 ```
 
-main 只发布 v8.3；v1–v7 的 Profile、Oracle 入口和同期协议由
-`archive/v8.3-pre-release` 提供不可变回放。
+main 默认发布 Profile 8.4；四份 8.3 Profile 保留为显式只读回放合同。v1–v7
+的 Profile、Oracle 入口和同期协议由 `archive/v8.3-pre-release` 提供不可变回放。
 
 ## 原子作用域和完整审计
 
@@ -67,6 +67,10 @@ v8.3 新增两个只在所有页面均被判为 raster-only 时运行的 observa
 它们输出页级 `AtomicObservation`、短可见文字证据、独立路由和 usage；Reducer 仅在原
 deterministic owner 为 N/A 时采用该结果，不与规则平均，也不形成第二个公式入口。可编辑
 deck 会返回不计分 N/A 且不发起这两次模型调用。
+
+下述固定 4/8 页策略是显式 Profile 8.3 回放合同。默认 Profile 8.4 的
+`VisualPageIndex → Atlas Scout → VisualSelectionPlan` 和渐进复核详见
+[`adaptive_visual_evaluation.md`](adaptive_visual_evaluation.md)。
 
 视觉页选择策略 `2.0.0` 进一步区分“普通探索预算”和“规则兜底页”。普通页级 criterion
 仍以 4 页为风险/角色/探索预算，跨页 criterion 仍以 8 页为预算；但 composition、

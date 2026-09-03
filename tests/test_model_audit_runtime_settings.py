@@ -25,9 +25,9 @@ def test_settings_load_ignored_local_key_without_exposing_it(tmp_path) -> None:
     assert settings.base_url == DEFAULT_QWEN_BASE_URL
     assert settings.http_timeout_seconds == 120.0
     assert settings.model == "qwen3.8-flash"
-    assert settings.context_cache_enabled is False
+    assert settings.context_cache_enabled is True
     assert provider is not None and provider.model == "qwen3.8-flash"
-    assert provider.context_cache_enabled is False
+    assert provider.context_cache_enabled is True
     assert provider.timeout_seconds == 120.0
     assert secret not in repr(settings)
     assert secret not in repr(provider)
@@ -181,7 +181,7 @@ def test_http_timeout_is_environment_configurable_and_validated(tmp_path) -> Non
             raise AssertionError(f"invalid HTTP timeout {invalid!r} should fail")
 
 
-def test_qwen_context_cache_is_explicitly_opt_in_and_validated(tmp_path) -> None:
+def test_qwen_context_cache_defaults_on_and_can_be_disabled(tmp_path) -> None:
     settings = QwenAuditSettings.from_environment(
         {
             "DASHSCOPE_API_KEY": "sk-local-test-secret-value",
@@ -193,6 +193,17 @@ def test_qwen_context_cache_is_explicitly_opt_in_and_validated(tmp_path) -> None
     provider = settings.provider()
     assert settings.context_cache_enabled is True
     assert provider is not None and provider.context_cache_enabled is True
+
+    disabled = QwenAuditSettings.from_environment(
+        {
+            "DASHSCOPE_API_KEY": "sk-local-test-secret-value",
+            "PPT_EVAL_QWEN_CONTEXT_CACHE_ENABLED": "false",
+        },
+        workspace_root=tmp_path,
+    )
+    assert disabled.context_cache_enabled is False
+    assert disabled.provider() is not None
+    assert disabled.provider().context_cache_enabled is False
 
     with pytest.raises(ModelAuditConfigurationError, match="CONTEXT_CACHE"):
         QwenAuditSettings.from_environment(

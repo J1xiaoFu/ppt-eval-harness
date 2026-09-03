@@ -63,7 +63,7 @@ class QwenAuditSettings:
             "PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS",
             DEFAULT_QWEN_HTTP_TIMEOUT_SECONDS,
         )
-        context_cache_value = env.get("PPT_EVAL_QWEN_CONTEXT_CACHE_ENABLED", "false")
+        context_cache_value = env.get("PPT_EVAL_QWEN_CONTEXT_CACHE_ENABLED", "true")
         context_cache_enabled = _parse_boolean(
             context_cache_value,
             "PPT_EVAL_QWEN_CONTEXT_CACHE_ENABLED",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 import urllib.error
@@ -23,6 +24,7 @@ from ppt_eval.infrastructure import (
     QwenOpenAICompatibleProvider,
     qwen_model_audits,
 )
+from ppt_eval.oracles.model_audits import V83_GROUNDED_VLM_CRITERION_PROMPTS
 from tests.fixtures.pptx_factory import PNG_1X1
 
 QWEN_FLASH_MODEL = QWEN_PRIMARY_MODEL
@@ -161,6 +163,7 @@ def test_fake_transport_builds_non_streaming_structured_llm_request() -> None:
         payload = provider.audit(request)
     response = ModelAuditResponse.from_mapping(payload, request=request)
 
+    assert provider.maximum_http_attempts_per_audit == 2
     assert captured["auth_ok"] is True
     assert captured["timeout"] == 120.0
     body = captured["body"]
@@ -216,6 +219,127 @@ def test_qwen_context_cache_wire_shape_keeps_images_in_a_stable_prefix(tmp_path)
     assert provider.context_cache_enabled is True
 
 
+def test_profile83_grounded_wire_keeps_087_non_cached_body(tmp_path) -> None:
+    image_path = tmp_path / "slide.png"
+    image_path.write_bytes(PNG_1X1)
+    image = ModelImageInput.from_path(image_path, page_number=1)
+    captured: dict[str, Any] = {}
+
+    def fake_urlopen(http_request, *, timeout):
+        del timeout
+        captured["body"] = json.loads(http_request.data.decode("utf-8"))
+        return _FakeHttpResponse(_vendor_response())
+
+    request = ModelAuditRequest(
+        audit_id="grounded_vlm_composition_layout_audit_oracle",
+        metric_id="structured_vlm_composition_layout",
+        modality=ModelAuditModality.VLM,
+        prompt=V83_GROUNDED_VLM_CRITERION_PROMPTS["composition_layout"],
+        case_id="profile-83-wire-golden",
+        scene="FINISHED_DECK",
+        slides=({"page_number": 1, "text": "Title", "objects": []},),
+        context={
+            "input_trust": "UNTRUSTED_DATA",
+            "sampling_strategy_version": "2.0.0",
+        },
+        images=(image,),
+    )
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+        context_cache_enabled=True,
+    )
+
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        ModelAuditResponse.from_mapping(provider.audit(request), request=request)
+
+    body = captured["body"]
+    assert [item["role"] for item in body["messages"]] == ["system", "user"]
+    assert request.prompt.instructions in body["messages"][0]["content"]
+    content = body["messages"][1]["content"]
+    assert [item["type"] for item in content] == ["text", "text", "image_url"]
+    assert content[1]["text"].startswith("RENDERED_SLIDE_PAGE=1")
+    assert "cache_control" not in content[2]
+    assert body["temperature"] == 0
+    assert body["seed"] == 0
+    assert body["enable_thinking"] is True
+
+
+def test_profile84_cache_prefix_is_stable_before_criterion_risk_pages(
+    tmp_path,
+) -> None:
+    images = []
+    for page_number in range(1, 5):
+        path = tmp_path / f"slide-{page_number}.png"
+        path.write_bytes(PNG_1X1)
+        images.append(ModelImageInput.from_path(path, page_number=page_number))
+    prompt = PromptSpec(
+        prompt_id="profile-84-cache-order",
+        version="3.0.0",
+        instructions="Evaluate exactly one visual criterion.",
+    )
+
+    def request(risk_page: int) -> ModelAuditRequest:
+        return ModelAuditRequest(
+            audit_id="grounded_vlm_composition_layout_audit_oracle",
+            metric_id="structured_vlm_composition_layout",
+            modality=ModelAuditModality.VLM,
+            prompt=prompt,
+            case_id="cache-cohort",
+            scene="ready_made",
+            slides=tuple(
+                {"page_number": page_number, "text": "", "objects": []}
+                for page_number in range(1, 5)
+            ),
+            context={
+                "qwen_context_cache_profile_enabled": True,
+                "cache_prefix_pages": [1, 2],
+                "criterion_risk_pages": [risk_page],
+            },
+            images=(images[0], images[1], images[risk_page - 1]),
+        )
+
+    bodies: list[dict[str, Any]] = []
+
+    def fake_urlopen(http_request, *, timeout):
+        del timeout
+        bodies.append(json.loads(http_request.data.decode("utf-8")))
+        return _FakeHttpResponse(_vendor_response())
+
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+        context_cache_enabled=True,
+    )
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        provider.audit(request(3))
+        provider.audit(request(4))
+
+    common_prefix_hashes = [
+        hashlib.sha256(
+            json.dumps(
+                body["messages"][:2],
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        for body in bodies
+    ]
+    assert common_prefix_hashes[0] == common_prefix_hashes[1]
+    for body, risk_page in zip(bodies, (3, 4), strict=True):
+        common_text = json.dumps(body["messages"][1], ensure_ascii=False)
+        risk_text = json.dumps(body["messages"][3], ensure_ascii=False)
+        assert "RENDERED_SLIDE_PAGE=1" in common_text
+        assert "RENDERED_SLIDE_PAGE=2" in common_text
+        assert f"CRITERION_RISK_SLIDE_PAGE={risk_page}" not in common_text
+        assert f"CRITERION_RISK_SLIDE_PAGE={risk_page}" in risk_text
+        assert body["messages"][1]["content"][-1]["cache_control"] == {
+            "type": "ephemeral"
+        }
+
+
 def test_qwen_provider_can_reference_a_verified_signed_image_url(tmp_path) -> None:
     image_path = tmp_path / "slide.png"
     image_path.write_bytes(PNG_1X1)
@@ -267,6 +391,30 @@ def test_signed_image_url_transport_preserves_provider_image_size_limit(tmp_path
         lambda: provider.audit(_request(modality=ModelAuditModality.VLM, image=image)),
         contains="exceeds the size limit",
     )
+
+
+def test_provider_boundary_rejects_disguised_and_trailing_non_image_bytes(
+    tmp_path,
+) -> None:
+    disguised = tmp_path / "disguised-presentation.png"
+    disguised.write_bytes(b"PK\x03\x04raw-pptx-must-never-leave-host")
+    trailing = tmp_path / "image-with-pptx-trailer.png"
+    trailing.write_bytes(PNG_1X1 + b"PK\x03\x04hidden-pptx-trailer")
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+    )
+
+    for path in (disguised, trailing):
+        image = ModelImageInput.from_path(path, page_number=1)
+        _assert_raises(
+            QwenModelAuditProviderError,
+            lambda image=image: provider.audit(
+                _request(modality=ModelAuditModality.VLM, image=image)
+            ),
+            contains="safe raster validation",
+        )
 
 
 def test_model_usage_keeps_legacy_payload_compatible() -> None:

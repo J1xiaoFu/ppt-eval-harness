@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
@@ -42,6 +42,7 @@ class SupervisionOutcome:
     manifest: RunManifest
     score: ScoreBreakdown | None
     observations: tuple[AtomicObservation, ...] = ()
+    visual_contracts: Mapping[str, Any] = field(default_factory=dict)
 
 
 class RunSupervisor:
@@ -100,6 +101,7 @@ class RunSupervisor:
         history = [SupervisorState.OBSERVE]
         self._audit(run_id, "STATE_TRANSITION", {"state": "OBSERVE"}, started_at)
         scheduler_outcome: SchedulerOutcome | None = None
+        visual_contracts: Mapping[str, Any] = {}
 
         try:
             if case.scene != profile.scene:
@@ -124,6 +126,9 @@ class RunSupervisor:
                 memo={},
             )
             scheduler_outcome = self.scheduler.execute(dag, context, profile)
+            raw_visual_contracts = context.memo.get("ppt_eval.visual_contracts", {})
+            if isinstance(raw_visual_contracts, Mapping):
+                visual_contracts = dict(raw_visual_contracts)
 
             self._transition(history, SupervisorState.VERIFY, run_id)
             breakdown = self.aggregator.aggregate(
@@ -178,6 +183,7 @@ class RunSupervisor:
                 review_reasons=review_reasons,
                 errors=errors,
                 training_eligibility=training_eligibility,
+                visual_audit_summary=self._visual_audit_summary(visual_contracts),
                 created_at=completed_at,
             )
             manifest = RunManifest(
@@ -234,6 +240,7 @@ class RunSupervisor:
                 manifest,
                 breakdown,
                 scheduler_outcome.observations,
+                visual_contracts,
             )
         except Exception as exc:
             return self._failed_outcome(
@@ -246,6 +253,7 @@ class RunSupervisor:
                 profile_fingerprint=profile_fingerprint,
                 history=history,
                 scheduler_outcome=scheduler_outcome,
+                visual_contracts=visual_contracts,
                 exc=exc,
             )
 
@@ -261,6 +269,7 @@ class RunSupervisor:
         profile_fingerprint: str,
         history: list[SupervisorState],
         scheduler_outcome: SchedulerOutcome | None,
+        visual_contracts: Mapping[str, Any],
         exc: Exception,
     ) -> SupervisionOutcome:
         if history[-1] not in (SupervisorState.REVIEW, SupervisorState.FINALIZE):
@@ -284,6 +293,7 @@ class RunSupervisor:
             results=results,
             review_reasons=("harness_error",),
             errors=(message,),
+            visual_audit_summary=self._visual_audit_summary(visual_contracts),
             created_at=completed_at,
         )
         manifest = RunManifest(
@@ -325,7 +335,83 @@ class RunSupervisor:
             manifest,
             None,
             scheduler_outcome.observations if scheduler_outcome else (),
+            visual_contracts,
         )
+
+    @staticmethod
+    def _visual_audit_summary(
+        contracts: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
+        certificate = contracts.get("visual_coverage_certificate")
+        scout = contracts.get("atlas_scout")
+        plan = contracts.get("visual_selection_plan")
+        rounds = contracts.get("visual_audit_rounds", ())
+        if certificate is None and scout is None and plan is None:
+            return {}
+
+        def value(source: Any, name: str, default: Any) -> Any:
+            return getattr(source, name, default)
+
+        criterion_pages = value(certificate, "criterion_pages", {})
+        usage = value(certificate, "metadata", {})
+        usage = usage.get("usage", {}) if isinstance(usage, Mapping) else {}
+        return {
+            "total_pages": value(certificate, "total_pages", 0),
+            "atlas_covered_pages": len(
+                value(certificate, "atlas_covered_page_numbers", ())
+            ),
+            "atlas_coverage_complete": bool(
+                value(certificate, "atlas_coverage_complete", False)
+            ),
+            "criterion_high_resolution_pages": {
+                str(key): list(pages)
+                for key, pages in criterion_pages.items()
+            }
+            if isinstance(criterion_pages, Mapping)
+            else {},
+            "round_count": len(rounds) if isinstance(rounds, Sequence) else 0,
+            "stopping_reason": value(certificate, "stopping_reason", None),
+            "coverage_complete": bool(
+                value(certificate, "coverage_complete", False)
+            ),
+            "unresolved_risks": list(
+                value(certificate, "unresolved_risk_codes", ())
+            ),
+            "asset_transport": (
+                usage.get("asset_transport")
+                if isinstance(usage, Mapping)
+                else None
+            ),
+            "image_tokens": (
+                usage.get("image_tokens") if isinstance(usage, Mapping) else None
+            ),
+            "cached_tokens": (
+                usage.get("cached_tokens") if isinstance(usage, Mapping) else None
+            ),
+            "request_bytes": (
+                usage.get("request_bytes") if isinstance(usage, Mapping) else None
+            ),
+            "request_count": (
+                usage.get("request_count") if isinstance(usage, Mapping) else 0
+            ),
+            "usage_complete": (
+                usage.get("usage_complete")
+                if isinstance(usage, Mapping)
+                else False
+            ),
+            "cost_known": (
+                usage.get("cost_known")
+                if isinstance(usage, Mapping)
+                else False
+            ),
+            "reported_cost": (
+                usage.get("reported_cost")
+                if isinstance(usage, Mapping)
+                else None
+            ),
+            "selection_plan_id": value(plan, "plan_id", None),
+            "scout_id": value(scout, "scout_id", None),
+        }
 
     def _transition(
         self,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import os
 import time
 from pathlib import Path
@@ -7,13 +8,15 @@ from unittest.mock import patch
 from urllib.parse import urlsplit
 
 import pytest
+from PIL import Image, PngImagePlugin
 
 from ppt_eval.adapters import ModelImageInput, RenderResult
 from ppt_eval.api import create_app
-from ppt_eval.config import default_profile
+from ppt_eval.config import default_profile, profile_for_version
 from ppt_eval.domain import EvalCase, SceneType
 from ppt_eval.infrastructure.visual_assets import (
     DEFAULT_VISUAL_ASSET_TTL_SECONDS,
+    CanonicalModelImageCAS,
     SignedUrlVisualAssetTransport,
     VisualAssetAccessError,
     VisualAssetCAS,
@@ -24,8 +27,14 @@ from ppt_eval.infrastructure.visual_assets import (
     VisualAssetSigner,
     VisualAssetTransportConfig,
     VisualAssetVariant,
+    verified_raster_image,
 )
-from ppt_eval.runtime import LocalEvaluationRuntime, build_runtime_from_environment
+from ppt_eval.runtime import (
+    LocalEvaluationRuntime,
+    RuntimePaths,
+    _visual_asset_variant_for_path,
+    build_runtime_from_environment,
+)
 from tests.fixtures.api_client import make_test_client
 from tests.fixtures.pptx_factory import PNG_1X1, build_pptx
 
@@ -36,6 +45,43 @@ _ENVIRONMENT_KEYS = (
     "PPT_EVAL_VISUAL_ASSET_URL_TTL_SECONDS",
 )
 _SECRET = "test-only-signing-secret-with-at-least-32-bytes"
+
+
+class _TrailerRenderer:
+    renderer_id = "trailer-renderer"
+    version = "1.0"
+
+    def __init__(self, payload: bytes) -> None:
+        self.payload = payload
+
+    def render(self, pptx_path, output_dir) -> RenderResult:
+        del pptx_path
+        target = Path(output_dir) / "Slide1.png"
+        target.write_bytes(self.payload)
+        return RenderResult(self.renderer_id, self.version, (target,))
+
+
+def test_adaptive_visual_paths_route_to_their_narrow_signed_asset_variant(
+    tmp_path: Path,
+) -> None:
+    paths = RuntimePaths.under(tmp_path / "var")
+
+    assert _visual_asset_variant_for_path(
+        paths.artifacts / "visual-atlases" / "atlas.png",
+        paths,
+    ) == VisualAssetVariant.ATLAS
+    assert _visual_asset_variant_for_path(
+        paths.artifacts / "visual-crops" / "crop.png",
+        paths,
+    ) == VisualAssetVariant.CROP
+    assert _visual_asset_variant_for_path(
+        paths.render_cache / "cache" / "slide.png",
+        paths,
+    ) == VisualAssetVariant.SLIDE
+    assert _visual_asset_variant_for_path(
+        tmp_path / "outside.png",
+        paths,
+    ) == VisualAssetVariant.SLIDE
 
 
 def _visual_environment(**values: str) -> dict[str, str]:
@@ -316,7 +362,108 @@ def test_visual_cas_deduplicates_content_and_fails_closed_if_entry_changes(
         content_store.import_image(second, variant=VisualAssetVariant.SLIDE)
 
 
-def test_signed_runtime_normalizes_external_images_while_base64_is_unchanged(
+def test_profile84_model_image_cas_strips_metadata_and_pptx_trailer(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "render-with-hidden-content.png"
+    encoded = io.BytesIO()
+    metadata = PngImagePlugin.PngInfo()
+    metadata.add_text("private-note", "must-not-leave-the-host")
+    Image.new("RGB", (24, 12), "#3366CC").save(
+        encoded,
+        format="PNG",
+        pnginfo=metadata,
+    )
+    hidden_pptx = build_pptx(tmp_path / "hidden-source.pptx").read_bytes()
+    source.write_bytes(encoded.getvalue() + hidden_pptx)
+
+    store = CanonicalModelImageCAS(tmp_path / "model-image-cas")
+    normalized = store.prepare_slide_images((source,), expected_page_count=1)
+    output = Path(normalized[0].uri)
+    output_bytes = output.read_bytes()
+
+    assert normalized[0].media_type == "image/png"
+    assert not output_bytes.endswith(hidden_pptx)
+    assert b"must-not-leave-the-host" not in output_bytes
+    verified_raster_image(
+        output,
+        expected_sha256=normalized[0].sha256,
+        expected_media_type="image/png",
+        require_exact_container=True,
+    )
+    with Image.open(output) as decoded:
+        assert decoded.size == (24, 12)
+        assert "private-note" not in decoded.info
+
+
+def test_profile84_canonicalizes_renderer_output_before_model_use(
+    tmp_path: Path,
+) -> None:
+    deck = build_pptx(tmp_path / "renderer-source.pptx")
+    hidden_pptx = build_pptx(tmp_path / "renderer-hidden.pptx").read_bytes()
+    renderer_payload = PNG_1X1 + hidden_pptx
+    runtime = LocalEvaluationRuntime(
+        tmp_path / "var",
+        slide_renderer=_TrailerRenderer(renderer_payload),
+        review_rendering=True,
+    )
+
+    artifacts, versions = runtime._prepare_model_artifacts(
+        EvalCase(
+            case_id="renderer-normalization",
+            scene=SceneType.READY_MADE,
+            pptx_path=str(deck),
+        ),
+        default_profile(SceneType.READY_MADE),
+        None,
+    )
+
+    model_images = artifacts["slide_images"]
+    assert isinstance(model_images, tuple)
+    assert isinstance(model_images[0], ModelImageInput)
+    assert not Path(model_images[0].uri).read_bytes().endswith(hidden_pptx)
+    assert artifacts["render_result"].slide_images[0].read_bytes() == renderer_payload
+    assert artifacts["model_audit_rendering"]["rendered_page_set_sha256"]
+    assert versions == {
+        "model_audit_slides/trailer-renderer": "1.0",
+        "model_audit_slides/canonical-model-image-cas": "1.0.0",
+    }
+
+
+@pytest.mark.parametrize("source_format", ["PNG", "JPEG", "WEBP"])
+def test_profile84_model_image_cas_accepts_supported_single_frame_formats(
+    tmp_path: Path,
+    source_format: str,
+) -> None:
+    suffix = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp"}[source_format]
+    source = tmp_path / f"source{suffix}"
+    Image.new("RGB", (32, 18), "#DB2777").save(source, format=source_format)
+
+    normalized = CanonicalModelImageCAS(tmp_path / "cas").prepare_slide_images(
+        (source,),
+        expected_page_count=1,
+    )
+
+    assert normalized[0].media_type == "image/png"
+    with Image.open(normalized[0].uri) as image:
+        assert image.format == "PNG"
+        assert image.size == (32, 18)
+
+
+def test_profile84_model_image_cas_enforces_decoded_pixel_limit(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "four-pixels.png"
+    Image.new("RGB", (2, 2), "white").save(source, format="PNG")
+
+    with pytest.raises(VisualAssetAccessError, match="dimensions"):
+        CanonicalModelImageCAS(
+            tmp_path / "cas",
+            max_pixels=3,
+        ).prepare_slide_images((source,), expected_page_count=1)
+
+
+def test_profile84_normalizes_external_images_for_base64_and_signed_transport(
     tmp_path: Path,
 ) -> None:
     deck = build_pptx(tmp_path / "deck.pptx")
@@ -331,14 +478,28 @@ def test_signed_runtime_normalizes_external_images_while_base64_is_unchanged(
 
     base64_root = tmp_path / "base64-var"
     base64_runtime = LocalEvaluationRuntime(base64_root)
-    unchanged, unchanged_versions = base64_runtime._prepare_model_artifacts(
+    normalized_base64, unchanged_versions = base64_runtime._prepare_model_artifacts(
         case,
         profile,
         {"slide_images": (external,)},
     )
-    assert unchanged["slide_images"] == (external,)
-    assert unchanged_versions == {}
-    assert not (base64_root / "artifacts" / "slide-renders" / "visual-cas").exists()
+    base64_images = normalized_base64["slide_images"]
+    assert isinstance(base64_images, tuple)
+    assert isinstance(base64_images[0], ModelImageInput)
+    assert Path(base64_images[0].uri).is_relative_to(
+        (base64_root / "artifacts" / "slide-renders" / "model-image-cas").resolve()
+    )
+    assert unchanged_versions == {
+        "model_audit_slides/canonical-model-image-cas": "1.0.0"
+    }
+
+    legacy, legacy_versions = base64_runtime._prepare_model_artifacts(
+        case,
+        profile_for_version(SceneType.READY_MADE, "8.3"),
+        {"slide_images": (external,)},
+    )
+    assert legacy["slide_images"] == (external,)
+    assert legacy_versions == {}
 
     signed_root = tmp_path / "signed-var"
     render_root = signed_root / "artifacts" / "slide-renders"
@@ -375,9 +536,11 @@ def test_signed_runtime_normalizes_external_images_while_base64_is_unchanged(
     assert len(normalized_images) == 1
     assert isinstance(normalized_images[0], ModelImageInput)
     assert Path(normalized_images[0].uri).is_relative_to(
-        (render_root / "visual-cas").resolve()
+        (render_root / "model-image-cas").resolve()
     )
-    assert normalized_versions == {}
+    assert normalized_versions == {
+        "model_audit_slides/canonical-model-image-cas": "1.0.0"
+    }
 
 
 def test_signed_asset_endpoint_serves_only_registered_untampered_visuals(

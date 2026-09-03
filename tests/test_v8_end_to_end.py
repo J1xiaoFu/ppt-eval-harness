@@ -1,12 +1,82 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
-from ppt_eval.config import default_profile
+import pytest
+
+from ppt_eval.config import default_profile, profile_for_version
 from ppt_eval.domain import EvalCase, SceneType
 from ppt_eval.runtime import LocalEvaluationRuntime
 from tests.fixtures.pptx_factory import PNG_1X1, build_pptx
 from tests.test_grounded_visual_audit import GroundedFakeProvider
+
+
+def test_profile83_explicit_replay_skips_adaptive_visual_nodes(tmp_path: Path) -> None:
+    deck = build_pptx(tmp_path / "legacy-replay.pptx")
+    image = tmp_path / "legacy-replay.png"
+    image.write_bytes(PNG_1X1)
+    provider = GroundedFakeProvider()
+    provider.context_cache_enabled = True
+    runtime = LocalEvaluationRuntime(tmp_path / "legacy-var", vlm_provider=provider)
+
+    report = runtime.evaluate(
+        EvalCase(
+            case_id="profile-83-explicit-replay",
+            scene=SceneType.READY_MADE,
+            pptx_path=str(deck),
+        ),
+        profile_for_version(SceneType.READY_MADE, "8.3"),
+        artifacts={"slide_images": (image,)},
+    )
+
+    assert report["profile_version"] == "8.3"
+    assert "visual_audit_artifacts" not in report
+    assert report["visual_audit_summary"] == {}
+    assert all(
+        request.metric_id != "visual_atlas_scout_routing"
+        for request in provider.requests
+    )
+    structured = next(
+        item
+        for item in report["results"]
+        if item["metric_id"] == "structured_vlm_composition_layout"
+    )
+    assert structured["metadata"]["routing_attempts"][0][
+        "context_cache_enabled"
+    ] is False
+    assert "request_budget" not in structured["metadata"]
+    assert all(
+        "model_request_count" not in attempt
+        for attempt in structured["metadata"]["routing_attempts"]
+    )
+    assert structured["version"] == "8.3.0"
+    assert structured["metadata"]["prompt"]["version"] == "2.0.0"
+    assert all(
+        request.prompt.version in {"1.0.0", "2.0.0", "2.1.0"}
+        for request in provider.requests
+    )
+    reducer_results = [
+        item
+        for item in report["results"]
+        if item["oracle_id"] == "v8.quality_reducers"
+    ]
+    assert reducer_results
+    assert {item["version"] for item in reducer_results} == {"8.3.0"}
+    assert report["manifest"]["oracle_versions"]["v8.atomic_observations"] == (
+        "8.3.0"
+    )
+    assert report["manifest"]["oracle_versions"][
+        "v8.visual.composition_layout"
+    ] == "8.3.0"
+    assert report["manifest"]["oracle_versions"]["v8.quality_reducers"] == (
+        "8.3.0"
+    )
+    observations = json.loads(
+        Path(report["observation_artifact"]["uri"]).read_text(encoding="utf-8")
+    )
+    assert observations
+    assert {item["version"] for item in observations} == {"2.1.0"}
 
 
 def test_v8_is_default_and_emits_atomic_training_contract(tmp_path: Path) -> None:
@@ -31,7 +101,7 @@ def test_v8_is_default_and_emits_atomic_training_contract(tmp_path: Path) -> Non
     )
 
     assert profile.profile_id == "finished-deck-v8"
-    assert profile.version == "8.3"
+    assert profile.version == "8.4"
     assert len(provider.requests) == 6
     metric_ids = {item["metric_id"] for item in report["results"]}
     assert {
@@ -122,7 +192,15 @@ def test_v8_cross_provider_fallback_persists_complete_lineage(tmp_path: Path) ->
         "glm-5.3-flash",
     ]
     assert result["metadata"]["routing_usage"]["total_tokens"] == 400
-    assert result["cost"] == 0.008
+    assert result["cost"] == 0.0
+    initial = next(
+        item
+        for item in report["results"]
+        if item["metric_id"]
+        == "provisional_structured_vlm_composition_layout"
+    )
+    assert initial["cost"] == 0.008
+    assert result["metadata"]["initial_seed_cost_accounted_separately"] is True
     versions = report["manifest"]["model_versions"]
     assert versions["structured_vlm_composition_layout#flash"].startswith(
         "qwen-dashscope-openai-compatible/qwen3.8-flash@"
@@ -130,7 +208,9 @@ def test_v8_cross_provider_fallback_persists_complete_lineage(tmp_path: Path) ->
     assert versions["structured_vlm_composition_layout#advanced"].startswith(
         "zhipu-bigmodel-openai-compatible/glm-5.3-flash@"
     )
-    assert report["manifest"]["cost"] >= 0.028
+    assert report["manifest"]["cost"] == pytest.approx(0.001 + 0.004 * (
+        len(primary.requests) - 1 + len(fallback.requests)
+    ))
     assert report["training_eligibility"]["critical_issue_codes"] == []
     assert runtime.audit_log.verify() == (True, None)
 
@@ -190,9 +270,9 @@ def test_v8_raster_deck_recovers_required_text_metrics_as_atomic_observations(
         "raster_content_structure_vlm",
         "raster_language_consistency_vlm",
     } <= set(report["observation_summary"]["metric_ids"])
-    assert report["manifest"]["cost"] == 0.004 * (
-        len(provider.requests) + len(fallback.requests)
-    )
+    assert report["manifest"]["cost"] == pytest.approx(0.001 + 0.004 * (
+        len(provider.requests) - 1 + len(fallback.requests)
+    ))
     assert (
         "structured_vlm_raster_content_structure"
         in report["manifest"]["model_versions"]

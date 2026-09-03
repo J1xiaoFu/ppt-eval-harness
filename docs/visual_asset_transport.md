@@ -27,25 +27,35 @@ and expiry; paths and secrets never appear in the URL or persisted report. Origi
 PPTX, uploaded sources, and arbitrary files cannot be registered through this
 transport.
 
-Caller-supplied `slide_images` may originate outside the render cache. In signed-URL
-mode the runtime first validates each file's declared digest/media type and actual
-image format, rejects links and oversized inputs, and atomically copies the bytes to
-the content-addressed `slide-renders/visual-cas` directory. Only this immutable CAS
-copy is subsequently registered. The serving allow-list remains the render-cache
-root; an arbitrary caller pathname is never made remotely readable.
+Profile 8.4 never sends a caller or renderer byte stream directly. At Acquire time,
+`canonical-model-image-cas@1.0.0` verifies the declared digest and actual raster
+format, limits decoded dimensions, accepts one PNG/JPEG/WebP frame, applies EXIF
+orientation, composites transparency on white, and deterministically re-encodes only
+the visible pixels as a metadata-free PNG under
+`slide-renders/model-image-cas`. This removes ancillary metadata and trailing bytes,
+including a valid image followed by an embedded PPTX. Base64 and signed-URL requests
+both use this same frozen copy. The provider boundary independently rechecks its
+format, exact container end, size and SHA-256 before network I/O.
+
+Explicit Profile 8.3 replay retains its previous input behavior. In its optional
+signed-URL mode, external images are copied to `slide-renders/visual-cas` under the
+existing contract. The serving allow-list remains the render-cache root; an arbitrary
+caller pathname is never made remotely readable.
 
 This capability is infrastructure for provider-side image reuse. When enabled by
 the environment-aware runtime, the Qwen and GLM adapters publish each integrity-
 checked rendered page through this catalog and place the resulting stable HTTPS URL
-in the request. Base64 remains the default, so Profile 8.3 keeps its historical wire
-shape unless an operator explicitly opts in.
+in the request. Base64 remains the default transport. Profile 8.4 can reuse its stable
+Qwen image prefix without external object storage; explicit Profile 8.3 replay keeps
+the cache wire disabled.
 
 Qwen's cache-capable visual-prefix wire shape is a separate opt-in:
 
 ```dotenv
-PPT_EVAL_QWEN_CONTEXT_CACHE_ENABLED=false
+PPT_EVAL_QWEN_CONTEXT_CACHE_ENABLED=true
 ```
 
-Release 0.8.7 ships it disabled. Usage records include provider-reported image and
+Release 0.9.0 enables it only for Profile 8.4 high-resolution criterion calls. Atlas
+Scout and explicit Profile 8.3 replay keep it disabled. Usage records include provider-reported image and
 cache tokens plus measured request bytes; a URL alone must never be interpreted as
 proof that the provider reused visual computation or reduced billing.

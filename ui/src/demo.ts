@@ -18,10 +18,10 @@ export const demoTasks: ReviewTaskSummary[] = [
     review_state: "OPEN",
     created_at: "2026-08-28T09:42:00+08:00",
     profile_id: "finished-deck-v8",
-    profile_version: "8.3",
+    profile_version: "8.4",
     training_tracks: [],
     latest_review: null,
-    triage_policy_version: "audit-attention@0.8.6",
+    triage_policy_version: "audit-attention@0.9.0",
     attention_summary: { state: "ACTIONABLE", title: "有 2 类语义问题需要人工判断", description: "优先确认越界风险与任务忠实度。", total_count: 2, required_count: 2, raw_fact_count: 128 },
   },
   {
@@ -38,10 +38,10 @@ export const demoTasks: ReviewTaskSummary[] = [
     review_state: "OPEN",
     created_at: "2026-08-28T09:16:00+08:00",
     profile_id: "project-summary-v8",
-    profile_version: "8.3",
+    profile_version: "8.4",
     training_tracks: [],
     latest_review: null,
-    triage_policy_version: "audit-attention@0.8.6",
+    triage_policy_version: "audit-attention@0.9.0",
     attention_summary: { state: "ACTIONABLE", title: "评测结论需要立即处理", description: "主视图展示 3 个语义问题。", total_count: 3, required_count: 3, raw_fact_count: 96 },
   },
   {
@@ -58,18 +58,18 @@ export const demoTasks: ReviewTaskSummary[] = [
     review_state: "OPEN",
     created_at: "2026-08-28T08:54:00+08:00",
     profile_id: "multimodal-generation-v8",
-    profile_version: "8.3",
+    profile_version: "8.4",
     training_tracks: [],
     latest_review: null,
-    triage_policy_version: "audit-attention@0.8.6",
+    triage_policy_version: "audit-attention@0.9.0",
     attention_summary: { state: "ACTIONABLE", title: "通过样本的主动质量抽查", description: "主视图展示 1 个低优先语义问题。", total_count: 1, required_count: 0, raw_fact_count: 143 },
   },
 ];
 
 export const demoTask: ReviewTaskDetail = {
   ...demoTasks[0],
-  service_version: "0.8.7",
-  triage_policy_version: "audit-attention@0.8.6",
+  service_version: "0.9.0",
+  triage_policy_version: "audit-attention@0.9.0",
   report_hash: "292b35887e090000000000000000000000000000000000000000000000000000",
   observation_hash: "5bbaabaab4a20000000000000000000000000000000000000000000000000000",
   review_reasons: ["coverage:DEGRADED", "unresolved_metric:v8_functional_integrity"],
@@ -170,7 +170,7 @@ export const demoTask: ReviewTaskDetail = {
 
 export const demoAudit: FullAuditPayload = {
   run_id: demoTask.run_id,
-  service_version: "0.8.7",
+  service_version: "0.9.0",
   attention_summary: demoTask.attention_summary,
   results: [],
   gate_results: [

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import io
 import ipaddress
 import os
 import time
 import uuid
+import warnings
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -13,15 +15,18 @@ from threading import RLock
 from typing import Mapping, Sequence
 from urllib.parse import quote, unquote, urlsplit, urlunsplit
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageOps, UnidentifiedImageError
 
 from ppt_eval.adapters.model_audits import ModelImageInput
 from ppt_eval.infrastructure.local import sha256_file, validated_sha256
 
 VISUAL_ASSET_ROUTE = "/v1/model-assets"
 VISUAL_ASSET_TRANSPORT_VERSION = "1.0.0"
+CANONICAL_MODEL_IMAGE_CAS_VERSION = "1.0.0"
 DEFAULT_VISUAL_ASSET_TTL_SECONDS = 15 * 60
 DEFAULT_VISUAL_ASSET_MAX_BYTES = 20 * 1024 * 1024
+DEFAULT_VISUAL_ASSET_MAX_PIXELS = 25_000_000
+DEFAULT_VISUAL_ASSET_MAX_DIMENSION = 16_384
 _MINIMUM_SIGNING_SECRET_BYTES = 32
 _MAXIMUM_VISUAL_ASSET_TTL_SECONDS = 60 * 60
 _SUPPORTED_MEDIA_TYPES = {
@@ -41,6 +46,18 @@ _IMAGE_FORMAT_DETAILS = {
     "PNG": ("image/png", ".png"),
     "WEBP": ("image/webp", ".webp"),
 }
+
+
+@dataclass(frozen=True, slots=True)
+class VerifiedRasterImage:
+    """A bounded, integrity-checked raster snapshot read from one local file."""
+
+    data: bytes = field(repr=False)
+    image_format: str
+    media_type: str
+    width: int
+    height: int
+    sha256: str
 
 
 class VisualAssetVariant(str, Enum):
@@ -154,6 +171,268 @@ class SignedVisualAssetGrant:
     variant: VisualAssetVariant
     expires: int
     signature: str = field(repr=False)
+
+
+def verified_raster_image(
+    source: str | Path,
+    *,
+    expected_sha256: str | None = None,
+    expected_media_type: str | None = None,
+    max_bytes: int = DEFAULT_VISUAL_ASSET_MAX_BYTES,
+    max_pixels: int = DEFAULT_VISUAL_ASSET_MAX_PIXELS,
+    max_dimension: int = DEFAULT_VISUAL_ASSET_MAX_DIMENSION,
+    require_exact_container: bool = True,
+) -> VerifiedRasterImage:
+    """Read and validate one bounded PNG/JPEG/WebP snapshot.
+
+    ``require_exact_container`` rejects bytes after the image container.  The
+    canonicalization ingress deliberately sets it to ``False`` so a valid
+    image with metadata or a trailer can be decoded and re-encoded without the
+    hidden bytes.  Every provider-facing read keeps the strict default.
+    """
+
+    for label, value in (
+        ("max_bytes", max_bytes),
+        ("max_pixels", max_pixels),
+        ("max_dimension", max_dimension),
+    ):
+        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+            raise ValueError(f"{label} must be a positive integer")
+    path = Path(source)
+    try:
+        size = path.stat().st_size
+        if not path.is_file() or size <= 0:
+            raise OSError("not a non-empty regular file")
+        if size > max_bytes:
+            raise VisualAssetAccessError("visual asset exceeds the size limit")
+        with path.open("rb") as handle:
+            payload = handle.read(max_bytes + 1)
+    except VisualAssetAccessError:
+        raise
+    except OSError as exc:
+        raise VisualAssetAccessError("visual asset is unavailable") from exc
+    if len(payload) != size or len(payload) > max_bytes:
+        raise VisualAssetAccessError("visual asset changed or exceeded the size limit")
+    digest = hashlib.sha256(payload).hexdigest()
+    if expected_sha256 is not None and not hmac.compare_digest(
+        digest,
+        validated_sha256(expected_sha256),
+    ):
+        raise VisualAssetAccessError("visual asset failed integrity validation")
+
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(payload)) as image:
+                image_format = str(image.format or "").upper()
+                details = _IMAGE_FORMAT_DETAILS.get(image_format)
+                if details is None:
+                    raise VisualAssetAccessError(
+                        "only rendered PNG, JPEG, and WebP assets are supported"
+                    )
+                media_type, _suffix = details
+                if getattr(image, "n_frames", 1) != 1:
+                    raise VisualAssetAccessError(
+                        "animated visual assets are not supported"
+                    )
+                width, height = image.size
+                if (
+                    width <= 0
+                    or height <= 0
+                    or width > max_dimension
+                    or height > max_dimension
+                    or width * height > max_pixels
+                ):
+                    raise VisualAssetAccessError(
+                        "visual asset dimensions exceed the safe limit"
+                    )
+                image.verify()
+    except VisualAssetAccessError:
+        raise
+    except (
+        OSError,
+        SyntaxError,
+        UnidentifiedImageError,
+        Image.DecompressionBombError,
+        Image.DecompressionBombWarning,
+    ) as exc:
+        raise VisualAssetAccessError(
+            "visual asset is not a valid rendered raster image"
+        ) from exc
+
+    if expected_media_type is not None:
+        normalized_expected = _normalized_image_media_type(expected_media_type)
+        if normalized_expected != media_type:
+            raise VisualAssetAccessError(
+                "visual asset media type does not match its content"
+            )
+    if require_exact_container and not _has_exact_image_container(
+        payload,
+        image_format=image_format,
+    ):
+        raise VisualAssetAccessError(
+            "visual asset contains trailing or malformed container data"
+        )
+    return VerifiedRasterImage(
+        data=payload,
+        image_format=image_format,
+        media_type=media_type,
+        width=width,
+        height=height,
+        sha256=digest,
+    )
+
+
+class CanonicalModelImageCAS:
+    """Store only deterministic, metadata-free PNG pixels for Profile 8.4."""
+
+    version = CANONICAL_MODEL_IMAGE_CAS_VERSION
+
+    def __init__(
+        self,
+        root: str | Path,
+        *,
+        max_asset_bytes: int = DEFAULT_VISUAL_ASSET_MAX_BYTES,
+        max_pixels: int = DEFAULT_VISUAL_ASSET_MAX_PIXELS,
+        max_dimension: int = DEFAULT_VISUAL_ASSET_MAX_DIMENSION,
+    ) -> None:
+        for label, value in (
+            ("max_asset_bytes", max_asset_bytes),
+            ("max_pixels", max_pixels),
+            ("max_dimension", max_dimension),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+                raise ValueError(f"model image CAS {label} must be a positive integer")
+        self.root = Path(root)
+        self.max_asset_bytes = max_asset_bytes
+        self.max_pixels = max_pixels
+        self.max_dimension = max_dimension
+        self._lock = RLock()
+
+    def prepare_slide_images(
+        self,
+        value: object,
+        *,
+        expected_page_count: int | None = None,
+    ) -> tuple[ModelImageInput, ...]:
+        """Normalize a complete page set into immutable canonical PNG objects."""
+
+        if isinstance(value, (str, bytes, Path)) or not isinstance(value, Sequence):
+            raise TypeError("slide_images must be a sequence")
+        images = tuple(
+            self._canonicalize_item(item, default_page_number=index)
+            for index, item in enumerate(value, start=1)
+        )
+        page_numbers = tuple(item.page_number for item in images)
+        if len(page_numbers) != len(set(page_numbers)):
+            raise ValueError("rendered slide page numbers must be unique")
+        ordered = tuple(sorted(images, key=lambda item: item.page_number))
+        ordered_pages = tuple(item.page_number for item in ordered)
+        if expected_page_count is not None:
+            if (
+                isinstance(expected_page_count, bool)
+                or not isinstance(expected_page_count, int)
+                or expected_page_count < 1
+            ):
+                raise ValueError("expected_page_count must be a positive integer")
+            expected_pages = tuple(range(1, expected_page_count + 1))
+            if ordered_pages != expected_pages:
+                raise ValueError(
+                    "rendered slide images must cover every presentation page exactly once"
+                )
+        elif ordered_pages != tuple(range(1, len(ordered) + 1)):
+            raise ValueError("rendered slide page numbers must be contiguous and one-based")
+        return ordered
+
+    def _canonicalize_item(
+        self,
+        item: object,
+        *,
+        default_page_number: int,
+    ) -> ModelImageInput:
+        if isinstance(item, ModelImageInput):
+            page_number = item.page_number
+            source = item.uri
+            expected_sha256: str | None = item.sha256
+            expected_media_type: str | None = item.media_type
+        elif isinstance(item, Mapping):
+            page_number = _page_number(item.get("page_number", default_page_number))
+            source = str(item.get("uri") or item.get("path") or "")
+            if not source:
+                raise ValueError("rendered image mapping requires uri or path")
+            raw_sha256 = item.get("sha256")
+            raw_media_type = item.get("media_type")
+            if bool(raw_sha256) != bool(raw_media_type):
+                raise ValueError(
+                    "rendered image digest and media type must be supplied together"
+                )
+            expected_sha256 = str(raw_sha256) if raw_sha256 else None
+            expected_media_type = str(raw_media_type) if raw_media_type else None
+        else:
+            page_number = default_page_number
+            source = str(item)
+            expected_sha256 = None
+            expected_media_type = None
+
+        snapshot = verified_raster_image(
+            source,
+            expected_sha256=expected_sha256,
+            expected_media_type=expected_media_type,
+            max_bytes=self.max_asset_bytes,
+            max_pixels=self.max_pixels,
+            max_dimension=self.max_dimension,
+            # Trailers and metadata are accepted only at this one ingress and
+            # are removed by the deterministic pixel re-encode below.
+            require_exact_container=False,
+        )
+        canonical = _canonical_png(snapshot)
+        if len(canonical) > self.max_asset_bytes:
+            raise VisualAssetAccessError(
+                "canonical model image exceeds the size limit"
+            )
+        digest = hashlib.sha256(canonical).hexdigest()
+        destination = self._store_png(digest, canonical)
+        return ModelImageInput(
+            page_number=page_number,
+            uri=str(destination),
+            media_type="image/png",
+            sha256=digest,
+        )
+
+    def _store_png(self, digest: str, payload: bytes) -> Path:
+        root = self.root.resolve()
+        parent = root / digest[:2]
+        destination = parent / f"{digest}.png"
+        with self._lock:
+            parent.mkdir(parents=True, exist_ok=True)
+            if not parent.resolve().is_relative_to(root):
+                raise VisualAssetAccessError("model image CAS escaped its root")
+            if destination.is_symlink() or not destination.resolve().is_relative_to(root):
+                raise VisualAssetAccessError("model image CAS entry escaped its root")
+            if destination.exists():
+                existing = verified_raster_image(
+                    destination,
+                    expected_sha256=digest,
+                    expected_media_type="image/png",
+                    max_bytes=self.max_asset_bytes,
+                    max_pixels=self.max_pixels,
+                    max_dimension=self.max_dimension,
+                )
+                if not hmac.compare_digest(existing.data, payload):
+                    raise VisualAssetAccessError(
+                        "model image CAS entry failed integrity validation"
+                    )
+                return destination.resolve()
+            temporary = parent / f".{uuid.uuid4().hex}.tmp"
+            try:
+                with temporary.open("xb") as handle:
+                    handle.write(payload)
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, destination)
+            finally:
+                temporary.unlink(missing_ok=True)
+        return destination.resolve()
 
 
 class VisualAssetCAS:
@@ -635,20 +914,84 @@ def _page_number(value: object) -> int:
     return page_number
 
 
-def _inspected_image(path: Path) -> tuple[str, str, str]:
-    try:
-        with Image.open(path) as image:
-            image_format = str(image.format or "").upper()
-            image.verify()
-    except (OSError, SyntaxError, UnidentifiedImageError) as exc:
+def _normalized_image_media_type(value: str) -> str:
+    normalized = str(value).strip().casefold()
+    if normalized == "image/jpg":
+        return "image/jpeg"
+    if normalized not in {"image/png", "image/jpeg", "image/webp"}:
         raise VisualAssetAccessError(
-            "visual asset is not a valid rendered image"
-        ) from exc
-    details = _IMAGE_FORMAT_DETAILS.get(image_format)
-    if details is None:
-        raise VisualAssetAccessError(
-            "only rendered PNG, JPEG, and WebP assets may be registered"
+            "only image/png, image/jpeg, and image/webp are supported"
         )
+    return normalized
+
+
+def _has_exact_image_container(payload: bytes, *, image_format: str) -> bool:
+    if image_format == "PNG":
+        signature = b"\x89PNG\r\n\x1a\n"
+        if not payload.startswith(signature):
+            return False
+        offset = len(signature)
+        while offset + 12 <= len(payload):
+            chunk_size = int.from_bytes(payload[offset : offset + 4], "big")
+            chunk_type = payload[offset + 4 : offset + 8]
+            end = offset + 12 + chunk_size
+            if end > len(payload):
+                return False
+            offset = end
+            if chunk_type == b"IEND":
+                return chunk_size == 0 and offset == len(payload)
+        return False
+    if image_format == "JPEG":
+        return len(payload) >= 4 and payload.startswith(b"\xff\xd8") and payload.endswith(
+            b"\xff\xd9"
+        )
+    if image_format == "WEBP":
+        return (
+            len(payload) >= 12
+            and payload[:4] == b"RIFF"
+            and payload[8:12] == b"WEBP"
+            and int.from_bytes(payload[4:8], "little") + 8 == len(payload)
+        )
+    return False
+
+
+def _canonical_png(snapshot: VerifiedRasterImage) -> bytes:
+    try:
+        with Image.open(io.BytesIO(snapshot.data)) as source:
+            source.load()
+            transposed = ImageOps.exif_transpose(source)
+            if "A" in transposed.getbands():
+                rgba = transposed.convert("RGBA")
+                background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+                background.alpha_composite(rgba)
+                normalized = background.convert("RGB")
+                background.close()
+                rgba.close()
+            else:
+                normalized = transposed.convert("RGB")
+            if transposed is not source:
+                transposed.close()
+            encoded = io.BytesIO()
+            try:
+                normalized.save(
+                    encoded,
+                    format="PNG",
+                    optimize=False,
+                    compress_level=6,
+                )
+                return encoded.getvalue()
+            finally:
+                normalized.close()
+    except (OSError, ValueError, UnidentifiedImageError) as exc:
+        raise VisualAssetAccessError(
+            "visual asset could not be canonicalized safely"
+        ) from exc
+
+
+def _inspected_image(path: Path) -> tuple[str, str, str]:
+    snapshot = verified_raster_image(path)
+    image_format = snapshot.image_format
+    details = _IMAGE_FORMAT_DETAILS[image_format]
     media_type, suffix = details
     return image_format, media_type, suffix
 

@@ -189,9 +189,9 @@ def test_review_api_serves_queue_slides_artifacts_and_idempotent_history(
         )
     )
     client = make_test_client(lambda: create_app(runtime))
-    assert report["service_version"] == "0.8.7"
-    assert client.app.version == "0.8.7"
-    assert client.get("/healthz").json()["service_version"] == "0.8.7"
+    assert report["service_version"] == "0.9.0"
+    assert client.app.version == "0.9.0"
+    assert client.get("/healthz").json()["service_version"] == "0.9.0"
 
     queue = client.get("/v1/review/tasks?view=all").json()
     assert queue["total"] == 1

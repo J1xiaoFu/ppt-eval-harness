@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.local/ppt-eval/runtime-audit-event.schema.json",
   "title": "PPT Eval append-only runtime audit event",
-  "description": "Current v8.3 hash-chained runtime event. Historical schemas are preserved by archive/v8.3-pre-release.",
+  "description": "Current Profile 8.4 hash-chained runtime event using schema 1.0. Profile 8.3 remains an explicit replay contract; older schemas are preserved by archive/v8.3-pre-release.",
   "type": "object",
   "required": [
     "event_id",

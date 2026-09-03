@@ -3,6 +3,36 @@
 本文档只记录产品/软件发布版本。Evaluation Profile、Oracle/Prompt 和持久化 schema
 有独立版本，不会随产品版本自动变更。
 
+## 0.9.0 - 2026-09-03
+
+- 默认四场景 Evaluation Profile 升级为 `8.4`；固定基础权重、场景 lambda、
+  PDMS 公式和训练阈值不变。
+- 新增全页 `VisualPageIndex`，使用对象树、页图感知特征、素材 hash、规则风险和
+  两类确定性 cluster 为后续审计路由，不直接计分。
+- 新增 4×4 Atlas Scout，低分辨率覆盖全页；每批最多 192 页，长 deck 自动分批。
+  Scout 只输出页码、风险码、置信度和 criterion 建议，不输出分数或 PASS/FAIL。
+- 新增 `VisualSelectionPlan` P0–P3 统一选页，规则 CRITICAL 与未解硬门强制
+  进入对应 VLM criterion；普通高清预算为
+  `min(N, 16, 4 + ceil(sqrt(N)))`。
+- 局部 criterion 共用稳定 4 页视觉前缀，跨页/authorship 共用最多 8 页；
+  每轮仅追加 2 个唯一风险页。Qwen 3.8 继续主路，GLM 5.3 只复核同页同构念。
+- 高清审计采用两相执行：所有 criterion 先生成公共 cohort seed，raster 文字恢复随后
+  就绪，再使用真实 Reducer/PPT-PDMS 区间驱动独立 refinement；审计轮次只记录真实调用。
+- layout 与 asset cluster 分别由 composition 与 imagery 唯一负责覆盖；高清发现素材语义
+  缺陷后可在 Bmax 内惰性加入同 hash、相邻页和 medoid，无法容纳时转 REVIEW。
+- 新增线程安全的全局模型请求账本；HTTP 前预留最大重试上界，超时调用继续占额，避免
+  后台请求与后续 DAG 节点共同突破 Profile 的 64 次硬上限。
+- 新增只路由的保守对象树—像素矛盾代理，并将规则 object/bbox/defect 作为不可信假设
+  交给同构念 VLM 独立确认；规则本身仍不能直接作硬门最终决定。
+- 新增占位图、图库水印、图像语义错配和图内文字不可读路由；路由 Observation
+  不计分，最终仅由 `visual_communication` primary owner 计分，避免双罚。
+- `render_integrity` 改为诊断信号触发；无渲染警告、像素差异或 Scout 风险时
+  SKIPPED/N/A，不消耗模型请求。
+- 新增 `VisualAuditRound` 和 `VisualCoverageCertificate`；完整合同按 hash 进入
+  Manifest，审计台主视图只在 Coverage 不完整时呈现一条语义问题。
+- 保留四份 `8.3` Profile 作为显式只读回放合同；EvalReport/Audit schema
+  仍为 `1.0`，HTTP namespace 仍为 `/v1`。
+
 ## 0.8.7 - 2026-09-03
 
 - 新增 `release/version-matrix.json` 作为产品与评测合同版本的机器可读声明。

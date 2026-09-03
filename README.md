@@ -5,7 +5,7 @@ LLM/VLM 审计、原子观察、Reducer、PPT-PDMS 评分、训练准入和人�
 可解释、可追加审计的运行链。
 
 当前发布版是经过完整测试的**单机审计系统**：CLI、FastAPI、React 审计台、LibreOffice/
-PowerPoint 渲染、本地内容寻址存储与哈希链均可直接使用。默认 v8.3 Profile 仍标记为
+PowerPoint 渲染、本地内容寻址存储与哈希链均可直接使用。默认 Profile 8.4 仍标记为
 `PRE_RESEARCH`，表示权重和阈值尚未通过大规模人类金标完成生产校准，不应把当前分数解释为
 行业标准。
 
@@ -13,16 +13,17 @@ PowerPoint 渲染、本地内容寻址存储与哈希链均可直接使用。默
 
 | 层级 | 当前值 | 何时变更 |
 |---|---|---|
-| 产品/软件发布 | `0.8.7` | 服务、CLI、UI 或运维能力发布 |
-| Evaluation Profile | `8.3` / `PRE_RESEARCH` | 评分公式、权重、DAG 或准入语义改变 |
+| 产品/软件发布 | `0.9.0` | 服务、CLI、UI 或运维能力发布 |
+| Evaluation Profile | `8.4` / `PRE_RESEARCH` | 评分公式、权重、DAG 或准入语义改变 |
 | EvalReport / Audit schema | `1.0` | 持久化 JSON 出现不兼容变更 |
 | HTTP API namespace | `/v1` | 接口合同出现破坏性变更 |
 
-产品版本与评测 Profile 是两个独立版本轴。产品升到 `0.8.7` 不改变 Profile、
-Oracle/Prompt 版本、schema 或 `/v1`，历史 `8.3`/`1.0` run 仍可读取。本仓库在此前使用过
+产品版本与评测 Profile 是两个独立版本轴。`0.9.0` 同时发布默认 Profile 8.4，
+但 EvalReport/Audit schema 与 `/v1` 不变；历史 `8.3`/`1.0` run 仍可读取，四份
+Profile 8.3 也作为显式只读回放合同保留。本仓库在此前使用过
 `0.1.0` 打包占位值；`0.8.4` 开始统一产品版本出口，`0.8.5` 新增正式批处理 API，
 `0.8.6` 收敛跨 Composite 审计去重与冷构建锁定，`0.8.7` 建立机器可读版本矩阵与
-视觉输入复用基础。
+视觉输入复用基础，`0.9.0` 引入全页 Scout 与自适应高清复核。
 
 权威版本矩阵位于 [`release/version-matrix.json`](release/version-matrix.json)。发布前用下列命令检查
 Python、UI、OpenAPI、文档与评测合同是否漂移：
@@ -35,10 +36,10 @@ python scripts/release_version.py --check
 `--write` 不会改动 Profile、Composite、Oracle/Prompt、Selection、schema、API namespace 或
 Attention policy。
 
-`0.8.7` 只建立成本与复用底座：同一 PPTX 的逐页渲染可跨路径复用，模型路由记录
-`image_tokens/cached_tokens/request_bytes`。默认仍用 Base64 且关闭 Qwen 上下文缓存；需要
-公网传输复用时再按 [`docs/visual_asset_transport.md`](docs/visual_asset_transport.md) 显式启用
-短期签名 URL。这些开关不改变 Profile 8.3 的权重、选页和决策。
+`0.8.7` 建立渲染与视觉资产复用底座；Profile 8.4 在其上使用全页 4×4 Atlas
+Scout、P0–P3 统一选页和 4/8 页 Qwen 稳定公共前缀。Base64 仍是单机默认；
+需要公网传输复用时再按 [`docs/visual_asset_transport.md`](docs/visual_asset_transport.md) 启用
+短期签名 URL。实际节省只以 `cached_tokens` 和账单验证，不以 URL 命中推断。
 
 ## 1. 能做什么
 
@@ -48,13 +49,19 @@ Attention policy。
   为作用域保存 `AtomicObservation` 与完整 Evidence。
 - 使用规则负责可验证事实与 cap，使用 `qwen3.8-flash` 负责局部视觉/语义审计；同构念冲突、
   低置信或非法响应时才升级到 `glm-5.3-flash`。
-- 将所有同构念规则 `CRITICAL` 页加入 VLM 兜底，不让抽样上限漏掉硬门候选。
+- 对所有页构建低成本 `VisualPageIndex`，再用 Atlas Scout 发现占位图、水印、
+  图像语义错配、图内文字和单页异常。
+- 将所有同构念规则 `CRITICAL` 页加入 VLM 兜底；普通预算为
+  `min(N,16,4+ceil(sqrt(N)))`，每轮只增加 2 个唯一风险页。
+- 先让各独立 criterion 完成公共 cohort seed，再以真实 Reducer/PPT-PDMS 上下界驱动
+  风险页 refinement；全局原子请求账本在 HTTP 前预留重试上界，超时调用也不会逃逸 64 次硬上限。
 - 通过版本化 Reducer 生成 content、composition、typography、palette、visual communication、
   visual system 和 authorship specificity 构念；模型不能直接提交整份 PPT 总分。
 - 独立输出 visual、layout、content、full-deck 四条训练准入轨。
 - 在审计台中查看风险页、bbox、规则/VLM 证据、Gate/Reducer lineage、模型路由、Manifest，
   并追加不可变的人工 ReviewEvent。
-- 保存原 PPTX、完整 Observation、页图 Render Manifest 及逐图 SHA-256；运行事件写入哈希链。
+- 保存原 PPTX、完整 Observation、VisualPageIndex/Scout/Selection/Round/Coverage、
+  页图 Render Manifest 及逐图 SHA-256；运行事件写入哈希链。
 
 ## 2. 一分钟启动完整平台
 
@@ -298,7 +305,8 @@ python examples/generate_demo.py
 生成器默认只写入被忽略的 `var/demo-generated/`；即使显式指定输出，项目约定也只允许
 `var/` 下的目录。它不覆盖 tracked demo，正常使用后 `git status` 应保持干净。
 
-默认四场景 v8.3 Profile 已作为 package data 打进 wheel，不依赖当前工作目录。历史 v1–v7
+默认四场景 Profile 8.4 与四份显式 Profile 8.3 回放合同均已作为 package data
+打进 wheel，不依赖当前工作目录。历史 v1–v7
 Profile、旧 Oracle 入口和同期方法文档保存在不可变 tag `archive/v8.3-pre-release`。需要复现时
 使用独立 worktree，不要在当前 main 混用合同：
 
@@ -344,8 +352,9 @@ var/
 ├─ uploads/work/                 进程内上传工作区（崩溃孤儿需停服务后人工清理）
 ├─ runs/                         EvalReport、RunManifest、reviews.jsonl
 ├─ audit/events.jsonl            全局 append-only SHA-256 链
-├─ artifacts/                    内容寻址 PPTX / Observation / render manifest
+├─ artifacts/                    内容寻址 PPTX / Observation / 视觉合同 / render manifest
 ├─ artifacts/slide-renders/      输入哈希键控的逐页渲染缓存
+├─ artifacts/visual-atlases/     Profile 8.4 低分辨率全页 Atlas
 ├─ feedback/                     下游接受与 edit diff
 └─ proposals/                    参数提案事件
 ```
@@ -359,7 +368,7 @@ var/
 
 生产审计与开发审计是两套不同事实链：
 
-- `audit/schema/`：当前 v8.3 运行审计事件 schema。
+- `audit/schema/`：当前 Profile 8.4 运行审计事件 schema（仍为 `1.0`）。
 - `reports/01_research/`：调研、基线和数据许可。
 - `reports/02_development/`：SRS、ADR、威胁模型、追踪矩阵和版本卡。
 - `reports/03_evaluation/`：预注册、测试计划与真实切片实验记录。
@@ -387,17 +396,23 @@ vendored 上游源码本身硬编码的私有路径：它必须被明确标注�
 ```powershell
 python -m pytest -q
 python scripts/run_tests.py
+python scripts/release_version.py --check
+python scripts/benchmarks/profile84_long_deck_acceptance.py --output var/benchmarks/profile84-long-deck.json
 ruff check src tests scripts
+python -m mypy --strict <touched-python-files>
 pnpm --dir ui build
 docker compose config --quiet
 docker compose build api
+git diff --check
 ```
 
-第二条 runner 会在自身进程内提供仅支持当前 `raises / approx / importorskip` 用法的严格
+第二条 runner 会在自身进程内提供仅支持当前
+`raises / approx / importorskip / mark.parametrize` 用法的严格
 pytest facade。因此精简生产镜像没有 pytest 时也能运行 plain-assert 测试；缺失 `httpx`
 等可选测试传输时会显式记为 `SKIP`，不会以早退冒充 `PASS`。
 
-测试覆盖 Harness、当前 Profile/Oracle/Reducer、PPTX 安全、模型合同、artifact 完整性、审计
+无 Key 长 deck 基准是选页/缓存的离线发布门禁，不代替真实 VLM 质量验证。测试覆盖
+Harness、当前 Profile/Oracle/Reducer、PPTX 安全、模型合同、artifact 完整性、审计
 队列、Review 幂等性和 UI 构建。旧合同的原始测试随 archive tag 保存。
 
 ## 12. 项目结构
@@ -424,7 +439,7 @@ tests/                 单元、属性、集成和端到端测试
 
 ## 13. 当前边界
 
-- 默认 v8.3 权重仍处于预研阶段，尚未通过大规模人类金标完成生产校准。
+- 默认 Profile 8.4 权重仍处于预研阶段，尚未通过大规模人类金标完成生产校准。
 - 当前发布版是单机运行时；异步 Job 在 API 进程内，不是持久任务队列。进程重启后旧
   `job_id` 与未完成 Job 不保留，已落盘 run 和 ReviewEvent 保留。
 - 上传工作区没有跨进程 lease/TTL；崩溃孤儿需单机运维清理，服务不会在启动时自动删除。
@@ -440,6 +455,7 @@ tests/                 单元、属性、集成和端到端测试
 进一步阅读：
 
 - [v8 原子评测方法](docs/v8_atomic_evaluation_method.md)
+- [Profile 8.4 自适应视觉审计](docs/adaptive_visual_evaluation.md)
 - [服务端人工审计平台](docs/review_platform.md)
 - [模型审计 Provider 合同](docs/model_audit_provider_contract.md)
 - [项目文档索引](docs/project_index.md)

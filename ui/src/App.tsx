@@ -42,7 +42,7 @@ const viewLabel = { queue: "审计队列", all: "全部运行", completed: "已�
 const trackLabel = { visual: "视觉", layout: "版式", content: "内容", full_deck: "整套" };
 const severityLabel = { INFO: "信息", MINOR: "轻微", MAJOR: "主要", CRITICAL: "严重" };
 type ReviewView = keyof typeof viewLabel;
-type AuditTab = "score" | "facts" | "routes" | "manifest" | "history";
+type AuditTab = "score" | "facts" | "visual" | "routes" | "manifest" | "history";
 
 function locationSelection(): { view: ReviewView; runId: string } {
   const params = new URLSearchParams(window.location.search);
@@ -245,6 +245,9 @@ function FullAuditDrawer({
           <button className={tab === "facts" ? "active" : ""} onClick={() => onTab("facts")}>
             <Layers3 size={15} />底层事实
           </button>
+          <button className={tab === "visual" ? "active" : ""} onClick={() => onTab("visual")}>
+            <FileSearch size={15} />视觉覆盖
+          </button>
           <button className={tab === "routes" ? "active" : ""} onClick={() => onTab("routes")}>
             <Route size={15} />模型路由
           </button>
@@ -321,6 +324,27 @@ function FullAuditDrawer({
               {audit.model_routes.length === 0 && <p className="drawer-empty">该运行没有模型路由记录。</p>}
             </div>
           )}
+          {tab === "visual" && (
+            <div className="route-list">
+              <article>
+                <strong>Profile 8.4 自适应视觉审计摘要</strong>
+                <p>Atlas 全页覆盖、高清 criterion 选页、轮次停止和 Token 复用遥测。</p>
+                <pre>{JSON.stringify(audit.visual_audit_summary ?? {}, null, 2)}</pre>
+              </article>
+              {Object.entries(audit.visual_contract_artifacts ?? {}).map(([role, artifact]) => (
+                <article key={role}>
+                  <strong>{role}</strong>
+                  <p>sha256={valueText(artifact.sha256)} · {artifact.available ? "可验证" : "不可用"}</p>
+                  {artifact.available && artifact.url && (
+                    <a href={artifact.url} target="_blank" rel="noreferrer"><Download size={14} />打开完整合同</a>
+                  )}
+                </article>
+              ))}
+              {Object.keys(audit.visual_contract_artifacts ?? {}).length === 0 && (
+                <p className="drawer-empty">该历史运行没有 Profile 8.4 视觉合同。</p>
+              )}
+            </div>
+          )}
           {tab === "manifest" && <pre>{JSON.stringify(audit.manifest ?? {}, null, 2)}</pre>}
           {tab === "history" && (
             <div className="history-list">
@@ -345,6 +369,9 @@ function FullAuditDrawer({
           {task.artifacts.observations_url && <a href={task.artifacts.observations_url} target="_blank" rel="noreferrer"><Download size={15} />完整 Observation</a>}
           {task.artifacts.render_manifest_url && <a href={task.artifacts.render_manifest_url} target="_blank" rel="noreferrer"><Download size={15} />Render Manifest</a>}
           {task.artifacts.source_pptx_url && <a href={task.artifacts.source_pptx_url}><Download size={15} />原始 PPTX</a>}
+          {Object.entries(task.artifacts.visual_contract_urls ?? {}).map(([role, url]) => url && (
+            <a key={role} href={url} target="_blank" rel="noreferrer"><Download size={15} />{role}</a>
+          ))}
           {task.inputs?.filter((input) => input.role === "source_material" || input.role === "asset").map((input) => {
             const label = `${input.role === "source_material" ? "来源" : "素材"}：${input.original_name}`;
             return input.available && input.download_url ? (

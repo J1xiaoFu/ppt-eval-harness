@@ -1281,6 +1281,16 @@ def create_app(
                 if detail["artifacts"]["slide_render_manifest"]["available"]
                 else None
             ),
+            "visual_contract_urls": {
+                role: (
+                    f"/v1/review/tasks/{run_id}/artifacts/{role}"
+                    if isinstance(reference, Mapping)
+                    and reference.get("available") is True
+                    else None
+                )
+                for role, reference in detail["artifacts"].items()
+                if role.startswith("visual_") or role == "atlas_scout"
+            },
         }
         detail["audit_url"] = f"/v1/review/tasks/{run_id}/audit"
         detail["issues"] = [
@@ -1308,6 +1318,7 @@ def create_app(
             detail.pop(key, None)
         detail.pop("attention_details", None)
         detail.pop("observation_count", None)
+        detail.pop("visual_audit_summary", None)
         return _public_report(detail)
 
     @app.get("/v1/review/tasks/{run_id}/audit")
@@ -1323,6 +1334,19 @@ def create_app(
         observation = artifact_links.get("atomic_observations")
         observation = observation if isinstance(observation, Mapping) else {}
         observation_available = observation.get("available") is True
+        visual_contract_artifacts = {
+            role: {
+                **dict(reference),
+                "url": (
+                    f"/v1/review/tasks/{run_id}/artifacts/{role}"
+                    if reference.get("available") is True
+                    else None
+                ),
+            }
+            for role, reference in artifact_links.items()
+            if isinstance(reference, Mapping)
+            and (role.startswith("visual_") or role == "atlas_scout")
+        }
         return _public_report(
             {
                 "run_id": run_id,
@@ -1333,6 +1357,8 @@ def create_app(
                 "service_version": detail.get("service_version", "0.8.3"),
                 "attention_summary": detail["attention_summary"],
                 "attention_details": detail["attention_details"],
+                "visual_audit_summary": detail.get("visual_audit_summary", {}),
+                "visual_contract_artifacts": visual_contract_artifacts,
                 "observation_artifact": {
                     "available": observation_available,
                     "url": (
