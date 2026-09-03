@@ -11,6 +11,7 @@ from ppt_eval.adapters import (
     ModelAuditRequest,
     ModelAuditResponse,
     ModelImageInput,
+    ModelUsage,
     PptxAdapter,
     PromptSpec,
 )
@@ -32,6 +33,7 @@ from ppt_eval.oracles import (
     V8_GROUNDED_VLM_CRITERION_PROMPTS,
     GroundedSingleCriterionVlmOracle,
 )
+from ppt_eval.oracles.model_audits import _sum_model_usage
 from tests.fixtures.pptx_factory import PNG_1X1, build_pptx
 
 BASE_VISUAL_CRITERIA = tuple(
@@ -545,6 +547,134 @@ def test_grounded_oracle_caps_high_score_without_positive_evidence(tmp_path) -> 
         result.metadata["score_adjustments"] == ["POSITIVE_SIGNAL_CAP_0_79"]
         for result in results
     )
+
+
+def test_grounded_oracle_preserves_extended_usage_in_routing_metadata(
+    tmp_path,
+) -> None:
+    def add_usage_telemetry(payload: dict[str, Any]) -> None:
+        payload["usage"].update(
+            image_tokens=96,
+            cached_tokens=48,
+            cache_creation_input_tokens=24,
+            request_bytes=4096,
+            cost_known=True,
+        )
+
+    context = _single_page_context(tmp_path)
+    provider = GroundedFakeProvider(add_usage_telemetry)
+    result = GroundedSingleCriterionVlmOracle(
+        "composition_layout",
+        provider,
+        PptxAdapter(backend="ooxml"),
+    ).evaluate(context)
+
+    assert result.metric_status == MetricStatus.SCORED
+    assert result.metadata["usage"] == {
+        "input_tokens": 120,
+        "output_tokens": 80,
+        "total_tokens": 200,
+        "cost": 0.004,
+        "image_tokens": 96,
+        "cached_tokens": 48,
+        "cache_creation_input_tokens": 24,
+        "request_bytes": 4096,
+        "cost_known": True,
+    }
+
+
+def test_grounded_oracle_records_non_sensitive_provider_runtime_metadata(
+    tmp_path,
+) -> None:
+    context = _single_page_context(tmp_path)
+    provider = GroundedFakeProvider()
+    provider.image_transport_mode = "signed-url"
+    provider.context_cache_enabled = True
+
+    result = GroundedSingleCriterionVlmOracle(
+        "composition_layout",
+        provider,
+        PptxAdapter(backend="ooxml"),
+    ).evaluate(context)
+
+    assert result.metric_status == MetricStatus.SCORED
+    assert result.metadata["image_transport_mode"] == "signed-url"
+    assert result.metadata["context_cache_enabled"] is True
+
+
+def test_criterion_retry_aggregates_extended_usage_telemetry(tmp_path) -> None:
+    class RetryProvider:
+        def __init__(self) -> None:
+            self.call_count = 0
+
+        def audit(self, request: ModelAuditRequest) -> Mapping[str, Any]:
+            self.call_count += 1
+            payload = _grounded_response(request)
+            payload["usage"].update(
+                image_tokens=10 * self.call_count,
+                cached_tokens=4 * self.call_count,
+                cache_creation_input_tokens=2 * self.call_count,
+                request_bytes=100 * self.call_count,
+                cost_known=True,
+            )
+            if self.call_count == 1:
+                payload["evidence"][0]["payload"].pop(
+                    "positive_quality_signals"
+                )
+            return payload
+
+    context = _single_page_context(tmp_path)
+    provider = RetryProvider()
+    result = GroundedSingleCriterionVlmOracle(
+        "composition_layout",
+        provider,
+        PptxAdapter(backend="ooxml"),
+    ).evaluate(context)
+
+    assert provider.call_count == 2
+    assert result.metric_status == MetricStatus.SCORED
+    assert result.metadata["criterion_retry_count"] == 1
+    assert result.metadata["usage"] == {
+        "input_tokens": 240,
+        "output_tokens": 160,
+        "total_tokens": 400,
+        "cost": 0.008,
+        "image_tokens": 30,
+        "cached_tokens": 12,
+        "cache_creation_input_tokens": 6,
+        "request_bytes": 300,
+        "cost_known": True,
+    }
+
+
+def test_sum_model_usage_omits_optional_total_if_any_attempt_omits_it() -> None:
+    first = ModelUsage(
+        input_tokens=100,
+        output_tokens=20,
+        cost=0.01,
+        image_tokens=70,
+        cached_tokens=30,
+        cache_creation_input_tokens=10,
+        request_bytes=4096,
+        cost_known=True,
+    )
+    second = ModelUsage(
+        input_tokens=80,
+        output_tokens=15,
+        cost=0.02,
+        cost_known=True,
+    )
+
+    usage = _sum_model_usage(first, second).to_mapping()
+
+    assert usage["input_tokens"] == 180
+    assert usage["output_tokens"] == 35
+    assert usage["cost"] == pytest.approx(0.03)
+    assert usage["cost_known"] is True
+    assert "image_tokens" not in usage
+    assert "cached_tokens" not in usage
+    assert "cache_creation_input_tokens" not in usage
+    assert "request_bytes" not in usage
 
 
 def test_grounded_oracle_rejects_affected_page_that_was_not_rendered(tmp_path) -> None:

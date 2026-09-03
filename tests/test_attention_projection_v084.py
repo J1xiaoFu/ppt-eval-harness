@@ -514,7 +514,7 @@ def test_new_and_legacy_reports_project_service_versions(tmp_path: Path) -> None
             pptx_path=str(deck),
         )
     )
-    assert report["service_version"] == "0.8.6"
+    assert report["service_version"] == "0.8.7"
 
     legacy = runtime.repository.get(report["run_id"])
     legacy.pop("service_version", None)

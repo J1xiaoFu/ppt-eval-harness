@@ -3,6 +3,24 @@
 本文档只记录产品/软件发布版本。Evaluation Profile、Oracle/Prompt 和持久化 schema
 有独立版本，不会随产品版本自动变更。
 
+## 0.8.7 - 2026-09-03
+
+- 新增 `release/version-matrix.json` 作为产品与评测合同版本的机器可读声明。
+- 新增默认只读的 `scripts/release_version.py --check`，统一检查 Python、UI、
+  OpenAPI、README、四份默认 Profile 与测试版本出口；`--write` 仅同步产品版本。
+- 统一 CLI、FastAPI、审计台和 OpenAPI 对外显示的产品版本为 `0.8.7`。
+- 渲染缓存改为由 PPTX 内容、渲染器、字体指纹和渲染策略共同寻址；同一文件换路径或
+  case ID 后不再重复渲染，旧缓存只供原运行显式读取。
+- 模型 usage 新增图片、缓存创建/命中、请求字节与费用可观测性，并贯穿重试和跨模型路由。
+- 新增默认关闭的 Qwen 视觉前缀缓存 wire contract；关闭时保持 Profile 8.3 请求不变。
+- Base64 仍是零配置默认；显式配置公网 HTTPS 与 HMAC 密钥后，可让 Qwen/GLM 通过
+  短期签名 URL 复用已注册页图，原始 PPTX 永不进入该路由。
+
+Evaluation Profile 仍为 `8.3 / PRE_RESEARCH`，Composite 仍为 `8.3.0`，Atomic Observation
+仍为 `2.1.0`，Grounded VLM/Selection 合同仍为 `2.x`，EvalReport/Audit schema
+仍为 `1.0`，HTTP namespace 仍为 `/v1`，Attention policy 仍为
+`audit-attention@0.8.6`。
+
 ## 0.8.6 - 2026-08-28
 
 - 按“具体 `semantic_code` + 完整受影响页”合并跨 Composite 重复主卡，同一页的

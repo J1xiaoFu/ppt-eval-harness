@@ -96,6 +96,8 @@ geometry、typography、contrast、effective resolution 属于可争议规则候
 - Provider/model/version
 - request/response fingerprint
 - input/output/total tokens
+- image/cached/cache-creation tokens（Provider 实际返回时）
+- 实际 JSON request bytes
 - usage completeness
 - retry count/reason
 - reported cost 与 `cost_known`
@@ -103,6 +105,10 @@ geometry、typography、contrast、effective resolution 属于可争议规则候
 
 Provider 未返回货币成本时，`0.0` 不解释为免费。Primary 与 Fallback 的 usage 都计入 run，不能
 只统计最终被采用的调用。
+
+0.8.7 增加两项不改变 Profile 的可选传输能力：完整配置公网 HTTPS/HMAC 后，Provider 可引用
+同一注册页图的短期签名 URL；Qwen 视觉前缀缓存 wire contract 由独立开关控制且默认关闭。
+URL 复用不自动证明视觉 Token 或账单下降，必须以 `cached_tokens` 和实际费用核验。
 
 ## 安全
 
@@ -119,6 +125,7 @@ PPT_EVAL_QWEN_AUDIT_ENABLED=true
 DASHSCOPE_API_KEY=...
 PPT_EVAL_QWEN_FLASH_MODEL=qwen3.8-flash
 PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS=120
+PPT_EVAL_QWEN_CONTEXT_CACHE_ENABLED=false
 
 PPT_EVAL_ZHIPU_AUDIT_ENABLED=true
 ZAI_API_KEY=...

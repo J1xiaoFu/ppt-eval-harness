@@ -6,7 +6,9 @@ import math
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Mapping, Sequence
+from typing import Callable, Mapping, Sequence
+
+from ppt_eval.adapters.model_audits import ModelImageInput
 
 from .qwen_model_audits import (
     DEFAULT_QWEN_HTTP_TIMEOUT_SECONDS,
@@ -35,6 +37,7 @@ class QwenAuditSettings:
     base_url: str
     model: str
     http_timeout_seconds: float
+    context_cache_enabled: bool
     api_key_source: str
     api_key: str | None = field(default=None, repr=False)
 
@@ -60,6 +63,11 @@ class QwenAuditSettings:
             "PPT_EVAL_QWEN_HTTP_TIMEOUT_SECONDS",
             DEFAULT_QWEN_HTTP_TIMEOUT_SECONDS,
         )
+        context_cache_value = env.get("PPT_EVAL_QWEN_CONTEXT_CACHE_ENABLED", "false")
+        context_cache_enabled = _parse_boolean(
+            context_cache_value,
+            "PPT_EVAL_QWEN_CONTEXT_CACHE_ENABLED",
+        )
         if explicitly_enabled is False:
             # An operational kill switch must not even open the local secret
             # file.  This also keeps maintenance-only CLI commands usable when
@@ -69,6 +77,7 @@ class QwenAuditSettings:
                 base_url=base_url,
                 model=model,
                 http_timeout_seconds=http_timeout_seconds,
+                context_cache_enabled=context_cache_enabled,
                 api_key_source="disabled",
                 api_key=None,
             )
@@ -106,6 +115,7 @@ class QwenAuditSettings:
             base_url=base_url,
             model=model,
             http_timeout_seconds=http_timeout_seconds,
+            context_cache_enabled=context_cache_enabled,
             api_key_source=source,
             api_key=key or None,
         )
@@ -113,6 +123,7 @@ class QwenAuditSettings:
     def provider(
         self,
         *,
+        image_url_resolver: Callable[[ModelImageInput], str] | None = None,
         protected_secrets: Sequence[str] = (),
     ) -> QwenModelAuditProvider | None:
         if not self.enabled or not self.api_key:
@@ -122,6 +133,8 @@ class QwenAuditSettings:
             self.base_url,
             self.model,
             timeout_seconds=self.http_timeout_seconds,
+            context_cache_enabled=self.context_cache_enabled,
+            image_url_resolver=image_url_resolver,
             protected_secrets=protected_secrets,
         )
 
@@ -213,6 +226,7 @@ class ZhipuAuditSettings:
     def provider(
         self,
         *,
+        image_url_resolver: Callable[[ModelImageInput], str] | None = None,
         protected_secrets: Sequence[str] = (),
     ) -> ZhipuModelAuditProvider | None:
         if not self.enabled or not self.api_key:
@@ -222,6 +236,7 @@ class ZhipuAuditSettings:
             self.base_url,
             self.model,
             timeout_seconds=self.http_timeout_seconds,
+            image_url_resolver=image_url_resolver,
             protected_secrets=protected_secrets,
         )
 

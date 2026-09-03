@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import builtins
+import hashlib
+import hmac
 import json
 import mimetypes
 import os
 import shutil
 import tempfile
 import threading
+import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
@@ -47,11 +50,31 @@ from ppt_eval.infrastructure import (
     sha256_file,
     to_primitive,
 )
+from ppt_eval.infrastructure.visual_assets import (
+    SignedUrlVisualAssetTransport,
+    VisualAssetCAS,
+    VisualAssetCatalog,
+    VisualAssetTransportConfig,
+    VisualAssetVariant,
+)
 from ppt_eval.oracles import build_default_registry
 from ppt_eval.reporting import export_run_report
 from ppt_eval.version import __version__
 
 _RENDER_MANIFEST_NAME = "render-manifest.json"
+_RENDER_MANIFEST_SCHEMA_VERSION = "2.0"
+_RENDER_POLICY: Mapping[str, str] = {
+    "image_format": "png",
+    "output_size": "renderer-default",
+    "page_selection": "all",
+    "policy_id": "native-full-slide",
+    "version": "1.0",
+}
+_NON_REUSABLE_FONT_SCOPE_PREFIX = "unavailable-run:"
+
+
+class RenderSourceChangedError(RuntimeError):
+    """The presentation changed while its rendered evidence was acquired."""
 
 
 class SlideRenderer(Protocol):
@@ -107,6 +130,7 @@ class LocalEvaluationRuntime:
         *,
         vlm_provider: ModelAuditProvider | None = None,
         advanced_vlm_provider: ModelAuditProvider | None = None,
+        visual_asset_transport: SignedUrlVisualAssetTransport | None = None,
         slide_renderer: SlideRenderer | None = None,
         review_rendering: bool = False,
     ) -> None:
@@ -122,6 +146,7 @@ class LocalEvaluationRuntime:
             advanced_vlm_provider=advanced_vlm_provider,
         )
         self._vlm_enabled = vlm_provider is not None
+        self.visual_asset_transport = visual_asset_transport
         self._slide_renderer = slide_renderer
         self._review_rendering = bool(review_rendering)
         self.feedback_store = JsonlRecordStore(self.paths.root / "feedback" / "records.jsonl")
@@ -207,8 +232,14 @@ class LocalEvaluationRuntime:
                 },
             )
         render_result = prepared_artifacts.get("render_result")
+        rendering_metadata = prepared_artifacts.get("model_audit_rendering")
+        rendering_metadata = (
+            rendering_metadata if isinstance(rendering_metadata, Mapping) else {}
+        )
         render_manifest_artifact: Mapping[str, Any] | None = None
-        render_cache_key = str(outcome.manifest.input_hash or "")
+        render_cache_key = str(
+            rendering_metadata.get("cache_key") or outcome.manifest.input_hash or ""
+        )
         if isinstance(render_result, RenderResult):
             render_manifest_path = (
                 self.paths.render_cache
@@ -395,6 +426,26 @@ class LocalEvaluationRuntime:
         artifacts: Mapping[str, Any] | None,
     ) -> tuple[Mapping[str, Any], Mapping[str, str]]:
         prepared = dict(artifacts or {})
+        if self.visual_asset_transport is not None and artifacts is not None:
+            supplied_images: object | None = prepared.get("slide_images")
+            supplied_render = prepared.get("render_result")
+            if supplied_images is None and isinstance(supplied_render, RenderResult):
+                supplied_images = supplied_render.slide_images
+            if supplied_images is not None:
+                try:
+                    prepared["slide_images"] = (
+                        self.visual_asset_transport.prepare_slide_images(
+                            supplied_images
+                        )
+                    )
+                except (OSError, TypeError, ValueError) as exc:
+                    prepared.pop("slide_images", None)
+                    prepared.pop("render_result", None)
+                    prepared["model_audit_rendering"] = {
+                        "status": "UNAVAILABLE",
+                        "error_type": type(exc).__name__,
+                    }
+                    return prepared, {"model_audit_slides": "unavailable"}
         if not self._should_render_model_inputs(profile, prepared):
             return prepared, {}
 
@@ -410,10 +461,15 @@ class LocalEvaluationRuntime:
                 raise RuntimeError(
                     "native rendering is disabled for active or externally linked content"
                 )
-            render_result, cache_hit = self._render_for_model_audit(
+            render_result, cache_hit, render_cache_key = self._render_for_model_audit(
                 case,
                 expected_slide_count=presentation.slide_count,
             )
+        except RenderSourceChangedError:
+            # A source mutation invalidates both rendered and deterministic
+            # evidence.  Unlike an unavailable renderer, this must abort the
+            # run instead of degrading to an apparently valid partial report.
+            raise
         except Exception as exc:
             # Rendering is an optional evidence acquisition step.  Do not let
             # Office/COM/process failures abort deterministic evaluation, and
@@ -433,6 +489,7 @@ class LocalEvaluationRuntime:
             "renderer_id": render_result.renderer_id,
             "renderer_version": render_result.renderer_version,
             "slide_count": len(render_result.slide_images),
+            "cache_key": render_cache_key,
         }
         return prepared, {
             f"model_audit_slides/{render_result.renderer_id}": (
@@ -471,24 +528,58 @@ class LocalEvaluationRuntime:
         case: EvalCase,
         *,
         expected_slide_count: int,
-    ) -> tuple[RenderResult, bool]:
-        input_hash = RunSupervisor._input_hash(case)
-        cache_dir = self.paths.render_cache / input_hash
+    ) -> tuple[RenderResult, bool, str]:
+        source_sha256 = sha256_file(case.pptx_path)
+        font_cache_identity = (
+            self._font_fingerprint
+            if _is_sha256(self._font_fingerprint)
+            else f"{_NON_REUSABLE_FONT_SCOPE_PREFIX}{uuid.uuid4().hex}"
+        )
         with self._render_lock:
-            cached = _load_render_cache(
-                cache_dir,
-                expected_input_hash=input_hash,
-                expected_slide_count=expected_slide_count,
-            )
-            if cached is not None:
-                return cached, True
-
             self.paths.render_cache.mkdir(parents=True, exist_ok=True)
             failures: list[str] = []
             for renderer in self._renderer_candidates():
+                try:
+                    renderer_id = str(renderer.renderer_id).strip()
+                    renderer_version = str(renderer.version).strip()
+                    cache_key = _render_cache_key(
+                        source_sha256=source_sha256,
+                        renderer_id=renderer_id,
+                        renderer_version=renderer_version,
+                        font_fingerprint=font_cache_identity,
+                        render_policy=_RENDER_POLICY,
+                    )
+                    cache_dir = self.paths.render_cache / cache_key
+                    cached = _load_render_cache(
+                        cache_dir,
+                        expected_cache_key=cache_key,
+                        expected_source_sha256=source_sha256,
+                        expected_slide_count=expected_slide_count,
+                        expected_renderer_id=renderer_id,
+                        expected_renderer_version=renderer_version,
+                        expected_font_fingerprint=font_cache_identity,
+                        expected_render_policy=_RENDER_POLICY,
+                    )
+                    if cached is not None:
+                        _assert_render_source_unchanged(
+                            case.pptx_path,
+                            expected_sha256=source_sha256,
+                        )
+                        return cached, True, cache_key
+                    if cache_dir.exists():
+                        _remove_invalid_render_cache(
+                            cache_dir,
+                            expected_parent=self.paths.render_cache,
+                        )
+                except RenderSourceChangedError:
+                    raise
+                except Exception as exc:
+                    failures.append(type(exc).__name__)
+                    continue
+
                 temporary = Path(
                     tempfile.mkdtemp(
-                        prefix=f".{input_hash[:12]}-",
+                        prefix=f".{cache_key[:12]}-",
                         dir=self.paths.render_cache,
                     )
                 )
@@ -501,19 +592,39 @@ class LocalEvaluationRuntime:
                         raise RuntimeError(
                             "renderer output does not cover every presentation page"
                         )
+                    _assert_render_source_unchanged(
+                        case.pptx_path,
+                        expected_sha256=source_sha256,
+                    )
+                    actual_cache_key = _render_cache_key(
+                        source_sha256=source_sha256,
+                        renderer_id=normalized.renderer_id,
+                        renderer_version=normalized.renderer_version,
+                        font_fingerprint=font_cache_identity,
+                        render_policy=_RENDER_POLICY,
+                    )
+                    cache_dir = self.paths.render_cache / actual_cache_key
                     _write_render_manifest(
                         temporary,
-                        input_hash=input_hash,
+                        cache_key=actual_cache_key,
+                        source_sha256=source_sha256,
+                        font_fingerprint=font_cache_identity,
+                        render_policy=_RENDER_POLICY,
                         result=normalized,
                     )
                     if cache_dir.exists():
                         concurrent = _load_render_cache(
                             cache_dir,
-                            expected_input_hash=input_hash,
+                            expected_cache_key=actual_cache_key,
+                            expected_source_sha256=source_sha256,
                             expected_slide_count=expected_slide_count,
+                            expected_renderer_id=normalized.renderer_id,
+                            expected_renderer_version=normalized.renderer_version,
+                            expected_font_fingerprint=font_cache_identity,
+                            expected_render_policy=_RENDER_POLICY,
                         )
                         if concurrent is not None:
-                            return concurrent, True
+                            return concurrent, True, actual_cache_key
                         _remove_invalid_render_cache(
                             cache_dir,
                             expected_parent=self.paths.render_cache,
@@ -521,12 +632,19 @@ class LocalEvaluationRuntime:
                     os.replace(temporary, cache_dir)
                     persisted = _load_render_cache(
                         cache_dir,
-                        expected_input_hash=input_hash,
+                        expected_cache_key=actual_cache_key,
+                        expected_source_sha256=source_sha256,
                         expected_slide_count=expected_slide_count,
+                        expected_renderer_id=normalized.renderer_id,
+                        expected_renderer_version=normalized.renderer_version,
+                        expected_font_fingerprint=font_cache_identity,
+                        expected_render_policy=_RENDER_POLICY,
                     )
                     if persisted is None:
                         raise RuntimeError("render cache failed integrity validation")
-                    return persisted, False
+                    return persisted, False, actual_cache_key
+                except RenderSourceChangedError:
+                    raise
                 except Exception as exc:
                     failures.append(type(exc).__name__)
                 finally:
@@ -579,12 +697,15 @@ class LocalEvaluationRuntime:
         manifest = report.get("manifest")
         manifest = manifest if isinstance(manifest, Mapping) else {}
         input_hash = str(manifest.get("input_hash") or "")
+        artifact_hashes = manifest.get("artifact_hashes")
+        artifact_hashes = (
+            artifact_hashes if isinstance(artifact_hashes, Mapping) else {}
+        )
+        source_sha256 = str(artifact_hashes.get("source_pptx") or "")
         cache_key = str(reference.get("cache_key") or "")
         slide_count = reference.get("slide_count")
         if (
-            cache_key != input_hash
-            or len(cache_key) != 64
-            or any(character not in "0123456789abcdef" for character in cache_key)
+            not _is_sha256(cache_key)
             or isinstance(slide_count, bool)
             or not isinstance(slide_count, int)
             or slide_count < 1
@@ -592,8 +713,18 @@ class LocalEvaluationRuntime:
             return ()
         result = _load_render_cache(
             self.paths.render_cache / cache_key,
-            expected_input_hash=input_hash,
+            expected_cache_key=cache_key,
+            expected_source_sha256=(
+                source_sha256 if _is_sha256(source_sha256) else None
+            ),
             expected_slide_count=slide_count,
+            expected_renderer_id=str(reference.get("renderer_id") or "") or None,
+            expected_renderer_version=(
+                str(reference.get("renderer_version") or "") or None
+            ),
+            expected_legacy_input_hash=(
+                input_hash if cache_key == input_hash and _is_sha256(input_hash) else None
+            ),
         )
         return result.slide_images if result is not None else ()
 
@@ -1008,17 +1139,106 @@ def _normalize_render_output(result: RenderResult, output_dir: Path) -> RenderRe
     )
 
 
+def _is_sha256(value: object) -> bool:
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
+def _assert_render_source_unchanged(
+    path: str | Path,
+    *,
+    expected_sha256: str,
+) -> None:
+    try:
+        actual_sha256 = sha256_file(path)
+    except OSError as exc:
+        raise RenderSourceChangedError(
+            "source presentation became unavailable while slide rendering was in "
+            "progress; refusing to persist render cache"
+        ) from exc
+    if not hmac.compare_digest(expected_sha256, actual_sha256):
+        raise RenderSourceChangedError(
+            "source presentation changed while slide rendering was in progress; "
+            "refusing to persist render cache"
+        )
+
+
+def _normalized_render_policy(value: object) -> dict[str, str] | None:
+    if not isinstance(value, Mapping) or not value:
+        return None
+    normalized: dict[str, str] = {}
+    for key, item in value.items():
+        if not isinstance(key, str) or not key.strip():
+            return None
+        if not isinstance(item, str) or not item.strip():
+            return None
+        normalized[key.strip()] = item.strip()
+    return dict(sorted(normalized.items()))
+
+
+def _render_cache_key(
+    *,
+    source_sha256: str,
+    renderer_id: str,
+    renderer_version: str,
+    font_fingerprint: str,
+    render_policy: Mapping[str, str],
+) -> str:
+    policy = _normalized_render_policy(render_policy)
+    if not _is_sha256(source_sha256):
+        raise ValueError("render source digest must be a lowercase SHA-256")
+    components = {
+        "font_fingerprint": font_fingerprint.strip(),
+        "render_policy": policy,
+        "renderer_id": renderer_id.strip(),
+        "renderer_version": renderer_version.strip(),
+        "source_sha256": source_sha256,
+    }
+    if policy is None or any(
+        not value
+        for key, value in components.items()
+        if key != "render_policy"
+    ):
+        raise ValueError("render cache identity components must be non-blank")
+    canonical = json.dumps(
+        components,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
 def _write_render_manifest(
     output_dir: Path,
     *,
-    input_hash: str,
+    cache_key: str,
+    source_sha256: str,
+    font_fingerprint: str,
+    render_policy: Mapping[str, str],
     result: RenderResult,
 ) -> None:
+    normalized_policy = _normalized_render_policy(render_policy)
+    expected_cache_key = _render_cache_key(
+        source_sha256=source_sha256,
+        renderer_id=result.renderer_id,
+        renderer_version=result.renderer_version,
+        font_fingerprint=font_fingerprint,
+        render_policy=render_policy,
+    )
+    if cache_key != expected_cache_key or normalized_policy is None:
+        raise ValueError("render cache key does not match its manifest identity")
     payload = {
-        "schema_version": "1.1",
-        "input_hash": input_hash,
+        "schema_version": _RENDER_MANIFEST_SCHEMA_VERSION,
+        "cache_key": cache_key,
+        "source_sha256": source_sha256,
         "renderer_id": result.renderer_id,
         "renderer_version": result.renderer_version,
+        "font_fingerprint": font_fingerprint,
+        "render_policy": normalized_policy,
         "slide_count": len(result.slide_images),
         "slide_images": [
             {
@@ -1039,19 +1259,23 @@ def _write_render_manifest(
 def _load_render_cache(
     cache_dir: Path,
     *,
-    expected_input_hash: str,
+    expected_cache_key: str,
     expected_slide_count: int,
+    expected_source_sha256: str | None = None,
+    expected_renderer_id: str | None = None,
+    expected_renderer_version: str | None = None,
+    expected_font_fingerprint: str | None = None,
+    expected_render_policy: Mapping[str, str] | None = None,
+    expected_legacy_input_hash: str | None = None,
 ) -> RenderResult | None:
     manifest_path = cache_dir / _RENDER_MANIFEST_NAME
     try:
+        if not _is_sha256(expected_cache_key) or cache_dir.name != expected_cache_key:
+            return None
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
         if not isinstance(payload, Mapping):
             return None
         schema_version = payload.get("schema_version")
-        if schema_version not in {"1.0", "1.1"}:
-            return None
-        if payload.get("input_hash") != expected_input_hash:
-            return None
         if payload.get("slide_count") != expected_slide_count:
             return None
         renderer_id = payload.get("renderer_id")
@@ -1061,6 +1285,64 @@ def _load_render_cache(
         if not isinstance(renderer_id, str) or not renderer_id.strip():
             return None
         if not isinstance(renderer_version, str) or not renderer_version.strip():
+            return None
+        renderer_id = renderer_id.strip()
+        renderer_version = renderer_version.strip()
+        if expected_renderer_id is not None and renderer_id != expected_renderer_id:
+            return None
+        if (
+            expected_renderer_version is not None
+            and renderer_version != expected_renderer_version
+        ):
+            return None
+        if schema_version in {"1.0", "1.1"}:
+            # Legacy manifests used the whole EvalCase hash as both directory
+            # name and input identity.  They remain readable by their original
+            # report, but are never eligible for a new content-addressed render.
+            if (
+                not _is_sha256(expected_legacy_input_hash)
+                or expected_legacy_input_hash != expected_cache_key
+                or payload.get("input_hash") != expected_legacy_input_hash
+            ):
+                return None
+        elif schema_version == _RENDER_MANIFEST_SCHEMA_VERSION:
+            source_sha256 = payload.get("source_sha256")
+            cache_key = payload.get("cache_key")
+            font_fingerprint = payload.get("font_fingerprint")
+            render_policy = _normalized_render_policy(payload.get("render_policy"))
+            if (
+                not isinstance(source_sha256, str)
+                or not _is_sha256(source_sha256)
+                or cache_key != expected_cache_key
+                or not isinstance(font_fingerprint, str)
+                or not font_fingerprint.strip()
+                or render_policy is None
+            ):
+                return None
+            recomputed = _render_cache_key(
+                source_sha256=source_sha256,
+                renderer_id=renderer_id,
+                renderer_version=renderer_version,
+                font_fingerprint=font_fingerprint,
+                render_policy=render_policy,
+            )
+            if recomputed != expected_cache_key:
+                return None
+            if (
+                expected_source_sha256 is not None
+                and source_sha256 != expected_source_sha256
+            ):
+                return None
+            if (
+                expected_font_fingerprint is not None
+                and font_fingerprint != expected_font_fingerprint
+            ):
+                return None
+            if expected_render_policy is not None and render_policy != (
+                _normalized_render_policy(expected_render_policy)
+            ):
+                return None
+        else:
             return None
         if (
             isinstance(entries, (str, bytes))
@@ -1092,7 +1374,7 @@ def _load_render_cache(
                 return None
             if not image.is_file() or image.stat().st_size <= 0:
                 return None
-            if schema_version == "1.1":
+            if schema_version in {"1.1", _RENDER_MANIFEST_SCHEMA_VERSION}:
                 entry = entries[index]
                 if not isinstance(entry, Mapping):
                     return None
@@ -1110,8 +1392,8 @@ def _load_render_cache(
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         return None
     return RenderResult(
-        renderer_id=renderer_id.strip(),
-        renderer_version=renderer_version.strip(),
+        renderer_id=renderer_id,
+        renderer_version=renderer_version,
         slide_images=tuple(images),
         warnings=tuple(str(item) for item in warnings),
     )
@@ -1148,6 +1430,39 @@ def build_runtime_from_environment(
 
     env = dict(os.environ if environment is None else environment)
     project_root = _find_workspace_root(workspace_root)
+    data_root = root if root is not None else env.get("PPT_EVAL_DATA_DIR", "var")
+    runtime_paths = RuntimePaths.under(data_root)
+    asset_config = VisualAssetTransportConfig.from_environment(env)
+    visual_asset_transport: SignedUrlVisualAssetTransport | None = None
+    if asset_config.signed_url_enabled:
+        visual_asset_transport = SignedUrlVisualAssetTransport(
+            config=asset_config,
+            catalog=VisualAssetCatalog(
+                {
+                    VisualAssetVariant.SLIDE: (runtime_paths.render_cache,),
+                    VisualAssetVariant.ATLAS: (
+                        runtime_paths.artifacts / "visual-atlases",
+                    ),
+                    VisualAssetVariant.CROP: (
+                        runtime_paths.artifacts / "visual-crops",
+                    ),
+                }
+            ),
+            content_store=VisualAssetCAS(
+                runtime_paths.render_cache / "visual-cas",
+            ),
+        )
+
+    def image_url_resolver(image: Any) -> str:
+        if visual_asset_transport is None:
+            raise RuntimeError("signed visual-asset transport is unavailable")
+        return visual_asset_transport.publish(
+            image.uri,
+            variant=VisualAssetVariant.SLIDE,
+            expected_sha256=image.sha256,
+        )
+
+    resolver = image_url_resolver if visual_asset_transport is not None else None
     qwen_settings = QwenAuditSettings.from_environment(
         env,
         workspace_root=project_root,
@@ -1162,16 +1477,18 @@ def build_runtime_from_environment(
         if secret
     )
     flash = qwen_settings.provider(
+        image_url_resolver=resolver,
         protected_secrets=protected_model_credentials,
     )
     advanced = zhipu_settings.provider(
+        image_url_resolver=resolver,
         protected_secrets=protected_model_credentials,
     )
-    data_root = root if root is not None else env.get("PPT_EVAL_DATA_DIR", "var")
     return LocalEvaluationRuntime(
         data_root,
         vlm_provider=flash,
         advanced_vlm_provider=advanced,
+        visual_asset_transport=visual_asset_transport,
         slide_renderer=slide_renderer,
         review_rendering=_environment_flag(
             env.get("PPT_EVAL_REVIEW_RENDERING_ENABLED"),

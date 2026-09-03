@@ -12,6 +12,7 @@
 - `14_single_node_release_validation.md`：wheel、Docker、审计平台和发布门禁。
 - `15_batch_api_release_validation.md`：0.8.5 批处理 API 的原子准入、失败隔离、幂等与快照验证。
 - `16_prerelease_stabilization_validation.md`：0.8.6 语义去重、精简镜像测试与冷构建锁定验证。
+- `17_visual_cache_087_validation.md`：0.8.7 渲染缓存、视觉资产传输和 usage 可观测性验证。
 
 v1–v7 与 Qwen v3/v5/v6 的历史实验、脚本和同期方法文档保存在
 `archive/v8.3-pre-release`。它们可用于审计研究过程，但不再进入当前 main 的可执行或文档入口。

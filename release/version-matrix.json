@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "product": {
+    "version": "0.8.7",
+    "release_date": "2026-09-03"
+  },
+  "evaluation": {
+    "default_profile_version": "8.3",
+    "profile_lifecycle": "PRE_RESEARCH",
+    "composite_version": "8.3.0",
+    "atomic_observation_version": "2.1.0",
+    "grounded_vlm_versions": {
+      "visual": "2.0.0",
+      "authorship": "2.1.0",
+      "raster_text": "1.0.0"
+    },
+    "selection_policy_version": "2.0.0"
+  },
+  "contracts": {
+    "eval_report_schema_version": "1.0",
+    "audit_schema_version": "1.0",
+    "model_audit_schema_version": "1.0",
+    "http_api_namespace": "/v1",
+    "attention_policy_version": "audit-attention@0.8.6"
+  },
+  "infrastructure": {
+    "render_manifest_schema_version": "2.0",
+    "visual_asset_transport_version": "1.0.0",
+    "qwen_context_cache_wire_version": "1.0.0"
+  }
+}

@@ -8,9 +8,13 @@ rewritten here.
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
-from ppt_eval.adapters.model_audits import ModelAuditProviderError, ModelAuditRequest
+from ppt_eval.adapters.model_audits import (
+    ModelAuditProviderError,
+    ModelAuditRequest,
+    ModelImageInput,
+)
 
 from .qwen_model_audits import (
     QwenModelAuditProviderError,
@@ -40,6 +44,7 @@ class ZhipuOpenAICompatibleProvider(QwenOpenAICompatibleProvider):
         model: str = ZHIPU_GLM_FLASH_MODEL,
         *,
         timeout_seconds: float = DEFAULT_ZHIPU_HTTP_TIMEOUT_SECONDS,
+        image_url_resolver: Callable[[ModelImageInput], str] | None = None,
         protected_secrets: Sequence[str] = (),
     ) -> None:
         super().__init__(
@@ -50,6 +55,7 @@ class ZhipuOpenAICompatibleProvider(QwenOpenAICompatibleProvider):
             dialect="zhipu",
             provider_name=ZHIPU_PROVIDER_NAME,
             max_image_bytes=_ZHIPU_MAX_IMAGE_BYTES,
+            image_url_resolver=image_url_resolver,
             protected_secrets=protected_secrets,
         )
 

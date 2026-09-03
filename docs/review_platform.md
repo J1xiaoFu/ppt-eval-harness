@@ -2,7 +2,7 @@
 
 ## 产品边界
 
-当前审计平台属于 PPT Eval Harness 产品发布 `0.8.6`，但它消费的默认评测 Profile 仍为
+当前审计平台属于 PPT Eval Harness 产品发布 `0.8.7`，但它消费的默认评测 Profile 仍为
 `8.3` / `PRE_RESEARCH`，持久化 EvalReport/Audit schema 仍为 `1.0`，HTTP 命名空间仍为 `/v1`。
 产品版本只表达软件能力发布，不得被当作 Profile 或报告 schema 版本。
 
@@ -106,7 +106,8 @@ Coverage 非 FULL 会提升队列优先级，但不会凭空生成一张局部�
 - 正常失败/完成会清理工作区。进程崩溃留下的 `var/uploads/work/` 孤儿不在新进程启动时
   自动删除，避免误删另一实例正使用的文件；当前需停服务后人工核对/清理，未来由 TTL/lease 控制面接管；
 - 原 PPTX、Observation 和 render manifest 进入 content-addressed store，SHA-256 写入 Manifest；
-- render manifest `1.1` 记录每张页图的文件名、大小和 SHA-256；读取缓存时逐图复核；
+- render manifest `2.0` 额外绑定源 PPTX、renderer/version、字体指纹和渲染策略，
+  并记录每张页图的文件名、大小和 SHA-256；读取缓存时逐图复核；
 - 下载端点按 run + 固定 role 授权，不提供任意文件路径或全局 SHA 下载；
 - run ID 和 SHA 均采用白名单格式，并在 resolve 后校验 root containment；
 - API DTO 移除本机 `uri`，本地路径不发送到浏览器；

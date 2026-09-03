@@ -90,6 +90,12 @@ def _vendor_response() -> Mapping[str, Any]:
             "prompt_tokens": 100,
             "completion_tokens": 20,
             "total_tokens": 120,
+            "total_cost": 0.008,
+            "input_tokens_details": {
+                "image_tokens": 72,
+                "cached_tokens": 16,
+                "cache_creation_input_tokens": 4,
+            },
         },
     }
 
@@ -141,7 +147,19 @@ def test_zhipu_provider_uses_documented_multimodal_request(tmp_path) -> None:
     assert response.model.model_id == ZHIPU_GLM_FLASH_MODEL
     assert response.usage.input_tokens == 100
     assert response.usage.output_tokens == 20
-    assert response.evidence[0].payload["adapter_cost_known"] is False
+    assert response.usage.image_tokens == 72
+    assert response.usage.cached_tokens == 16
+    assert response.usage.cache_creation_input_tokens == 4
+    assert response.usage.request_bytes == len(
+        json.dumps(
+            body,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+    )
+    assert response.usage.cost_known is True
+    assert response.evidence[0].payload["adapter_cost_known"] is True
     assert "private reasoning" not in json.dumps(payload)
     assert "bigmodel-test-secret" not in repr(provider)
 

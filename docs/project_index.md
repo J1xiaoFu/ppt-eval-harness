@@ -37,6 +37,7 @@
 - [单机发布最终验证](../reports/03_evaluation/14_single_node_release_validation.md)
 - [0.8.5 批处理 API 验证](../reports/03_evaluation/15_batch_api_release_validation.md)
 - [0.8.6 预发布稳定性验证](../reports/03_evaluation/16_prerelease_stabilization_validation.md)
+- [0.8.7 视觉资产复用与可观测性验证](../reports/03_evaluation/17_visual_cache_087_validation.md)
 
 ## 历史复现
 

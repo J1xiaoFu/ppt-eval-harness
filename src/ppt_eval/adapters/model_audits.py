@@ -260,6 +260,11 @@ class ModelUsage:
     input_tokens: int
     output_tokens: int
     cost: float
+    image_tokens: int | None = None
+    cached_tokens: int | None = None
+    cache_creation_input_tokens: int | None = None
+    request_bytes: int | None = None
+    cost_known: bool | None = None
 
     @classmethod
     def from_mapping(cls, value: object) -> "ModelUsage":
@@ -267,24 +272,58 @@ class ModelUsage:
             value,
             "usage",
             required=frozenset(("input_tokens", "output_tokens", "cost")),
+            optional=frozenset(
+                (
+                    "image_tokens",
+                    "cached_tokens",
+                    "cache_creation_input_tokens",
+                    "request_bytes",
+                    "cost_known",
+                )
+            ),
         )
         return cls(
             input_tokens=_nonnegative_int(payload["input_tokens"], "usage.input_tokens"),
             output_tokens=_nonnegative_int(payload["output_tokens"], "usage.output_tokens"),
             cost=_bounded_number(payload["cost"], "usage.cost", minimum=0.0),
+            image_tokens=_optional_nonnegative_int(
+                payload.get("image_tokens"), "usage.image_tokens"
+            ),
+            cached_tokens=_optional_nonnegative_int(
+                payload.get("cached_tokens"), "usage.cached_tokens"
+            ),
+            cache_creation_input_tokens=_optional_nonnegative_int(
+                payload.get("cache_creation_input_tokens"),
+                "usage.cache_creation_input_tokens",
+            ),
+            request_bytes=_optional_nonnegative_int(
+                payload.get("request_bytes"), "usage.request_bytes"
+            ),
+            cost_known=_optional_bool(payload.get("cost_known"), "usage.cost_known"),
         )
 
     @property
     def total_tokens(self) -> int:
         return self.input_tokens + self.output_tokens
 
-    def to_mapping(self) -> Mapping[str, int | float]:
-        return {
+    def to_mapping(self) -> Mapping[str, int | float | bool]:
+        result: dict[str, int | float | bool] = {
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
             "total_tokens": self.total_tokens,
             "cost": self.cost,
         }
+        optional_values: tuple[tuple[str, int | bool | None], ...] = (
+            ("image_tokens", self.image_tokens),
+            ("cached_tokens", self.cached_tokens),
+            ("cache_creation_input_tokens", self.cache_creation_input_tokens),
+            ("request_bytes", self.request_bytes),
+            ("cost_known", self.cost_known),
+        )
+        result.update(
+            (key, value) for key, value in optional_values if value is not None
+        )
+        return result
 
 
 @dataclass(frozen=True, slots=True)
@@ -533,6 +572,20 @@ def _bounded_number(
 def _nonnegative_int(value: object, label: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         raise ModelAuditContractError(f"{label} must be a non-negative integer")
+    return value
+
+
+def _optional_nonnegative_int(value: object, label: str) -> int | None:
+    if value is None:
+        return None
+    return _nonnegative_int(value, label)
+
+
+def _optional_bool(value: object, label: str) -> bool | None:
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise ModelAuditContractError(f"{label} must be a boolean")
     return value
 
 

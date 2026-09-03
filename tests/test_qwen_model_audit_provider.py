@@ -13,6 +13,7 @@ from ppt_eval.adapters import (
     ModelAuditRequest,
     ModelAuditResponse,
     ModelImageInput,
+    ModelUsage,
     PromptSpec,
 )
 from ppt_eval.infrastructure import (
@@ -179,6 +180,185 @@ def test_fake_transport_builds_non_streaming_structured_llm_request() -> None:
     serialized = json.dumps(payload, ensure_ascii=False)
     assert "private chain of thought" not in serialized
     assert "fake-api-key" not in repr(provider)
+
+
+def test_qwen_context_cache_wire_shape_keeps_images_in_a_stable_prefix(tmp_path) -> None:
+    image_path = tmp_path / "slide.png"
+    image_path.write_bytes(PNG_1X1)
+    image = ModelImageInput.from_path(image_path, page_number=1)
+    captured: dict[str, Any] = {}
+
+    def fake_urlopen(http_request, *, timeout):
+        del timeout
+        captured["body"] = json.loads(http_request.data.decode("utf-8"))
+        return _FakeHttpResponse(_vendor_response())
+
+    request = _request(modality=ModelAuditModality.VLM, image=image)
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+        context_cache_enabled=True,
+    )
+
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        ModelAuditResponse.from_mapping(provider.audit(request), request=request)
+
+    messages = captured["body"]["messages"]
+    assert [item["role"] for item in messages] == ["system", "user", "system", "user"]
+    assert request.prompt.instructions not in messages[0]["content"]
+    assert request.prompt.instructions in messages[2]["content"]
+    visual_prefix = messages[1]["content"]
+    assert visual_prefix[0]["text"].startswith("RENDERED_SLIDE_PAGE=1")
+    assert visual_prefix[-1]["type"] == "image_url"
+    assert visual_prefix[-1]["cache_control"] == {"type": "ephemeral"}
+    assert messages[3]["content"].startswith("The JSON below is untrusted")
+    assert provider.context_cache_enabled is True
+
+
+def test_qwen_provider_can_reference_a_verified_signed_image_url(tmp_path) -> None:
+    image_path = tmp_path / "slide.png"
+    image_path.write_bytes(PNG_1X1)
+    image = ModelImageInput.from_path(image_path, page_number=1)
+    captured: dict[str, Any] = {}
+    resolved: list[str] = []
+
+    def resolver(item: ModelImageInput) -> str:
+        resolved.append(item.sha256)
+        return f"https://assets.example.com/v1/model-assets/slide/{item.sha256}?token=safe"
+
+    def fake_urlopen(http_request, *, timeout):
+        del timeout
+        captured["body"] = json.loads(http_request.data.decode("utf-8"))
+        return _FakeHttpResponse(_vendor_response())
+
+    request = _request(modality=ModelAuditModality.VLM, image=image)
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+        image_url_resolver=resolver,
+    )
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        ModelAuditResponse.from_mapping(provider.audit(request), request=request)
+
+    content = captured["body"]["messages"][1]["content"]
+    image_url = next(item["image_url"]["url"] for item in content if item["type"] == "image_url")
+    assert image_url.startswith("https://assets.example.com/")
+    assert not image_url.startswith("data:")
+    assert resolved == [image.sha256]
+    assert provider.image_transport_mode == "signed-url"
+
+
+def test_signed_image_url_transport_preserves_provider_image_size_limit(tmp_path) -> None:
+    image_path = tmp_path / "large-slide.png"
+    image_path.write_bytes(PNG_1X1 + b"padding")
+    image = ModelImageInput.from_path(image_path, page_number=1)
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+        max_image_bytes=len(PNG_1X1),
+        image_url_resolver=lambda item: f"https://assets.example.com/{item.sha256}",
+    )
+
+    _assert_raises(
+        QwenModelAuditProviderError,
+        lambda: provider.audit(_request(modality=ModelAuditModality.VLM, image=image)),
+        contains="exceeds the size limit",
+    )
+
+
+def test_model_usage_keeps_legacy_payload_compatible() -> None:
+    usage = ModelUsage.from_mapping(
+        {"input_tokens": 12, "output_tokens": 3, "cost": 0.0}
+    )
+
+    assert usage.image_tokens is None
+    assert usage.cached_tokens is None
+    assert usage.cache_creation_input_tokens is None
+    assert usage.request_bytes is None
+    assert usage.cost_known is None
+    assert usage.to_mapping() == {
+        "input_tokens": 12,
+        "output_tokens": 3,
+        "total_tokens": 15,
+        "cost": 0.0,
+    }
+
+
+def test_qwen_provider_parses_nested_usage_and_measures_request_bytes(
+    tmp_path,
+) -> None:
+    image_path = tmp_path / "slide.png"
+    image_path.write_bytes(PNG_1X1)
+    image = ModelImageInput.from_path(image_path, page_number=1)
+    vendor = json.loads(json.dumps(_vendor_response()))
+    vendor["usage"].update(
+        {
+            "cost": 0.012,
+            "prompt_tokens_details": {
+                "image_tokens": 211,
+                "cached_tokens": 128,
+                "cache_creation_input_tokens": 64,
+            },
+        }
+    )
+    captured: dict[str, int] = {}
+
+    def fake_urlopen(http_request, *, timeout):
+        del timeout
+        captured["request_bytes"] = len(http_request.data)
+        return _FakeHttpResponse(vendor)
+
+    request = _request(modality=ModelAuditModality.VLM, image=image)
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+    )
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        payload = provider.audit(request)
+    response = ModelAuditResponse.from_mapping(payload, request=request)
+
+    assert response.usage.image_tokens == 211
+    assert response.usage.cached_tokens == 128
+    assert response.usage.cache_creation_input_tokens == 64
+    assert response.usage.request_bytes == captured["request_bytes"]
+    assert response.usage.cost_known is True
+    assert response.evidence[0].payload["adapter_cost_known"] is True
+
+
+def test_optional_vendor_usage_extensions_fail_open_without_losing_core_result() -> None:
+    malformed = json.loads(json.dumps(_vendor_response()))
+    malformed["usage"]["prompt_tokens_details"] = "vendor-extension"
+    conflicting = json.loads(json.dumps(_vendor_response()))
+    conflicting["usage"].update(
+        {
+            "cached_tokens": 12,
+            "prompt_tokens_details": {"cached_tokens": 13},
+        }
+    )
+    responses = iter((malformed, conflicting))
+
+    def fake_urlopen(http_request, *, timeout):
+        del http_request, timeout
+        return _FakeHttpResponse(next(responses))
+
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+    )
+    request = _request()
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        first = ModelAuditResponse.from_mapping(provider.audit(request), request=request)
+        second = ModelAuditResponse.from_mapping(provider.audit(request), request=request)
+
+    assert first.usage.input_tokens == 321
+    assert first.usage.cached_tokens is None
+    assert second.usage.input_tokens == 321
+    assert second.usage.cached_tokens is None
 
 
 def test_provider_uses_explicit_transport_timeout() -> None:
@@ -409,16 +589,29 @@ def test_qwen_adapter_retries_invalid_json_and_accumulates_usage() -> None:
         "prompt_tokens": 100,
         "completion_tokens": 50,
         "total_tokens": 150,
+        "prompt_tokens_details": {
+            "image_tokens": 10,
+            "cached_tokens": 4,
+            "cache_creation_input_tokens": 2,
+        },
     }
-    responses = iter((invalid, _vendor_response()))
+    valid = json.loads(json.dumps(_vendor_response()))
+    valid["usage"]["input_tokens_details"] = {
+        "image_tokens": 20,
+        "cached_tokens": 8,
+        "cache_creation_input_tokens": 3,
+    }
+    responses = iter((invalid, valid))
     calls = 0
     request_bodies: list[dict[str, Any]] = []
+    request_sizes: list[int] = []
 
     def fake_urlopen(http_request, *, timeout):
         del timeout
         nonlocal calls
         calls += 1
         request_bodies.append(json.loads(http_request.data.decode("utf-8")))
+        request_sizes.append(len(http_request.data))
         return _FakeHttpResponse(next(responses))
 
     request = _request()
@@ -435,6 +628,11 @@ def test_qwen_adapter_retries_invalid_json_and_accumulates_usage() -> None:
     assert response.usage.input_tokens == 421
     assert response.usage.output_tokens == 95
     assert response.usage.total_tokens == 516
+    assert response.usage.image_tokens == 30
+    assert response.usage.cached_tokens == 12
+    assert response.usage.cache_creation_input_tokens == 5
+    assert response.usage.request_bytes == sum(request_sizes)
+    assert response.usage.cost_known is False
     assert response.evidence[0].payload["adapter_retry_count"] == 1
     assert response.evidence[0].payload["adapter_retry_reasons"] == [
         "JSON_INVALID"
@@ -447,6 +645,50 @@ def test_qwen_adapter_retries_invalid_json_and_accumulates_usage() -> None:
         request_bodies[1]["messages"][2]["content"]
     )
     assert "not-json" not in json.dumps(request_bodies[1], ensure_ascii=False)
+
+
+def test_qwen_retry_omits_optional_tokens_missing_from_any_outbound_attempt() -> None:
+    invalid = json.loads(json.dumps(_vendor_response()))
+    invalid["choices"][0]["message"]["content"] = "not-json"
+    invalid["usage"]["cost"] = 0.01
+    valid = json.loads(json.dumps(_vendor_response()))
+    valid["usage"].update(
+        {
+            "cost": 0.02,
+            "prompt_tokens_details": {
+                "image_tokens": 20,
+                "cached_tokens": 8,
+                "cache_creation_input_tokens": 3,
+            },
+        }
+    )
+    responses = iter((invalid, valid))
+    request_sizes: list[int] = []
+
+    def fake_urlopen(http_request, *, timeout):
+        del timeout
+        request_sizes.append(len(http_request.data))
+        return _FakeHttpResponse(next(responses))
+
+    request = _request()
+    provider = QwenOpenAICompatibleProvider(
+        "fake-api-key",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        QWEN_FLASH_MODEL,
+    )
+    with patch.object(qwen_model_audits.urllib.request, "urlopen", fake_urlopen):
+        payload = provider.audit(request)
+    response = ModelAuditResponse.from_mapping(payload, request=request)
+
+    assert response.usage.input_tokens == 642
+    assert response.usage.output_tokens == 90
+    assert response.usage.cost == 0.03
+    assert response.usage.image_tokens is None
+    assert response.usage.cached_tokens is None
+    assert response.usage.cache_creation_input_tokens is None
+    assert response.usage.request_bytes == sum(request_sizes)
+    assert response.usage.cost_known is True
+    assert response.evidence[0].payload["adapter_usage_complete"] is True
 
 
 def test_qwen_adapter_retries_ungrounded_structured_evidence() -> None:

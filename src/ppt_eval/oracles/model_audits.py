@@ -416,6 +416,7 @@ class _ModelAuditOracle(AtomicOracle):
             "modality": request.modality.value,
             "prompt": dict(request.prompt.reference()),
             "request_fingerprint": request.fingerprint,
+            **_provider_runtime_metadata(provider),
         }
         try:
             payload = provider.audit(request)
@@ -716,6 +717,7 @@ class _ValidatedCriterionVlmOracle(_RenderedSlideVlmOracle):
         request_metadata = {
             **self._base_metadata(),
             "request_fingerprint": request.fingerprint,
+            **_provider_runtime_metadata(provider),
         }
         try:
             payload = provider.audit(request)
@@ -1733,6 +1735,21 @@ def _safe_provider_error_metadata(
     return {**telemetry, **dict(request_metadata)}
 
 
+def _provider_runtime_metadata(
+    provider: ModelAuditProvider,
+) -> dict[str, str | bool]:
+    """Expose non-sensitive provider settings in full audit lineage only."""
+
+    metadata: dict[str, str | bool] = {}
+    image_transport_mode = getattr(provider, "image_transport_mode", None)
+    if image_transport_mode in {"base64", "signed-url"}:
+        metadata["image_transport_mode"] = image_transport_mode
+    context_cache_enabled = getattr(provider, "context_cache_enabled", None)
+    if isinstance(context_cache_enabled, bool):
+        metadata["context_cache_enabled"] = context_cache_enabled
+    return metadata
+
+
 def _sum_model_usage(
     *values: ModelUsage | object,
     cost: float | None = None,
@@ -1740,14 +1757,31 @@ def _sum_model_usage(
     input_tokens = 0
     output_tokens = 0
     observed_cost = 0.0
+    optional_totals = {
+        "image_tokens": 0,
+        "cached_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "request_bytes": 0,
+    }
+    optional_observed = {key: 0 for key in optional_totals}
+    usage_value_count = 0
+    cost_known_markers: list[bool | None] = []
     for value in values:
         if isinstance(value, ModelUsage):
+            usage_value_count += 1
             input_tokens += value.input_tokens
             output_tokens += value.output_tokens
             observed_cost += value.cost
+            for key in optional_totals:
+                item = getattr(value, key)
+                if item is not None:
+                    optional_totals[key] += item
+                    optional_observed[key] += 1
+            cost_known_markers.append(value.cost_known)
             continue
         if not isinstance(value, Mapping):
             continue
+        usage_value_count += 1
         raw_input = value.get("input_tokens")
         raw_output = value.get("output_tokens")
         raw_cost = value.get("cost")
@@ -1762,10 +1796,45 @@ def _sum_model_usage(
             and float(raw_cost) >= 0.0
         ):
             observed_cost += float(raw_cost)
+        for key in optional_totals:
+            item = value.get(key)
+            if isinstance(item, int) and not isinstance(item, bool) and item >= 0:
+                optional_totals[key] += item
+                optional_observed[key] += 1
+        raw_cost_known = value.get("cost_known")
+        cost_known_markers.append(
+            raw_cost_known if isinstance(raw_cost_known, bool) else None
+        )
+    cost_known: bool | None = None
+    if cost_known_markers:
+        if any(marker is not None for marker in cost_known_markers):
+            cost_known = all(marker is True for marker in cost_known_markers)
     return ModelUsage(
         input_tokens=input_tokens,
         output_tokens=output_tokens,
         cost=observed_cost if cost is None else cost,
+        image_tokens=(
+            optional_totals["image_tokens"]
+            if usage_value_count and optional_observed["image_tokens"] == usage_value_count
+            else None
+        ),
+        cached_tokens=(
+            optional_totals["cached_tokens"]
+            if usage_value_count and optional_observed["cached_tokens"] == usage_value_count
+            else None
+        ),
+        cache_creation_input_tokens=(
+            optional_totals["cache_creation_input_tokens"]
+            if usage_value_count
+            and optional_observed["cache_creation_input_tokens"] == usage_value_count
+            else None
+        ),
+        request_bytes=(
+            optional_totals["request_bytes"]
+            if usage_value_count and optional_observed["request_bytes"] == usage_value_count
+            else None
+        ),
+        cost_known=cost_known,
     )
 
 

@@ -379,19 +379,116 @@ def git_sha(cwd: str | Path | None = None) -> str:
         return "uncommitted"
 
 
-def font_fingerprint() -> str:
-    """Hash the installed font inventory without reading font contents."""
+_FONT_SUFFIXES = frozenset({".ttf", ".otf", ".ttc"})
+_FONTCONFIG_FORMAT = "%{file}|%{family}|%{style}|%{fontversion}\n"
 
-    font_root = Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts"
-    if not font_root.is_dir():
-        return "unavailable"
-    inventory = []
+
+def font_fingerprint() -> str:
+    """Return a stable digest for the fonts that can affect slide rendering.
+
+    Docker/Linux uses fontconfig when available because its inventory reflects
+    the fonts visible to LibreOffice.  Minimal images without ``fc-list`` fall
+    back to content hashing well-known font directories.  ``"unavailable"`` is
+    an explicit signal to the runtime that persistent render caches must not be
+    reused across evaluations.
+    """
+
+    if os.name != "nt":
+        fontconfig = shutil.which("fc-list")
+        if fontconfig:
+            fingerprint = _fontconfig_fingerprint(fontconfig)
+            if fingerprint is not None:
+                return fingerprint
+
+    fingerprint = _font_directory_fingerprint(
+        _font_search_roots(),
+        hash_contents=os.name != "nt",
+    )
+    return fingerprint or "unavailable"
+
+
+def _fontconfig_fingerprint(executable: str) -> str | None:
+    environment = dict(os.environ)
+    environment["LC_ALL"] = "C"
+    environment["LANG"] = "C"
     try:
-        for path in sorted(font_root.iterdir(), key=lambda item: item.name.lower()):
-            if path.suffix.lower() not in {".ttf", ".otf", ".ttc"}:
+        completed = subprocess.run(
+            [executable, f"--format={_FONTCONFIG_FORMAT}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=10,
+            env=environment,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0 or not isinstance(completed.stdout, str):
+        return None
+    inventory = sorted(
+        {
+            line.strip()
+            for line in completed.stdout.splitlines()
+            if line.strip()
+        }
+    )
+    if not inventory:
+        return None
+    return hashlib.sha256("\n".join(inventory).encode("utf-8")).hexdigest()
+
+
+def _font_search_roots() -> tuple[Path, ...]:
+    if os.name == "nt":
+        return (Path(os.environ.get("WINDIR", "C:/Windows")) / "Fonts",)
+
+    roots = [Path("/usr/share/fonts"), Path("/usr/local/share/fonts")]
+    xdg_data_home = str(os.environ.get("XDG_DATA_HOME") or "").strip()
+    if xdg_data_home:
+        roots.append(Path(xdg_data_home) / "fonts")
+    try:
+        user_root = Path.home()
+    except (OSError, RuntimeError):
+        pass
+    else:
+        roots.extend((user_root / ".local/share/fonts", user_root / ".fonts"))
+    return tuple(roots)
+
+
+def _font_directory_fingerprint(
+    roots: Iterable[Path],
+    *,
+    hash_contents: bool,
+) -> str | None:
+    inventory: list[str] = []
+    for root_index, root in enumerate(roots):
+        try:
+            if not root.is_dir():
                 continue
-            stat = path.stat()
-            inventory.append(f"{path.name}|{stat.st_size}|{stat.st_mtime_ns}")
-    except OSError:
-        return "unavailable"
+            candidates = sorted(
+                (
+                    path
+                    for path in root.rglob("*")
+                    if path.suffix.casefold() in _FONT_SUFFIXES
+                ),
+                key=lambda path: path.as_posix().casefold(),
+            )
+        except OSError:
+            continue
+        for path in candidates:
+            try:
+                if not path.is_file():
+                    continue
+                relative = path.relative_to(root).as_posix()
+                stat = path.stat()
+                identity = (
+                    sha256_file(path)
+                    if hash_contents
+                    else str(stat.st_mtime_ns)
+                )
+            except (OSError, ValueError):
+                continue
+            inventory.append(f"{root_index}|{relative}|{stat.st_size}|{identity}")
+    if not inventory:
+        return None
     return hashlib.sha256("\n".join(inventory).encode("utf-8")).hexdigest()

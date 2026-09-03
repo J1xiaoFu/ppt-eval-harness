@@ -963,6 +963,11 @@ def _model_routing_attempt(
         if cost_markers
         else result.cost > 0.0
     )
+    provider_runtime: dict[str, Any] = {
+        key: metadata[key]
+        for key in ("image_transport_mode", "context_cache_enabled")
+        if key in metadata
+    }
     return {
         "tier": tier,
         "selected": selected,
@@ -989,6 +994,7 @@ def _model_routing_attempt(
         "request_fingerprint": metadata.get("request_fingerprint"),
         "response_fingerprint": metadata.get("response_fingerprint"),
         "evidence": [_routing_evidence(item) for item in result.evidence],
+        **provider_runtime,
     }
 
 
@@ -1012,7 +1018,7 @@ def _model_routing_usage(
     items = tuple(attempts)
     usages = tuple(item.get("usage") for item in items)
     complete = all(item.get("usage_complete") is True for item in items)
-    return {
+    result: dict[str, Any] = {
         "input_tokens": sum(
             int(usage.get("input_tokens", 0))
             for usage in usages
@@ -1034,6 +1040,30 @@ def _model_routing_usage(
         "attempt_count": len(items),
         "usage_complete": complete,
     }
+    for key in (
+        "image_tokens",
+        "cached_tokens",
+        "cache_creation_input_tokens",
+        "request_bytes",
+    ):
+        total = 0
+        valid = bool(items) and complete
+        for usage in usages:
+            if not isinstance(usage, Mapping) or key not in usage:
+                valid = False
+                break
+            value = usage.get(key)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, int)
+                or value < 0
+            ):
+                valid = False
+                break
+            total += value
+        if valid:
+            result[key] = total
+    return result
 
 
 class V8QualityReducerOracle:

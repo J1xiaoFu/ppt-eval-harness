@@ -419,7 +419,11 @@ def test_visual_advanced_fallback_is_same_criterion_only(tmp_path: Path) -> None
     ).evaluate(context)
     context.memo["ppt_eval.atomic_observations"] = list(observations.observations)
     flash = GroundedFakeProvider()
+    flash.image_transport_mode = "base64"
+    flash.context_cache_enabled = True
     advanced = GroundedFakeProvider()
+    advanced.image_transport_mode = "signed-url"
+    advanced.context_cache_enabled = False
     oracle = V8TieredVisualCriterionOracle(
         "composition_layout",
         flash,
@@ -442,6 +446,13 @@ def test_visual_advanced_fallback_is_same_criterion_only(tmp_path: Path) -> None
     assert [item["selected"] for item in attempts] == [False, True]
     assert all(item["model"]["provider"] == "fake" for item in attempts)
     assert all(item["evidence"] for item in attempts)
+    assert [item["image_transport_mode"] for item in attempts] == [
+        "base64",
+        "signed-url",
+    ]
+    assert [item["context_cache_enabled"] for item in attempts] == [True, False]
+    assert result.metadata["image_transport_mode"] == "signed-url"
+    assert result.metadata["context_cache_enabled"] is False
     assert result.metadata["routing_usage"] == {
         "input_tokens": 240,
         "output_tokens": 160,
@@ -469,6 +480,88 @@ def test_model_routing_usage_preserves_partial_usage_and_unknown_cost() -> None:
     assert usage["total_tokens"] == 15
     assert usage["usage_complete"] is False
     assert usage["cost_known"] is False
+
+
+def test_model_routing_usage_aggregates_optional_visual_telemetry() -> None:
+    usage = _model_routing_usage(
+        (
+            {
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "image_tokens": 70,
+                    "cached_tokens": 30,
+                    "cache_creation_input_tokens": 10,
+                    "request_bytes": 4096,
+                    "cost_known": True,
+                },
+                "usage_complete": True,
+                "cost": 0.01,
+                "cost_known": True,
+            },
+            {
+                "usage": {
+                    "input_tokens": 80,
+                    "output_tokens": 15,
+                    "image_tokens": 50,
+                    "cached_tokens": 20,
+                    "cache_creation_input_tokens": 5,
+                    "request_bytes": 2048,
+                    "cost_known": True,
+                },
+                "usage_complete": True,
+                "cost": 0.02,
+                "cost_known": True,
+            },
+        )
+    )
+
+    assert usage == {
+        "input_tokens": 180,
+        "output_tokens": 35,
+        "total_tokens": 215,
+        "reported_cost": pytest.approx(0.03),
+        "cost_known": True,
+        "attempt_count": 2,
+        "usage_complete": True,
+        "image_tokens": 120,
+        "cached_tokens": 50,
+        "cache_creation_input_tokens": 15,
+        "request_bytes": 6144,
+    }
+
+
+def test_model_routing_usage_omits_optional_total_if_any_attempt_omits_it() -> None:
+    usage = _model_routing_usage(
+        (
+            {
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "image_tokens": 70,
+                    "cached_tokens": 30,
+                    "cache_creation_input_tokens": 10,
+                    "request_bytes": 4096,
+                },
+                "usage_complete": True,
+                "cost": 0.01,
+                "cost_known": True,
+            },
+            {
+                "usage": {"input_tokens": 80, "output_tokens": 15},
+                "usage_complete": True,
+                "cost": 0.02,
+                "cost_known": True,
+            },
+        )
+    )
+
+    assert usage["total_tokens"] == 215
+    assert usage["usage_complete"] is True
+    assert "image_tokens" not in usage
+    assert "cached_tokens" not in usage
+    assert "cache_creation_input_tokens" not in usage
+    assert "request_bytes" not in usage
 
 
 def test_authorship_persistent_rule_disagreement_routes_review(tmp_path: Path) -> None:

@@ -189,9 +189,9 @@ def test_review_api_serves_queue_slides_artifacts_and_idempotent_history(
         )
     )
     client = make_test_client(lambda: create_app(runtime))
-    assert report["service_version"] == "0.8.6"
-    assert client.app.version == "0.8.6"
-    assert client.get("/healthz").json()["service_version"] == "0.8.6"
+    assert report["service_version"] == "0.8.7"
+    assert client.app.version == "0.8.7"
+    assert client.get("/healthz").json()["service_version"] == "0.8.7"
 
     queue = client.get("/v1/review/tasks?view=all").json()
     assert queue["total"] == 1
@@ -247,7 +247,7 @@ def test_review_api_serves_queue_slides_artifacts_and_idempotent_history(
     render_manifest = client.get(detail["artifacts"]["render_manifest_url"])
     assert render_manifest.status_code == 200
     render_payload = render_manifest.json()
-    assert render_payload["schema_version"] == "1.1"
+    assert render_payload["schema_version"] == "2.0"
     assert render_payload["slide_images"][0]["sha256"]
 
     incomplete_final = client.post(

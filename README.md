@@ -13,15 +13,32 @@ PowerPoint 渲染、本地内容寻址存储与哈希链均可直接使用。默
 
 | 层级 | 当前值 | 何时变更 |
 |---|---|---|
-| 产品/软件发布 | `0.8.6` | 服务、CLI、UI 或运维能力发布 |
+| 产品/软件发布 | `0.8.7` | 服务、CLI、UI 或运维能力发布 |
 | Evaluation Profile | `8.3` / `PRE_RESEARCH` | 评分公式、权重、DAG 或准入语义改变 |
 | EvalReport / Audit schema | `1.0` | 持久化 JSON 出现不兼容变更 |
 | HTTP API namespace | `/v1` | 接口合同出现破坏性变更 |
 
-产品版本与评测 Profile 是两个独立版本轴。产品升到 `0.8.6` 不改变 Profile、
+产品版本与评测 Profile 是两个独立版本轴。产品升到 `0.8.7` 不改变 Profile、
 Oracle/Prompt 版本、schema 或 `/v1`，历史 `8.3`/`1.0` run 仍可读取。本仓库在此前使用过
 `0.1.0` 打包占位值；`0.8.4` 开始统一产品版本出口，`0.8.5` 新增正式批处理 API，
-`0.8.6` 收敛跨 Composite 审计去重与冷构建锁定。
+`0.8.6` 收敛跨 Composite 审计去重与冷构建锁定，`0.8.7` 建立机器可读版本矩阵与
+视觉输入复用基础。
+
+权威版本矩阵位于 [`release/version-matrix.json`](release/version-matrix.json)。发布前用下列命令检查
+Python、UI、OpenAPI、文档与评测合同是否漂移：
+
+```powershell
+python scripts/release_version.py --check
+```
+
+升级产品版本时，先修改矩阵与 `CHANGELOG.md`，再执行 `--write`同步机械版本出口。
+`--write` 不会改动 Profile、Composite、Oracle/Prompt、Selection、schema、API namespace 或
+Attention policy。
+
+`0.8.7` 只建立成本与复用底座：同一 PPTX 的逐页渲染可跨路径复用，模型路由记录
+`image_tokens/cached_tokens/request_bytes`。默认仍用 Base64 且关闭 Qwen 上下文缓存；需要
+公网传输复用时再按 [`docs/visual_asset_transport.md`](docs/visual_asset_transport.md) 显式启用
+短期签名 URL。这些开关不改变 Profile 8.3 的权重、选页和决策。
 
 ## 1. 能做什么
 

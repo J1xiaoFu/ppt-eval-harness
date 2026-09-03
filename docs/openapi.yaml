@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: PPT Eval Harness
-  version: 0.8.6
+  version: 0.8.7
   description: >-
-    Product release 0.8.6 with Evaluation Profile 8.3, persisted schema 1.0 and API namespace /v1.
+    Product release 0.8.7 with Evaluation Profile 8.3, persisted schema 1.0 and API namespace /v1.
     These version axes evolve independently. Every write request has a 202 MiB pre-parser body
     limit. If a browser supplies Origin, only localhost or 127.0.0.1 origins are accepted; trusted
     local CLI clients without Origin remain supported.
@@ -17,6 +17,35 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/HealthStatus" }
+  /v1/model-assets/{variant}/{asset_sha256}:
+    get:
+      operationId: getModelVisualAsset
+      description: >-
+        Optional provider-facing rendered-image route. It exists only when signed-url transport
+        has a complete public HTTPS and HMAC configuration. Grants serve an allow-listed slide,
+        atlas or crop image and never an original PPTX.
+      parameters:
+        - in: path
+          name: variant
+          required: true
+          schema: { type: string, enum: [slide, atlas, crop] }
+        - in: path
+          name: asset_sha256
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f]{64}$" }
+        - in: query
+          name: expires
+          required: true
+          schema: { type: integer }
+        - in: query
+          name: signature
+          required: true
+          schema: { type: string, pattern: "^[0-9a-f]{64}$" }
+      responses:
+        "200": { description: Integrity-checked rendered image. }
+        "403": { description: Signature is invalid. }
+        "404": { description: Route disabled, variant unknown or asset unavailable. }
+        "410": { description: Signed grant expired. }
   /v1/evaluations:
     post:
       operationId: createEvaluation
@@ -439,7 +468,7 @@ components:
       required: [status, service_version, audit_chain_valid, broken_event]
       properties:
         status: { type: string, enum: [ok, degraded] }
-        service_version: { const: "0.8.6" }
+        service_version: { const: "0.8.7" }
         audit_chain_valid: { type: boolean }
         broken_event: { type: [string, "null"] }
       additionalProperties: false

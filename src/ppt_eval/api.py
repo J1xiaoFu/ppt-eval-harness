@@ -26,6 +26,16 @@ from ppt_eval.infrastructure.uploads import (
     UploadValidationError,
     UploadWorkspace,
 )
+from ppt_eval.infrastructure.visual_assets import (
+    SignedUrlVisualAssetTransport,
+    VisualAssetAccessError,
+    VisualAssetCAS,
+    VisualAssetCatalog,
+    VisualAssetGrantExpired,
+    VisualAssetGrantInvalid,
+    VisualAssetTransportConfig,
+    VisualAssetVariant,
+)
 from ppt_eval.runtime import LocalEvaluationRuntime, get_runtime
 from ppt_eval.version import __version__
 
@@ -738,7 +748,7 @@ def create_app(
         )
         from fastapi import Path as ApiPath
         from fastapi.middleware.cors import CORSMiddleware
-        from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+        from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
         from fastapi.staticfiles import StaticFiles
     except ImportError as exc:  # pragma: no cover - optional dependency
         raise MissingApiDependency(
@@ -767,6 +777,7 @@ def create_app(
         allow_headers=["*"],
     )
     runtime_instance = runtime or get_runtime()
+    visual_asset_config = VisualAssetTransportConfig.from_environment()
     jobs = job_manager or LocalJobManager(runtime_instance)
     uploads = upload_store or LocalUploadStore(
         runtime_instance.paths.root / "uploads",
@@ -774,6 +785,39 @@ def create_app(
     app.state.job_manager = jobs
     app.state.upload_store = uploads
     app.router.add_event_handler("shutdown", jobs.shutdown)
+
+    visual_asset_transport = runtime_instance.visual_asset_transport
+    if visual_asset_config.signed_url_enabled and visual_asset_transport is None:
+        visual_asset_transport = SignedUrlVisualAssetTransport(
+            config=visual_asset_config,
+            catalog=VisualAssetCatalog(
+                {
+                    VisualAssetVariant.SLIDE: (runtime_instance.paths.render_cache,),
+                    VisualAssetVariant.ATLAS: (
+                        runtime_instance.paths.artifacts / "visual-atlases",
+                    ),
+                    VisualAssetVariant.CROP: (
+                        runtime_instance.paths.artifacts / "visual-crops",
+                    ),
+                }
+            ),
+            content_store=VisualAssetCAS(
+                runtime_instance.paths.render_cache / "visual-cas",
+            ),
+        )
+    if visual_asset_transport is not None:
+        app.state.visual_asset_transport = visual_asset_transport
+        app.state.visual_asset_transport_config = {
+            "mode": "signed-url",
+            "signed_url_enabled": True,
+            "ttl_seconds": visual_asset_transport.signer.ttl_seconds,
+        }
+    else:
+        app.state.visual_asset_transport_config = {
+            "mode": visual_asset_config.mode,
+            "signed_url_enabled": False,
+            "ttl_seconds": visual_asset_config.ttl_seconds,
+        }
 
     async def validate_batch_multipart_fields(request: Request) -> None:
         form = await request.form()
@@ -799,6 +843,49 @@ def create_app(
             "audit_chain_valid": valid,
             "broken_event": broken_event,
         }
+
+    if visual_asset_transport is not None:
+
+        @app.get("/v1/model-assets/{variant}/{asset_sha256}")
+        def get_model_visual_asset(
+            variant: str,
+            asset_sha256: str,
+            expires: int = Query(...),
+            signature: str = Query(...),
+        ) -> Any:
+            try:
+                asset_variant = VisualAssetVariant(variant)
+            except ValueError as exc:
+                raise HTTPException(status_code=404, detail="visual asset not found") from exc
+            try:
+                asset, asset_bytes = visual_asset_transport.catalog.verified_snapshot(
+                    variant=asset_variant,
+                    asset_sha256=asset_sha256,
+                )
+                visual_asset_transport.signer.verify(
+                    asset,
+                    expires=expires,
+                    signature=signature,
+                )
+            except FileNotFoundError as exc:
+                raise HTTPException(status_code=404, detail="visual asset not found") from exc
+            except VisualAssetGrantExpired as exc:
+                raise HTTPException(status_code=410, detail="visual asset URL expired") from exc
+            except VisualAssetGrantInvalid as exc:
+                raise HTTPException(status_code=403, detail="invalid visual asset URL") from exc
+            except (VisualAssetAccessError, ValueError) as exc:
+                raise HTTPException(status_code=404, detail="visual asset not found") from exc
+            remaining = max(0, expires - int(datetime.now(timezone.utc).timestamp()))
+            return Response(
+                content=asset_bytes,
+                media_type=asset.media_type,
+                headers={
+                    "Cache-Control": f"public, max-age={remaining}, immutable",
+                    "ETag": f'"{asset.sha256}"',
+                    "Referrer-Policy": "no-referrer",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
 
     @app.post("/v1/evaluations")
     def create_evaluation(
