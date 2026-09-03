@@ -13,7 +13,7 @@ from ppt_eval.adapters.pptx import (
     SlideObject,
     ZipPreflightReport,
 )
-from ppt_eval.application.visual_index import VisualPageIndexBuilder
+from ppt_eval.application.visual_index import VisualPageIndexBuilder, _color_histogram
 from ppt_eval.domain import (
     AtomicObservation,
     EvaluationScope,
@@ -32,6 +32,25 @@ from ppt_eval.domain import (
 _DECK_SHA = "d" * 64
 _COMMON_ASSET_SHA = "a" * 64
 _OUTLIER_ASSET_SHA = "b" * 64
+
+
+def test_color_histogram_rounding_never_emits_negative_residual() -> None:
+    image = Image.new("RGB", (64, 36))
+    red_values = (0, 32, 64, 96, 128)
+    counts = (461, 461, 461, 461, 460)
+    pixels = [
+        (red, 0, 0)
+        for red, count in zip(red_values, counts, strict=True)
+        for _ in range(count)
+    ]
+    image.putdata(pixels)
+
+    histogram = _color_histogram(image)
+
+    assert len(histogram) == 24
+    assert all(0.0 <= value <= 1.0 for value in histogram)
+    for offset in (0, 8, 16):
+        assert abs(sum(histogram[offset : offset + 8]) - 1.0) <= 2e-5
 
 
 def _object(

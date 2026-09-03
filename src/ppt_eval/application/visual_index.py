@@ -652,10 +652,12 @@ def _color_histogram(image: Image.Image) -> tuple[float, ...]:
             for offset in range(0, 256, 32)
         ]
         normalized = [value / pixels for value in raw]
-        # Make the last value the exact residual so the persisted channel sums
-        # to one even after bounded decimal rounding.
-        rounded = [round(value, 8) for value in normalized[:-1]]
-        rounded.append(round(1.0 - sum(rounded), 8))
+        # Round every observed bin independently.  Computing the last bin as a
+        # residual can produce -1e-8 when several preceding bins round upward,
+        # which violates the persisted [0, 1] contract on real photographs.
+        # Eight-decimal independent rounding keeps each probability bounded and
+        # the channel sum well inside the domain contract's 2e-5 tolerance.
+        rounded = [min(1.0, max(0.0, round(value, 8))) for value in normalized]
         bins.extend(rounded)
     return tuple(bins)
 
