@@ -306,9 +306,26 @@ JSON/artifact。
 | OpenAPI / `docker compose config --quiet` | 通过 |
 | Docker 无缓存构建 | 通过，镜像内 `pip check` 无破损依赖 |
 | Docker 无 Key 评测—审计闭环 | 通过：上传、报告、页图、P1 resolution、不可变 ReviewEvent |
-| GitHub 隔离 clone 候选分支冷启动 | `PENDING_FINAL_BRANCH_COMMIT` |
+| GitHub 隔离 clone 候选分支冷启动 | 通过，精确 SHA `c47b2b7f777e075d046529075f82b62a5bb76302` |
 | `git diff --check` / 密钥扫描 / 宿主路径扫描 | 当前通过；提交后复核 |
 | 真实切片 Manifest/artifact hash 与审计链 | 22/22 通过 |
+
+隔离 clone 额外验证了两条真实使用路径：
+
+- 无 Key：安装、380 项 pytest、380 项 dependency-free runner、Ruff、UI、Compose、
+  无缓存 Docker 构建、health/review/docs 和 4 页 demo 审计闭环均通过；生产镜像内 runner
+  为 353 passed、27 个因测试专用依赖缺失而显式 skip、0 failed。
+- 有 Key：同一 4 页 demo 只创建一个实际外部调用 Job，约 240 秒完成；Atlas 1 次加 6 个
+  独立 criterion 共 7 次请求，均由 `qwen3.8-flash` 返回合法结果，0 ERROR，Atlas 与 Visual
+  Coverage 均完整；GLM 已配置但未触发。最终 68.300271 / REVIEW 是质量分区，不是运行失败。
+  `cached_tokens=44,470`、`image_tokens=53,170`、`request_bytes=3,169,956`，但
+  `cost_known=false`，不将 reported zero 解释为免费。
+
+Key 只通过只读 secret mount 和进程内文件引用提供，没有复制进 clone 或镜像。public
+report/full audit/Manifest/绑定 JSON artifact 均未发现宿主路径、secret mount、key 文件名或
+密钥形态；8 个绑定 artifact 重新计算 SHA-256 均匹配。人工以
+`REQUEST_MORE_EVIDENCE` 追加 ReviewEvent，并验证同一幂等键只产生一条历史记录；追加后审计链
+仍有效。
 
 ## 限制与剩余风险
 
