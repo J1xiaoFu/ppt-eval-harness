@@ -2272,7 +2272,7 @@ def build_suite_html(payload: Mapping[str, Any]) -> str:
 <div class="stat"><b>{_display_number(response_legality.get('legal_response_rate'), percent=True)}</b>模型合法响应率</div>
 <div class="stat"><b>{html.escape(str(metric_status_counts.get('ERROR', 0)))}</b>OracleResult ERROR</div>
 <div class="stat"><b>{html.escape(str(metric_status_counts.get('NA', 0)))}</b>OracleResult N/A</div>
-<div class="stat"><b>{_display_number(visual_usage.get('reported_cost_when_reported'))}</b>已报告模型成本</div></div>
+<div class="stat"><b>{_display_number(visual_usage.get('known_reported_cost'))}</b>可验证模型成本</div></div>
 <p class="warning"><b>统计边界：</b>任一 topic 中只要存在 ERROR、DEGRADED、Profile 错配或审计链无效，该 topic 的正式 Spearman/Pairwise 即为 N/A；诊断值只用于发现 Oracle/Profile 偏差，不得门禁、拟合权重或跨主题混排。</p>
 <details><summary>合法响应、usage / cost 与 Composite 诊断</summary><pre>{operations_json}</pre></details>
 {''.join(topic_sections)}

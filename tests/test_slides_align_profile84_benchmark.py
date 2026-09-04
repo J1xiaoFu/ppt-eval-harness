@@ -895,6 +895,16 @@ def test_suite_output_labels_diagnostic_statistics_as_non_gating(
     assert "诊断" in document
     assert "OracleResult N/A" in document
     assert "不得门禁、拟合权重或跨主题混排" in document
+    assert "<b>0.020</b>可验证模型成本" in document
+
+    unknown_cost_payload = json.loads(json.dumps(payload))
+    unknown_cost_payload["aggregate"]["visual_usage"]["known_reported_cost"] = None
+    unknown_cost_payload["aggregate"]["visual_usage"][
+        "reported_cost_when_reported"
+    ] = 0.0
+    unknown_cost_document = build_suite_html(unknown_cost_payload)
+    assert "<b>N/A</b>可验证模型成本" in unknown_cost_document
+    assert "<b>0.000</b>可验证模型成本" not in unknown_cost_document
 
 
 def test_html_escapes_labels_and_output_writer_rejects_unsafe_slug(
