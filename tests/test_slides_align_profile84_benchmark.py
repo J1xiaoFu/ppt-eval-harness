@@ -569,6 +569,36 @@ def test_visual_usage_and_response_legality_come_from_verified_contracts(
     assert legality["counting_contract"] == "POST_FALLBACK_LOGICAL_AUDIT_CONTRACT_V2"
 
 
+def test_model_node_timeout_counts_as_an_invalid_logical_audit(tmp_path: Path) -> None:
+    report = {
+        "results": [
+            {
+                "oracle_id": "v8.visual.composition_layout",
+                "metric_id": "structured_vlm_composition_layout",
+                "execution_status": "ERROR",
+                "metric_status": "ERROR",
+                "error_code": "ORACLE_EXCEPTION",
+                "metadata": {},
+            },
+            {
+                "oracle_id": "v8.visual.page_index",
+                "metric_id": "visual_asset_semantic_risk",
+                "execution_status": "ERROR",
+                "metric_status": "ERROR",
+                "error_code": "ORACLE_EXCEPTION",
+                "metadata": {},
+            },
+        ]
+    }
+
+    legality = _model_response_legality(report, tmp_path)
+
+    assert legality["valid_response_count"] == 0
+    assert legality["logical_audit_count"] == 1
+    assert legality["legal_response_rate"] == 0.0
+    assert legality["meets_threshold"] is False
+
+
 def test_runtime_integrity_requires_one_hash_linked_completed_event(
     tmp_path: Path,
 ) -> None:
@@ -800,11 +830,20 @@ def test_suite_output_labels_diagnostic_statistics_as_non_gating(
         pptx_bytes=1,
         renders=(),
     )
+    second_case = replace(
+        case,
+        product="Beta",
+        human_rank=2,
+        case_id="beta",
+        pptx_path=tmp_path / "beta.pptx",
+        pptx_relative_path="topics/sample/beta.pptx",
+        pptx_sha256="b" * 64,
+    )
     suite = SuiteSpec(
         root=tmp_path,
         dataset_id="suite",
         revision="revision",
-        cases=(case,),
+        cases=(case, second_case),
         manifest_file_count=1,
         manifest_bytes=1,
     )
@@ -844,6 +883,11 @@ def test_suite_output_labels_diagnostic_statistics_as_non_gating(
     assert payload["aggregate"]["model_response_legality"][
         "legal_response_rate"
     ] == 1.0
+    assert payload["aggregate"]["model_response_legality"][
+        "counting_contract"
+    ] == "POST_FALLBACK_LOGICAL_AUDIT_CONTRACT_V2"
+    assert payload["aggregate"]["all_topics_rank_eligible"] is False
+    assert payload["aggregate"]["validation_gate"]["passed"] is True
     assert "composition_craft" in payload["aggregate"][
         "exploratory_unqualified"
     ]["composite_metrics"]

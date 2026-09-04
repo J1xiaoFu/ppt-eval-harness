@@ -1407,6 +1407,8 @@ def _model_response_legality(
         metadata = metadata if isinstance(metadata, Mapping) else {}
         attempts = metadata.get("routing_attempts")
         if not isinstance(attempts, Sequence) or isinstance(attempts, (str, bytes)):
+            if _is_unreturned_model_node_failure(result):
+                logical_audits += 1
             continue
         normalized_attempts = tuple(
             {str(key): value for key, value in item.items()}
@@ -1414,6 +1416,8 @@ def _model_response_legality(
             if isinstance(item, Mapping)
         )
         if not normalized_attempts:
+            if _is_unreturned_model_node_failure(result):
+                logical_audits += 1
             continue
         fingerprints = tuple(
             sorted(
@@ -1463,6 +1467,28 @@ def _model_response_legality(
         ),
         "counting_contract": "POST_FALLBACK_LOGICAL_AUDIT_CONTRACT_V2",
     }
+
+
+def _is_unreturned_model_node_failure(result: Mapping[str, Any]) -> bool:
+    oracle_id = str(result.get("oracle_id") or "")
+    metric_id = str(result.get("metric_id") or "")
+    is_model_node = (
+        (
+            oracle_id.startswith("v8.visual.")
+            and metric_id.startswith(
+                ("structured_vlm_", "provisional_structured_vlm_")
+            )
+        )
+        or oracle_id.startswith("v8.raster_text.")
+    )
+    return bool(
+        is_model_node
+        and result.get("execution_status") == "ERROR"
+        and result.get("error_code") in {
+            "ORACLE_EXCEPTION",
+            "COST_BUDGET_EXHAUSTED",
+        }
+    )
 
 
 def _report_legality(
@@ -1563,7 +1589,7 @@ def _case_summary(
                 "legal_response_rate": None,
                 "threshold": _MODEL_RESPONSE_LEGALITY_THRESHOLD,
                 "meets_threshold": False,
-                "counting_contract": "FINAL_LEGAL_RESPONSE_PER_HTTP_ATTEMPT_V1",
+                "counting_contract": "POST_FALLBACK_LOGICAL_AUDIT_CONTRACT_V2",
             },
             "result_status_counts": {
                 "metric_status": {},
@@ -1923,12 +1949,15 @@ def _aggregate_response_legality(
     cases: Sequence[Mapping[str, Any]],
 ) -> Mapping[str, Any]:
     valid = 0
-    attempts = 0
+    logical_audits = 0
     for item in cases:
         value = item.get("model_response_legality")
         value = value if isinstance(value, Mapping) else {}
         raw_valid = value.get("valid_response_count")
-        raw_attempts = value.get("response_attempt_count")
+        raw_attempts = value.get(
+            "logical_audit_count",
+            value.get("response_attempt_count"),
+        )
         if (
             isinstance(raw_valid, int)
             and not isinstance(raw_valid, bool)
@@ -1937,17 +1966,18 @@ def _aggregate_response_legality(
             and 0 <= raw_valid <= raw_attempts
         ):
             valid += raw_valid
-            attempts += raw_attempts
-    rate = valid / attempts if attempts else None
+            logical_audits += raw_attempts
+    rate = valid / logical_audits if logical_audits else None
     return {
         "valid_response_count": valid,
-        "response_attempt_count": attempts,
+        "response_attempt_count": logical_audits,
+        "logical_audit_count": logical_audits,
         "legal_response_rate": rate,
         "threshold": _MODEL_RESPONSE_LEGALITY_THRESHOLD,
         "meets_threshold": bool(
             rate is not None and rate >= _MODEL_RESPONSE_LEGALITY_THRESHOLD
         ),
-        "counting_contract": "FINAL_LEGAL_RESPONSE_PER_HTTP_ATTEMPT_V1",
+        "counting_contract": "POST_FALLBACK_LOGICAL_AUDIT_CONTRACT_V2",
     }
 
 
@@ -2060,7 +2090,6 @@ def aggregate_suite(
         and reports_legal == len(cases)
         and finite_scores == len(cases)
         and audit_valid_cases == len(cases)
-        and all_topics_eligible
         and response_legality.get("meets_threshold") is True
     )
     return {
@@ -2109,6 +2138,7 @@ def aggregate_suite(
             "rank_scope": "WITHIN_TOPIC_ONLY",
             "formal_statistics_require_full_coverage": True,
             "degraded_cases_suppress_formal_topic_statistics": True,
+            "rank_statistics_are_release_gate": False,
             "weight_fitting_used": False,
             "official_renders_injected": True,
             "official_render_paths_anonymized": True,
